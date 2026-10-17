@@ -1,0 +1,48 @@
+# Binaries and build artifacts
+/build/
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bootstrap
+
+# Go workspace files (ignore only if you don't use workspaces)
+# go.work
+# go.work.sum
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Coverage and profiling output
+coverage.out
+coverage.html
+*.prof
+*.pprof
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.iml
+.nvim/
+
+# OS-generated files
+.DS_Store
+Thumbs.db
+
