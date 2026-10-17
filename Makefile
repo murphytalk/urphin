@@ -3,18 +3,18 @@
 APP_NAME := urphin
 BUILD_DIR := build
 
-all: check public extention
+all: check public
 
 # Build without the extensions submodule
 public:
 	mkdir -p $(BUILD_DIR)
-	go build -tags public -o $(BUILD_DIR)/$(APP_NAME)-public ./tui
+	go build -tags public -o $(BUILD_DIR)/$(APP_NAME) ./tui
 
 # Build with the extensions submodule
-extention:
-	@test -d extentions || (echo "Error: extentions submodule is missing"; exit 1)
+extension:
+	@test -d extension || (echo "Error: extension submodule is missing"; exit 1)
 	mkdir -p $(BUILD_DIR)
-	go build -tags extended -o $(BUILD_DIR)/$(APP_NAME)-extention ./tui
+	go build -tags extension -o $(BUILD_DIR)/$(APP_NAME)-ext ./tui
 
 # Run all tests
 test:

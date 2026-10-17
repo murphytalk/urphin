@@ -1,8 +1,5 @@
 package commands
 
-import "context"
+import "github.com/murphytalk/urphin/tui/commands/registry"
 
-type Command interface {
-	Name() string
-	Execute(ctx context.Context, args map[string]any) error
-}
+type Command = registry.Command

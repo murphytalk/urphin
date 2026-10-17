@@ -1,4 +1,4 @@
-//go:build !extention
+//go:build !extension
 
 package commands
 
