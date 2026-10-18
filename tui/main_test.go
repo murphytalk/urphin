@@ -6,6 +6,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/murphytalk/urphin/shared/logging"
+	"github.com/murphytalk/urphin/tui/ui"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func readLog(t *testing.T, name string) string {
@@ -23,16 +27,16 @@ func readLog(t *testing.T, name string) string {
 func TestCliArgsCheckLogsRejectedConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	oldCfg, oldLog, oldKeep, oldOptions, oldDefault := cfgPath, logPath, logKeep, options, slog.Default()
+	oldCfgPath, oldLog, oldCfg, oldOptions, oldDefault := cfgPath, logPath, cfg, options, slog.Default()
 	t.Cleanup(func() {
 		closeLogging()
-		cfgPath, logPath, logKeep, options = oldCfg, oldLog, oldKeep, oldOptions
+		cfgPath, logPath, cfg, options = oldCfgPath, oldLog, oldCfg, oldOptions
 		slog.SetDefault(oldDefault)
 	})
 
+	cfg = nil
 	cfgPath = filepath.Join(dir, "missing.yaml")
 	logPath = filepath.Join(dir, "urphin.log")
-	logKeep = 0
 
 	err := cliArgsCheck(cliCmd, nil)
 	if err == nil {
@@ -65,5 +69,69 @@ func TestSetupLoggingRejectsUnwritablePath(t *testing.T) {
 	if err := setupLogging(); err == nil {
 		closeLogging()
 		t.Fatal("setupLogging accepted a path below a regular file")
+	}
+}
+
+// TestLogSettings pins how the rotation settings resolve from the config, now
+// that no flag overrides them: a configured value wins, an absent one falls back
+// to the defaults, and a configured 0 keepDays keeps every rotated file.
+func TestLogSettings(t *testing.T) {
+	days := func(v int) *int { return &v }
+
+	for _, tc := range []struct {
+		name     string
+		cfg      *ui.Config
+		wantSize int
+		wantKeep int
+	}{
+		{name: "no config", wantSize: logging.DefaultMaxSize, wantKeep: 7},
+		{name: "configured", cfg: &ui.Config{App: ui.AppCfg{LogSize: 20, LogKeepDays: days(30)}}, wantSize: 20, wantKeep: 30},
+		{name: "keep 0 keeps all", cfg: &ui.Config{App: ui.AppCfg{LogSize: 20, LogKeepDays: days(0)}}, wantSize: 20, wantKeep: 0},
+		{name: "absent keys use defaults", cfg: &ui.Config{}, wantSize: logging.DefaultMaxSize, wantKeep: 7},
+		{name: "zero size uses default", cfg: &ui.Config{App: ui.AppCfg{LogSize: 0, LogKeepDays: days(3)}}, wantSize: logging.DefaultMaxSize, wantKeep: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			size, keep := logSettings(tc.cfg)
+			if size != tc.wantSize || keep != tc.wantKeep {
+				t.Errorf("logSettings = (%d, %d), want (%d, %d)", size, keep, tc.wantSize, tc.wantKeep)
+			}
+		})
+	}
+}
+
+// TestCliArgsCheckSetsRotationFromConfig pins the whole path end to end: the file
+// must be read before logging is configured, so app.logSize and app.logKeepDays
+// reach lumberjack's MaxSize and MaxAge.
+func TestCliArgsCheckSetsRotationFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "urphin.yaml")
+	body := "app:\n  logSize: 20\n  logKeepDays: 30\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	oldCfg, oldCfgPath, oldLog, oldLogs, oldDefault := cfg, cfgPath, logPath, logs, slog.Default()
+	t.Cleanup(func() {
+		closeLogging()
+		cfg, cfgPath, logPath, logs = oldCfg, oldCfgPath, oldLog, oldLogs
+		slog.SetDefault(oldDefault)
+	})
+
+	cfg, logs = nil, nil
+	cfgPath = path
+	logPath = filepath.Join(dir, "urphin.log")
+
+	if err := cliArgsCheck(cliCmd, nil); err != nil {
+		closeLogging()
+		t.Fatalf("cliArgsCheck: %v", err)
+	}
+
+	closer, ok := logs.(*lumberjack.Logger)
+	if !ok {
+		closeLogging()
+		t.Fatalf("closer = %T, want *lumberjack.Logger", logs)
+	}
+	if closer.MaxSize != 20 || closer.MaxAge != 30 {
+		t.Errorf("lumberjack MaxSize, MaxAge = %d, %d, want 20, 30", closer.MaxSize, closer.MaxAge)
 	}
 }
