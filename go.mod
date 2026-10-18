@@ -2,7 +2,10 @@ module github.com/murphytalk/urphin
 
 go 1.27.1
 
-require github.com/spf13/cobra v1.10.2
+require (
+	github.com/spf13/cobra v1.10.2
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+)
 
 require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
