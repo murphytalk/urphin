@@ -14,13 +14,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// defaultLogKeepDays is how long a rotated log file is kept when app.logKeepDays
+// does not say.
+const defaultLogKeepDays = 7
+
 var (
 	cfgPath string
 	logPath string
-	logSize int
-	logKeep int
 	options ui.Options
-	logs    io.Closer // set once logging is configured, closed before exit
+	cfg     *ui.Config // loaded from --config by loadCfg
+	logs    io.Closer  // set once logging is configured, closed before exit
 	cliCmd  = &cobra.Command{
 		Use:           "urphin",
 		Short:         "urphin is a handcrafted personal finance dashboard",
@@ -30,19 +33,40 @@ var (
 	}
 )
 
-// setupLogging installs the default logger on the file named by --log, rotated
-// by --log-size, at the level selected by --debug-log (INFO when the flag is
-// absent).
+// logSettings resolves the rotation settings: the size and retention come from
+// the config, falling back to logging.DefaultMaxSize and defaultLogKeepDays so a
+// config that does not mention them still boots. A configured keepDays of 0 keeps
+// every rotated file.
+func logSettings(c *ui.Config) (size, keep int) {
+	size, keep = logging.DefaultMaxSize, defaultLogKeepDays
+	if c == nil {
+		return size, keep
+	}
+	if c.App.LogSize > 0 {
+		size = c.App.LogSize
+	}
+	if c.App.LogKeepDays != nil {
+		keep = *c.App.LogKeepDays
+	}
+
+	return size, keep
+}
+
+// setupLogging installs the default logger on the file named by --log, rotated by
+// app.logSize, at the level selected by --debug-log (INFO when the flag is
+// absent). Rotated files are retained for app.logKeepDays days.
 func setupLogging() error {
 	level := slog.LevelInfo
 	if options.Debug {
 		level = slog.LevelDebug
 	}
 
+	size, keep := logSettings(cfg)
+
 	closer, err := logging.Setup(logging.Options{
 		Path:    logPath,
-		MaxSize: logSize,
-		Keep:    logKeep,
+		MaxSize: size,
+		Keep:    keep,
 		Level:   level,
 	})
 	if err != nil {
@@ -65,17 +89,9 @@ func closeLogging() {
 	logs = nil
 }
 
-// cliArgsCheck validates the arguments and configures logging first: cobra has
-// already parsed the flags when it calls this, so this is the earliest point
-// where --log and --debug-log are known and a rejected config path can still be
-// logged in the normal format.
-func cliArgsCheck(cmd *cobra.Command, args []string) error {
-	if logs == nil {
-		if err := setupLogging(); err != nil {
-			return fmt.Errorf("setup logging: %w", err)
-		}
-	}
-
+// loadCfg validates the --config path and reads it into cfg. It returns rather
+// than logs its error, because cliArgsCheck calls it before the logger exists.
+func loadCfg() error {
 	info, err := os.Stat(cfgPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -87,15 +103,40 @@ func cliArgsCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("config path %q is a directory, not a file", cfgPath)
 	}
 
+	c, err := ui.LoadConfig(cfgPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	cfg = c
+
 	return nil
 }
 
-func loadCfg() {
+// cliArgsCheck loads the config and configures logging first: cobra has already
+// parsed the flags when it calls this, so this is the earliest point where --log
+// and --debug-log are known.
+//
+// The config is read before logging is set up because app.logSize and
+// app.logKeepDays select the rotation, but its error is only returned afterwards
+// so a rejected config is still recorded in the normal record format.
+func cliArgsCheck(cmd *cobra.Command, args []string) error {
+	cfgErr := loadCfg()
+
+	if logs == nil {
+		if err := setupLogging(); err != nil {
+			return fmt.Errorf("setup logging: %w", err)
+		}
+	}
+
+	return cfgErr
 }
 
 func run(cmd *cobra.Command, args []string) error {
 	slog.Debug("command parsed", "args", args)
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", options.Debug)
+
+	size, keep := logSettings(cfg)
+	slog.Debug("config loaded", "logSize", size, "logKeepDays", keep, "postgres", len(cfg.Postgres))
 
 	return nil
 }
@@ -125,6 +166,4 @@ func init() {
 	cliCmd.Flags().StringVarP(&cfgPath, "config", "c", filepath.Join(home, ".urphin", "urphin.yaml"), "config file")
 	cliCmd.Flags().StringVarP(&logPath, "log", "l", filepath.Join(home, ".urphin", "urphin.log"), "log file")
 	cliCmd.Flags().BoolVarP(&options.Debug, "debug-log", "D", false, "debug log")
-	cliCmd.Flags().IntVar(&logSize, "log-size", logging.DefaultMaxSize, "size in MB that triggers log rotation")
-	cliCmd.Flags().IntVar(&logKeep, "log-keep", 7, "days a rotated log file is kept (0 keeps all)")
 }
