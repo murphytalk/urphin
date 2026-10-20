@@ -25,7 +25,8 @@ extension: antlr-ext
 
 # Run all tests
 test:
-	go test ./...
+	go test $$(go list ./... | grep -v '/extension/')
+	@if [ -d extension ] && [ -n "$$(ls -A extension)" ]; then go test -tags extension ./extension/...; fi
 
 # Format Go source files
 fmt:
