@@ -28,12 +28,10 @@ var (
 	cfg     *ui.Config // loaded from --config by loadCfg
 	logs    io.Closer  // set once logging is configured, closed before exit
 	cliCmd  = &cobra.Command{
-		Use:           "urphin",
-		Short:         "urphin is a handcrafted personal finance dashboard",
-		Args:          cliArgsCheck,
-		RunE:          run,
-		SilenceErrors: true, // main reports every error exactly once
-		SilenceUsage:  true, // a command-syntax error is not a CLI-usage problem; do not dump the flag list
+		Use:   "urphin",
+		Short: "urphin is a handcrafted personal finance dashboard",
+		Args:  cliArgsCheck,
+		RunE:  run,
 	}
 )
 
