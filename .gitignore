@@ -46,3 +46,4 @@ coverage.html
 .DS_Store
 Thumbs.db
 
+**/generated/

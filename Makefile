@@ -1,18 +1,25 @@
-.PHONY: all public extention test fmt vet check clean
+.PHONY: all public extension test fmt vet check clean antlr-public antlr-ext
 
 APP_NAME := urphin
 BUILD_DIR := build
 
 all: check public
 
+# Public generation needs code-state .g4; extension generation needs real names.
+antlr-public:
+	./antlr_generate.sh public
+
+antlr-ext:
+	@test -d extension || (echo "Error: extension submodule is missing"; exit 1)
+	./antlr_generate.sh extension
+
 # Build without the extensions submodule
-public:
+public: antlr-public
 	mkdir -p $(BUILD_DIR)
 	go build -tags public -o $(BUILD_DIR)/$(APP_NAME) ./tui
 
 # Build with the extensions submodule
-extension:
-	@test -d extension || (echo "Error: extension submodule is missing"; exit 1)
+extension: antlr-ext
 	mkdir -p $(BUILD_DIR)
 	go build -tags extension -o $(BUILD_DIR)/$(APP_NAME)-ext ./tui
 
@@ -22,16 +29,16 @@ test:
 
 # Format Go source files
 fmt:
-	gofmt -w $$(find . -type f -name '*.go' -not -path './.git/*')
+	gofmt -w $$(find . -type f -name '*.go' -not -path './.git/*' -not -path '*/generated/*')
 
 # Check formatting without modifying files
 fmt-check:
-	@test -z "$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.git/*'))" \
+	@test -z "$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.git/*' -not -path '*/generated/*'))" \
 		|| (echo "Go files need formatting; run 'make fmt'"; exit 1)
 
 # Static analysis
 vet:
-	go vet ./...
+	go vet $$(go list ./... | grep -v /generated)
 
 # Common development checks
 check: fmt-check test vet

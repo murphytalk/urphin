@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/murphytalk/urphin/shared/logging"
+	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/ui"
 	"github.com/spf13/cobra"
 )
@@ -20,6 +22,7 @@ const defaultLogKeepDays = 7
 
 var (
 	cfgPath string
+	cmdLine string
 	logPath string
 	options ui.Options
 	cfg     *ui.Config // loaded from --config by loadCfg
@@ -30,6 +33,7 @@ var (
 		Args:          cliArgsCheck,
 		RunE:          run,
 		SilenceErrors: true, // main reports every error exactly once
+		SilenceUsage:  true, // a command-syntax error is not a CLI-usage problem; do not dump the flag list
 	}
 )
 
@@ -120,7 +124,12 @@ func loadCfg() error {
 // app.logKeepDays select the rotation, but its error is only returned afterwards
 // so a rejected config is still recorded in the normal record format.
 func cliArgsCheck(cmd *cobra.Command, args []string) error {
-	cfgErr := loadCfg()
+	// Skip the config for -C (keyed on Changed, not value, so -C "" still
+	// reports "empty command"): without it a missing config file aborts before run().
+	var cfgErr error
+	if !cmd.Flags().Changed("command") {
+		cfgErr = loadCfg()
+	}
 
 	if logs == nil {
 		if err := setupLogging(); err != nil {
@@ -133,11 +142,43 @@ func cliArgsCheck(cmd *cobra.Command, args []string) error {
 
 func run(cmd *cobra.Command, args []string) error {
 	slog.Debug("command parsed", "args", args)
+
+	if cmd.Flags().Changed("command") {
+		return runOneCommand(cmdLine)
+	}
+
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", options.Debug)
 
 	size, keep := logSettings(cfg)
 	slog.Debug("config loaded", "logSize", size, "logKeepDays", keep, "postgres", len(cfg.Postgres))
 
+	return nil
+}
+
+// runOneCommand parses and executes a single command line, then returns.
+// Execution currently only reports the parsed command name and arguments.
+func runOneCommand(line string) error {
+	name, args, err := commands.Parse(line)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("command: %s\n", name)
+	if len(args) == 0 {
+		fmt.Println("args: (none)")
+		return nil
+	}
+
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // stable output for tests and eyeballing
+
+	fmt.Println("args:")
+	for _, k := range keys {
+		fmt.Printf("  %s = %v\n", k, args[k])
+	}
 	return nil
 }
 
@@ -164,6 +205,7 @@ func init() {
 	}
 
 	cliCmd.Flags().StringVarP(&cfgPath, "config", "c", filepath.Join(home, ".urphin", "urphin.yaml"), "config file")
+	cliCmd.Flags().StringVarP(&cmdLine, "command", "C", "", "parse and run one command, then exit")
 	cliCmd.Flags().StringVarP(&logPath, "log", "l", filepath.Join(home, ".urphin", "urphin.log"), "log file")
 	cliCmd.Flags().BoolVarP(&options.Debug, "debug-log", "D", false, "debug log")
 }
