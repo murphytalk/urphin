@@ -34,8 +34,8 @@ var (
 	ruleCtxType  = reflect.TypeOf((*antlr.ParserRuleContext)(nil)).Elem()
 )
 
-func extract(tree antlr.ParserRuleContext, _ antlr.TokenStream) (map[string]any, error) {
-	args := map[string]any{}
+func extract(tree antlr.ParserRuleContext, _ antlr.TokenStream) (map[string]string, error) {
+	args := map[string]string{}
 	if err := walk(tree, args); err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func extract(tree antlr.ParserRuleContext, _ antlr.TokenStream) (map[string]any,
 
 // walk harvests labelled values via reflection: generated label fields are
 // unexported, only the Get* getters are visible (F10).
-func walk(ctx antlr.ParserRuleContext, args map[string]any) error {
+func walk(ctx antlr.ParserRuleContext, args map[string]string) error {
 	// labels mark a value the caller wants verbatim; inner labels are implementation detail
 	labeled := map[antlr.ParserRuleContext]bool{}
 	v := reflect.ValueOf(ctx) // dynamic type, so label getters of the concrete context are enumerable
