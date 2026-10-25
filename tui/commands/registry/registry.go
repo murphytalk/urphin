@@ -4,7 +4,7 @@ import "context"
 
 type Command interface {
 	Name() string
-	Execute(ctx context.Context, args map[string]any) error
+	Execute(ctx context.Context, args map[string]string) error
 }
 
 type Registry struct {

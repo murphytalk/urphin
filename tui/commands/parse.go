@@ -8,9 +8,8 @@ import (
 )
 
 // Parse turns one input line into an uppercase command name and its arguments.
-// Argument values are raw token text, except broker, which is always the
-// canonical code B1..B7 regardless of the build.
-func Parse(raw string) (string, map[string]any, error) {
+// Argument values are raw token text
+func Parse(raw string) (string, map[string]string, error) {
 	input := strings.TrimSpace(raw)
 	if input == "" {
 		return "", nil, &ParseError{Line: 1, Col: 0, Msg: "empty command", Input: raw}
@@ -26,8 +25,6 @@ func Parse(raw string) (string, map[string]any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	// Only the name is uppercased: case folding is the lexer's job and arg
-	// values must keep the user's casing (F9).
 	return strings.ToUpper(commandName(tree)), args, nil
 }
 
@@ -43,7 +40,7 @@ func (c *errorCollector) SyntaxError(_ antlr.Recognizer, _ any, line, col int,
 	c.errs = append(c.errs, &ParseError{Line: line, Col: col, Msg: msg})
 }
 
-// first returns the earliest error with the input attached (F15: one root
+// first returns the earliest error with the input attached (one root
 // cause can produce several callbacks, so only the first is reported).
 func (c *errorCollector) first(input string) error {
 	e := *c.errs[0]
@@ -55,8 +52,7 @@ func (c *errorCollector) first(input string) error {
 }
 
 // commandName walks the leftmost chain prog -> cmd -> baseCmd -> <rule> -> keyword
-// (5 levels since F14; bound 8 tolerates one more inserted layer). No
-// rule-to-command table: rule names diverge from command names (splitCmd->SPLIT, u->U).
+// No rule-to-command table: rule names diverge from command names (splitCmd->SPLIT, u->U).
 func commandName(tree antlr.ParserRuleContext) string {
 	var n antlr.Tree = tree
 	for depth := 0; depth < 8; depth++ {

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
@@ -28,10 +27,12 @@ var (
 	cfg     *ui.Config // loaded from --config by loadCfg
 	logs    io.Closer  // set once logging is configured, closed before exit
 	cliCmd  = &cobra.Command{
-		Use:   "urphin",
-		Short: "urphin is a handcrafted personal finance dashboard",
-		Args:  cliArgsCheck,
-		RunE:  run,
+		Use:           "urphin",
+		Short:         "urphin is a handcrafted personal finance dashboard",
+		Args:          cliArgsCheck,
+		RunE:          run,
+		SilenceErrors: true, // main reports every error exactly once
+		SilenceUsage:  true, // a command-syntax error is not a CLI-usage problem; do not dump the flag list
 	}
 )
 
@@ -160,23 +161,7 @@ func runOneCommand(line string) error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Printf("command: %s\n", name)
-	if len(args) == 0 {
-		fmt.Println("args: (none)")
-		return nil
-	}
-
-	keys := make([]string, 0, len(args))
-	for k := range args {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys) // stable output for tests and eyeballing
-
-	fmt.Println("args:")
-	for _, k := range keys {
-		fmt.Printf("  %s = %v\n", k, args[k])
-	}
+	commands.RunCmd(name, args, true)
 	return nil
 }
 
