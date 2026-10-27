@@ -65,3 +65,7 @@ To add your own commands, put a package at `extension/tui/commands` exposing the
 entry point, add its grammar under `extension/tui/commands/antlr/`, and build with the
 `extension` tag (`make extension`). Without that tag the public tree compiles as if
 `extension/` did not exist.
+
+## Credits
+
+- The Yahoo Finance and CoinBase market data implementation under `internal/` are basically copied from [ticker](https://github.com/achannarasappa/ticker) - as well as the live market data display.
