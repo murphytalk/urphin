@@ -1,4 +1,4 @@
-package model
+package types
 
 import "time"
 
@@ -145,4 +145,48 @@ type AssetGroupSymbolsBySource struct {
 type AssetGroupQuote struct {
 	AssetGroup  AssetGroup
 	AssetQuotes []AssetQuote
+}
+
+type PositionChange struct {
+	Amount  float64
+	Percent float64
+}
+
+type Position struct {
+	Value       float64
+	Cost        float64
+	Quantity    float64
+	UnitValue   float64
+	UnitCost    float64
+	DayChange   PositionChange
+	TotalChange PositionChange
+	Weight      float64
+}
+
+type Asset struct {
+	Name          string
+	Symbol        string
+	Class         AssetClass
+	Currency      Currency
+	Position      Position
+	QuotePrice    QuotePrice
+	QuoteExtended QuoteExtended
+	QuoteFutures  QuoteFutures
+	QuoteSource   QuoteSource
+	Exchange      Exchange
+	Meta          Meta
+}
+
+// StyleFn is a function that styles text
+type StyleFn func(string) string
+
+// Styles represents style functions for components of the UI
+type Styles struct {
+	Text      StyleFn
+	TextLight StyleFn
+	TextLabel StyleFn
+	TextBold  StyleFn
+	TextLine  StyleFn
+	TextPrice func(float64, string) string
+	Tag       StyleFn
 }
