@@ -5,8 +5,8 @@ import (
 	"sync"
 
 	//priceCoinbase "github.com/murphytalk/urphin/internal/marketdata/coinbase/monitor-price"
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata/cache"
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
 	currencyRate "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-currency-rates"
 	price "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price"
 	unaryClientYahoo "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
