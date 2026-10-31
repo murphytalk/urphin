@@ -190,3 +190,37 @@ type Styles struct {
 	TextPrice func(float64, string) string
 	Tag       StyleFn
 }
+
+type Config struct {
+	RefreshInterval                   int                `yaml:"interval"`
+	Watchlist                         []string           `yaml:"watchlist"`
+	Lots                              []Lot              `yaml:"lots"`
+	Separate                          bool               `yaml:"show-separator"`
+	ExtraInfoExchange                 bool               `yaml:"show-tags"`
+	ExtraInfoFundamentals             bool               `yaml:"show-fundamentals"`
+	ShowSummary                       bool               `yaml:"show-summary"`
+	ShowHoldings                      bool               `yaml:"show-holdings"`  // Deprecated: use ShowPositions instead, kept for backwards compatibility
+	ShowPositions                     bool               `yaml:"show-positions"` // Preferred field name
+	Sort                              string             `yaml:"sort"`
+	Currency                          string             `yaml:"currency"`
+	CurrencyConvertSummaryOnly        bool               `yaml:"currency-summary-only"`
+	CurrencyDisableUnitCostConversion bool               `yaml:"currency-disable-unit-cost-conversion"`
+	ColorScheme                       ConfigColorScheme  `yaml:"colors"`
+	AssetGroup                        []ConfigAssetGroup `yaml:"groups"`
+	Debug                             bool               `yaml:"debug"`
+	// Cache enables the on-disk cache. It is a pointer so that an unset config
+	// value (nil) can be distinguished from an explicit false, allowing the
+	// cache to default to on while still being disableable via config or
+	// --no-cache.
+	Cache *bool `yaml:"cache"`
+}
+
+// ConfigColorScheme represents user defined color scheme
+type ConfigColorScheme struct {
+	Text          string `yaml:"text"`
+	TextLight     string `yaml:"text-light"`
+	TextLabel     string `yaml:"text-label"`
+	TextLine      string `yaml:"text-line"`
+	TextTag       string `yaml:"text-tag"`
+	BackgroundTag string `yaml:"background-tag"`
+}

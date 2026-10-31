@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata/coinbase/unary"
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
 )
 
 type Poller struct {

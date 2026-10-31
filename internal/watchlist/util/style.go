@@ -6,7 +6,7 @@ import (
 
 	"github.com/lucasb-eyer/go-colorful"
 	te "github.com/muesli/termenv"
-	c "github.com/murphytalk/urphin/internal/watchlist/model"
+	c "github.com/murphytalk/urphin/internal"
 )
 
 const (

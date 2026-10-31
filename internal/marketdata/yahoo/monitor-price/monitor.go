@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
+	c "github.com/murphytalk/urphin/internal"
 	poller "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price/poller"
 	unary "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
 )
