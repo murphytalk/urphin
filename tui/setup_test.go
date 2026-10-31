@@ -130,3 +130,31 @@ func TestLoadConfigReportsMalformedFile(t *testing.T) {
 		t.Errorf("error %q does not name the config file %q", err, path)
 	}
 }
+
+func TestLoadCfgOrSettingsWritesDefaultConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configs", "urphin.yaml")
+	defaultCfg := Settings{
+		RefreshInterval: 30,
+		Sort:            "ticker",
+	}
+
+	var cfg Settings
+	if err := loadCfgOrSettings(&cfg, path, func(p string) (*Settings, error) {
+		return LoadSettings(p)
+	}, &defaultCfg); err != nil {
+		t.Fatalf("loadCfgOrSettings: %v", err)
+	}
+	if cfg.RefreshInterval != defaultCfg.RefreshInterval || cfg.Sort != defaultCfg.Sort {
+		t.Fatalf("cfg = %#v, want %#v", cfg, defaultCfg)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected config file to be created at %q: %v", path, err)
+	}
+	loaded, err := LoadSettings(path)
+	if err != nil {
+		t.Fatalf("LoadSettings(%q): %v", path, err)
+	}
+	if loaded.RefreshInterval != defaultCfg.RefreshInterval || loaded.Sort != defaultCfg.Sort {
+		t.Fatalf("loaded = %#v, want %#v", loaded, defaultCfg)
+	}
+}
