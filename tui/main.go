@@ -20,14 +20,18 @@ import (
 // does not say.
 const defaultLogKeepDays = 7
 
+type AppCtx struct {
+	Cfg      *Config   // loaded from --config, app only reads it
+	Settings *Settings // loaded from settings.yaml, app updates it with lastest settings
+	Debug    bool      // set by --debug-log, app only reads it
+}
+
 var (
-	cfgPath  string
-	cmdLine  string
-	logPath  string
-	options  Options
-	cfg      *Config   // loaded from --config, app only reads it
-	settings *Settings // loaded from settings.yaml, app updates it with lastest settings
-	logs     io.Closer // set once logging is configured, closed before exit
+	cfgPath string
+	cmdLine string
+	logPath string
+	ctx     AppCtx
+	logs    io.Closer // set once logging is configured, closed before exit
 )
 
 func logSettings(c *Config) (size, keep int) {
@@ -47,11 +51,11 @@ func logSettings(c *Config) (size, keep int) {
 
 func setupLogging() error {
 	level := slog.LevelInfo
-	if options.Debug {
+	if ctx.Debug {
 		level = slog.LevelDebug
 	}
 
-	size, keep := logSettings(cfg)
+	size, keep := logSettings(ctx.Cfg)
 
 	closer, err := logging.Setup(logging.Options{
 		Path:    logPath,
@@ -78,7 +82,7 @@ func closeLogging() {
 }
 
 func loadCfg() error {
-	return loadCfgOrSettings(cfg, cfgPath, LoadConfig, nil)
+	return loadCfgOrSettings(ctx.Cfg, cfgPath, LoadConfig, nil)
 }
 
 func saveCfgOrSettings[T any](path string, cfg *T) error {
@@ -142,8 +146,8 @@ func main() {
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
 	flag.StringVar(&logPath, "l", logPathDefault, "log file")
-	flag.BoolVar(&options.Debug, "debug-log", false, "debug log")
-	flag.BoolVar(&options.Debug, "D", false, "debug log")
+	flag.BoolVar(&ctx.Debug, "debug-log", false, "debug log")
+	flag.BoolVar(&ctx.Debug, "D", false, "debug log")
 
 	flag.Parse()
 
@@ -165,7 +169,7 @@ func main() {
 	// build settingsPath : take the directory of cfgPath
 	// populate default settings if settings.yaml does not exist and saves it
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "urphin-settings.yaml")
-	loadCfgOrSettings(settings, settingsPath, LoadSettings, &Settings{
+	loadCfgOrSettings(ctx.Settings, settingsPath, LoadSettings, &Settings{
 		RefreshInterval:                   30,
 		Separate:                          true,
 		ExtraInfoExchange:                 true,
@@ -195,13 +199,13 @@ func main() {
 		return
 	}
 
-	_, f := mktdata.StartMktDataFeeds(cfg.App.Cache, settings.BaseCurrency)
+	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency)
 	if f != nil {
 		slog.Error("Failed to start market data feeds", "error", f)
 		fmt.Fprintln(os.Stderr, f)
 		os.Exit(1)
 	}
-	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", options.Debug)
+	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
 
 	closeLogging()
 }
