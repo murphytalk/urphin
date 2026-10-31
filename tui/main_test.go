@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"log/slog"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/murphytalk/urphin/shared/logging"
-	"github.com/murphytalk/urphin/tui/ui"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -85,15 +84,15 @@ func TestLogSettings(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
-		cfg      *ui.Config
+		cfg      *Config
 		wantSize int
 		wantKeep int
 	}{
 		{name: "no config", wantSize: logging.DefaultMaxSize, wantKeep: 7},
-		{name: "configured", cfg: &ui.Config{App: ui.AppCfg{LogSize: 20, LogKeepDays: days(30)}}, wantSize: 20, wantKeep: 30},
-		{name: "keep 0 keeps all", cfg: &ui.Config{App: ui.AppCfg{LogSize: 20, LogKeepDays: days(0)}}, wantSize: 20, wantKeep: 0},
-		{name: "absent keys use defaults", cfg: &ui.Config{}, wantSize: logging.DefaultMaxSize, wantKeep: 7},
-		{name: "zero size uses default", cfg: &ui.Config{App: ui.AppCfg{LogSize: 0, LogKeepDays: days(3)}}, wantSize: logging.DefaultMaxSize, wantKeep: 3},
+		{name: "configured", cfg: &Config{App: AppCfg{LogSize: 20, LogKeepDays: days(30)}}, wantSize: 20, wantKeep: 30},
+		{name: "keep 0 keeps all", cfg: &Config{App: AppCfg{LogSize: 20, LogKeepDays: days(0)}}, wantSize: 20, wantKeep: 0},
+		{name: "absent keys use defaults", cfg: &Config{}, wantSize: logging.DefaultMaxSize, wantKeep: 7},
+		{name: "zero size uses default", cfg: &Config{App: AppCfg{LogSize: 0, LogKeepDays: days(3)}}, wantSize: logging.DefaultMaxSize, wantKeep: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			size, keep := logSettings(tc.cfg)

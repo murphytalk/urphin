@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -12,7 +12,6 @@ import (
 
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
-	"github.com/murphytalk/urphin/tui/ui"
 )
 
 // defaultLogKeepDays is how long a rotated log file is kept when app.logKeepDays
@@ -23,12 +22,12 @@ var (
 	cfgPath string
 	cmdLine string
 	logPath string
-	options ui.Options
-	cfg     *ui.Config // loaded from --config by loadCfg
-	logs    io.Closer  // set once logging is configured, closed before exit
+	options Options
+	cfg     *Config   // loaded from --config by loadCfg
+	logs    io.Closer // set once logging is configured, closed before exit
 )
 
-func logSettings(c *ui.Config) (size, keep int) {
+func logSettings(c *Config) (size, keep int) {
 	size, keep = logging.DefaultMaxSize, defaultLogKeepDays
 	if c == nil {
 		return size, keep
@@ -87,7 +86,7 @@ func loadCfg() error {
 		return fmt.Errorf("config path %q is a directory, not a file", cfgPath)
 	}
 
-	c, err := ui.LoadConfig(cfgPath)
+	c, err := LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
