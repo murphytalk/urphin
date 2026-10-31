@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"slices"
 
-	c "github.com/murphytalk/urphin/internal/watchlist/model"
+	c "github.com/murphytalk/urphin/internal"
 )
 
 // Sorter represents a function that sorts quotes

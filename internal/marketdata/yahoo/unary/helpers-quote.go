@@ -1,7 +1,7 @@
 package unary
 
 import (
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
+	c "github.com/murphytalk/urphin/internal"
 )
 
 //nolint:gochecknoglobals

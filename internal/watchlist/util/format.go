@@ -4,7 +4,7 @@ import (
 	"math"
 	"strconv"
 
-	c "github.com/murphytalk/urphin/internal/watchlist/model"
+	c "github.com/murphytalk/urphin/internal"
 )
 
 func getPrecision(f float64) int {

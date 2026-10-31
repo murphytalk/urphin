@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
+	c "github.com/murphytalk/urphin/internal"
 )
 
 const (

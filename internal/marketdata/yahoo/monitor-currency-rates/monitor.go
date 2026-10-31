@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	c "github.com/murphytalk/urphin/internal/marketdata/model"
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
 )
 
