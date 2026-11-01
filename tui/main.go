@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 
 	"github.com/goccy/go-yaml"
+	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
+	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
 )
@@ -20,21 +22,15 @@ import (
 // does not say.
 const defaultLogKeepDays = 7
 
-type AppCtx struct {
-	Cfg      *Config   // loaded from --config, app only reads it
-	Settings *Settings // loaded from settings.yaml, app updates it with lastest settings
-	Debug    bool      // set by --debug-log, app only reads it
-}
-
 var (
 	cfgPath string
 	cmdLine string
 	logPath string
-	ctx     AppCtx
+	ctx     c.AppCtx
 	logs    io.Closer // set once logging is configured, closed before exit
 )
 
-func logSettings(c *Config) (size, keep int) {
+func logSettings(c *c.Config) (size, keep int) {
 	size, keep = logging.DefaultMaxSize, defaultLogKeepDays
 	if c == nil {
 		return size, keep
@@ -166,22 +162,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// build settingsPath : take the directory of cfgPath
-	// populate default settings if settings.yaml does not exist and saves it
-	settingsPath := filepath.Join(filepath.Dir(cfgPath), "urphin-settings.yaml")
-	loadCfgOrSettings(ctx.Settings, settingsPath, LoadSettings, &Settings{
-		RefreshInterval:                   30,
-		Separate:                          true,
-		ExtraInfoExchange:                 true,
-		ExtraInfoFundamentals:             true,
-		ShowSummary:                       true,
-		ShowPositions:                     true,
-		CurrencyConvertSummaryOnly:        true,
-		CurrencyDisableUnitCostConversion: true,
-		Sort:                              "ticker",
-		BaseCurrency:                      "USD",
-	})
-
 	if logs == nil {
 		if err := setupLogging(); err != nil {
 			fmt.Fprintf(os.Stderr, "setup logging: %v\n", err)
@@ -198,6 +178,23 @@ func main() {
 		}
 		return
 	}
+
+	// build settingsPath : take the directory of cfgPath
+	// populate default settings if settings.yaml does not exist and saves it
+	settingsPath := filepath.Join(filepath.Dir(cfgPath), "urphin-settings.yaml")
+	loadCfgOrSettings(ctx.Settings, settingsPath, LoadSettings, &c.Settings{
+		RefreshInterval:                   30,
+		Separate:                          true,
+		ExtraInfoExchange:                 true,
+		ExtraInfoFundamentals:             true,
+		ShowSummary:                       true,
+		ShowPositions:                     true,
+		CurrencyConvertSummaryOnly:        true,
+		CurrencyDisableUnitCostConversion: true,
+		Sort:                              "ticker",
+		BaseCurrency:                      "USD",
+	})
+	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
 
 	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency)
 	if f != nil {

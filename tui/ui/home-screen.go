@@ -6,11 +6,13 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/summary"
 	"github.com/murphytalk/urphin/internal/watchlist"
+	"github.com/murphytalk/urphin/shared/fin"
 )
 
 type Model struct {
-	ctx                c.Context
+	ctx                c.AppCtx
 	ready              bool
 	headerHeight       int
 	versionVector      int
@@ -18,7 +20,7 @@ type Model struct {
 	assets             []c.Asset
 	assetQuotes        []c.AssetQuote
 	assetQuotesLookup  map[string]int
-	positionSummary    asset.PositionSummary
+	positionSummary    fin.PositionSummary
 	viewport           viewport.Model
 	watchlist          *watchlist.Model
 	summary            *summary.Model
@@ -27,7 +29,7 @@ type Model struct {
 	groupMaxIndex      int
 	groupSelectedName  string
 	currentSort        string
-	monitors           *mon.Monitor
+	mktFeeds           c.MarketFeeds
 	mu                 sync.RWMutex
 	version            string
 	latestVersion      string
@@ -54,7 +56,7 @@ type SetAssetGroupQuoteMsg struct {
 }
 
 // NewModel is the constructor for UI model
-func NewModel(ctx c.Context, monitors *mon.Monitor, version string) *Model {
+func NewModel(ctx c.AppCtx, monitors *mon.Monitor, version string) *Model {
 
 	groupMaxIndex := len(ctx.Groups) - 1
 
