@@ -90,6 +90,9 @@ func saveCfgOrSettings[T any](path string, cfg *T) error {
 	if err != nil {
 		return fmt.Errorf("marshal default config for %q: %w", path, err)
 	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create config directory for %q: %w", path, err)
+	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write default config %q: %w", path, err)
 	}
