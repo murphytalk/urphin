@@ -380,11 +380,11 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 
 func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
 
-	if asset.Class == c.AssetClassFuturesContract && asset.QuoteFutures.IndexPrice == 0.0 {
+	if asset.Class == c.AssetClassFutures && asset.QuoteFutures.IndexPrice == 0.0 {
 		return ""
 	}
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 		return styles.Text(u.ConvertFloatToString(asset.QuoteFutures.IndexPrice, asset.Meta.IsVariablePrecision)) +
 			"\n" +
 			styles.Text(u.ConvertFloatToString(asset.QuoteFutures.Basis, false)) + "%"
@@ -403,11 +403,11 @@ func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
 
 func textQuoteExtendedLabels(asset *c.Asset, styles c.Styles) string {
 
-	if asset.Class == c.AssetClassFuturesContract && asset.QuoteFutures.IndexPrice == 0.0 {
+	if asset.Class == c.AssetClassFutures && asset.QuoteFutures.IndexPrice == 0.0 {
 		return ""
 	}
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 		return styles.TextLabel("Index Price:") +
 			"\n" +
 			styles.TextLabel("Basis:")
@@ -448,7 +448,7 @@ func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
 
 func textQuoteRange(asset *c.Asset, styles c.Styles) string {
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 
 		if asset.QuotePrice.PriceDayHigh != 0.0 && asset.QuotePrice.PriceDayLow != 0.0 {
 			return u.ConvertFloatToString(asset.QuotePrice.PriceDayLow, asset.Meta.IsVariablePrecision) +
@@ -478,7 +478,7 @@ func textQuoteRange(asset *c.Asset, styles c.Styles) string {
 
 func textQuoteRangeLabels(asset *c.Asset, styles c.Styles) string {
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 
 		if asset.QuotePrice.PriceDayHigh != 0.0 && asset.QuotePrice.PriceDayLow != 0.0 {
 			return styles.TextLabel("Day Range:") +
@@ -500,7 +500,7 @@ func textQuoteRangeLabels(asset *c.Asset, styles c.Styles) string {
 
 func textVolumeMarketCap(asset *c.Asset) string {
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 		return u.ConvertFloatToString(asset.QuoteFutures.OpenInterest, true) +
 			"\n" +
 			u.ConvertFloatToString(asset.QuoteExtended.Volume, true)
@@ -512,7 +512,7 @@ func textVolumeMarketCap(asset *c.Asset) string {
 }
 func textVolumeMarketCapLabels(asset *c.Asset, styles c.Styles) string {
 
-	if asset.Class == c.AssetClassFuturesContract {
+	if asset.Class == c.AssetClassFutures {
 		return styles.TextLabel("Open Interest:") +
 			"\n" +
 			styles.TextLabel("Volume:")

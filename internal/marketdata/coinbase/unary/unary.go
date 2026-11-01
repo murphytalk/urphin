@@ -104,7 +104,7 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 		name = responseQuote.FutureProductDetails.GroupDescription
 		symbol = responseQuote.ProductID + ".CB"
 		isActive = responseQuote.FcmTradingSessionDetails.IsSessionOpen
-		class = c.AssetClassFuturesContract
+		class = c.AssetClassFutures
 		expirationTimezone, _ := time.LoadLocation(responseQuote.FutureProductDetails.ExpirationTimezone)
 		expirationDate, _ := time.ParseInLocation(time.RFC3339, responseQuote.FutureProductDetails.ExpirationDate, expirationTimezone)
 
