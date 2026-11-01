@@ -78,6 +78,9 @@ func closeLogging() {
 }
 
 func loadCfg() error {
+	if ctx.Cfg == nil {
+		ctx.Cfg = &c.Config{}
+	}
 	return loadCfgOrSettings(ctx.Cfg, cfgPath, LoadConfig, nil)
 }
 
@@ -182,6 +185,9 @@ func main() {
 	// build settingsPath : take the directory of cfgPath
 	// populate default settings if settings.yaml does not exist and saves it
 	settingsPath := filepath.Join(filepath.Dir(cfgPath), "urphin-settings.yaml")
+	if ctx.Settings == nil {
+		ctx.Settings = &c.Settings{}
+	}
 	loadCfgOrSettings(ctx.Settings, settingsPath, LoadSettings, &c.Settings{
 		RefreshInterval:                   30,
 		Separate:                          true,
