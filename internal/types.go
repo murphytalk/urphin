@@ -95,11 +95,15 @@ type AssetClass int
 const (
 	AssetClassCash AssetClass = iota
 	AssetClassStock
-	AssetClassCryptocurrency
-	AssetClassPrivateSecurity
-	AssetClassUnknown
-	AssetClassFuturesContract
+	AssetClassETF
+	AssetClassMutualFund
+	AssetClassOption
+	AssetClassFutures
+	AssetClassBond
+	AssetClassMetal
+	AssetClassFx
 	AssetClassCurrency
+	AssetClassCryptocurrency
 )
 
 type QuoteSource int
