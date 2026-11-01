@@ -7,6 +7,49 @@ type Cache interface {
 	Set(key string, value any, ttl time.Duration)
 }
 
+type AppCfg struct {
+	// LogSize is the rotation threshold in megabytes; 0 (or absent) means
+	// logging.DefaultMaxSize.
+	LogSize int `yaml:"logSize"`
+	// LogKeepDays is a pointer so an absent key stays distinct from a configured
+	// 0: absent falls back to the default, while 0 keeps every rotated file, the
+	// same meaning as lumberjack's MaxAge 0.
+	LogKeepDays *int              `yaml:"logKeepDays"`
+	Cache       string            `yaml:"cache"`
+	ColorScheme ConfigColorScheme `yaml:"colors"`
+}
+
+type Settings struct {
+	RefreshInterval                   int    `yaml:"interval"`
+	Separate                          bool   `yaml:"show-separator"`
+	ExtraInfoExchange                 bool   `yaml:"show-tags"`
+	ExtraInfoFundamentals             bool   `yaml:"show-fundamentals"`
+	ShowSummary                       bool   `yaml:"show-summary"`
+	ShowPositions                     bool   `yaml:"show-positions"`
+	Sort                              string `yaml:"sort"`
+	BaseCurrency                      string `yaml:"base-currency"`
+	CurrencyConvertSummaryOnly        bool   `yaml:"currency-summary-only"`
+	CurrencyDisableUnitCostConversion bool   `yaml:"currency-disable-unit-cost-conversion"`
+}
+
+type KeySecretCfg struct {
+	Key    string `yaml:"key"`
+	Secret string `yaml:"secret"`
+}
+
+type Config struct {
+	App      AppCfg            `yaml:"app"`
+	Postgres map[string]string `yaml:"postgres"`
+	Alpaca   KeySecretCfg      `yaml:"alpaca"`
+}
+
+type AppCtx struct {
+	Cfg      *Config   // loaded from --config, app only reads it
+	Settings *Settings // loaded from settings.yaml, app updates it with lastest settings
+	Debug    bool      // set by --debug-log, app only reads it
+	Styles   Styles    // derived from Cfg.App.ColorScheme, app only populates it once
+}
+
 type CurrencyRates map[string]CurrencyRate
 
 type CurrencyRate struct {
@@ -189,30 +232,6 @@ type Styles struct {
 	TextLine  StyleFn
 	TextPrice func(float64, string) string
 	Tag       StyleFn
-}
-
-type Config struct {
-	RefreshInterval                   int                `yaml:"interval"`
-	Watchlist                         []string           `yaml:"watchlist"`
-	Lots                              []Lot              `yaml:"lots"`
-	Separate                          bool               `yaml:"show-separator"`
-	ExtraInfoExchange                 bool               `yaml:"show-tags"`
-	ExtraInfoFundamentals             bool               `yaml:"show-fundamentals"`
-	ShowSummary                       bool               `yaml:"show-summary"`
-	ShowHoldings                      bool               `yaml:"show-holdings"`  // Deprecated: use ShowPositions instead, kept for backwards compatibility
-	ShowPositions                     bool               `yaml:"show-positions"` // Preferred field name
-	Sort                              string             `yaml:"sort"`
-	Currency                          string             `yaml:"currency"`
-	CurrencyConvertSummaryOnly        bool               `yaml:"currency-summary-only"`
-	CurrencyDisableUnitCostConversion bool               `yaml:"currency-disable-unit-cost-conversion"`
-	ColorScheme                       ConfigColorScheme  `yaml:"colors"`
-	AssetGroup                        []ConfigAssetGroup `yaml:"groups"`
-	Debug                             bool               `yaml:"debug"`
-	// Cache enables the on-disk cache. It is a pointer so that an unset config
-	// value (nil) can be distinguished from an explicit false, allowing the
-	// cache to default to on while still being disableable via config or
-	// --no-cache.
-	Cache *bool `yaml:"cache"`
 }
 
 // ConfigColorScheme represents user defined color scheme

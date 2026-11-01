@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	c "github.com/murphytalk/urphin/internal"
 )
 
 func writeCfg(t *testing.T, body string) string {
@@ -133,13 +135,13 @@ func TestLoadConfigReportsMalformedFile(t *testing.T) {
 
 func TestLoadCfgOrSettingsWritesDefaultConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "configs", "urphin.yaml")
-	defaultCfg := Settings{
+	defaultCfg := c.Settings{
 		RefreshInterval: 30,
 		Sort:            "ticker",
 	}
 
-	var cfg Settings
-	if err := loadCfgOrSettings(&cfg, path, func(p string) (*Settings, error) {
+	var cfg c.Settings
+	if err := loadCfgOrSettings(&cfg, path, func(p string) (*c.Settings, error) {
 		return LoadSettings(p)
 	}, &defaultCfg); err != nil {
 		t.Fatalf("loadCfgOrSettings: %v", err)

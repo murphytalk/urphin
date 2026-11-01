@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"testing"
 
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/shared/logging"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -26,14 +27,14 @@ func readLog(t *testing.T, name string) string {
 func TestConfigLoadFailureLogsError(t *testing.T) {
 	dir := t.TempDir()
 
-	oldCfgPath, oldLogPath, oldCfg, oldOptions, oldDefault := cfgPath, logPath, cfg, options, slog.Default()
+	oldCfgPath, oldLogPath, oldCfg, oldDefault := cfgPath, logPath, ctx.Cfg, slog.Default()
 	t.Cleanup(func() {
 		closeLogging()
-		cfgPath, logPath, cfg, options = oldCfgPath, oldLogPath, oldCfg, oldOptions
+		cfgPath, logPath, ctx.Cfg = oldCfgPath, oldLogPath, oldCfg
 		slog.SetDefault(oldDefault)
 	})
 
-	cfg = nil
+	ctx.Cfg = nil
 	cfgPath = filepath.Join(dir, "missing.yaml")
 	logPath = filepath.Join(dir, "urphin.log")
 
@@ -84,15 +85,15 @@ func TestLogSettings(t *testing.T) {
 
 	for _, tc := range []struct {
 		name     string
-		cfg      *Config
+		cfg      *c.Config
 		wantSize int
 		wantKeep int
 	}{
 		{name: "no config", wantSize: logging.DefaultMaxSize, wantKeep: 7},
-		{name: "configured", cfg: &Config{App: AppCfg{LogSize: 20, LogKeepDays: days(30)}}, wantSize: 20, wantKeep: 30},
-		{name: "keep 0 keeps all", cfg: &Config{App: AppCfg{LogSize: 20, LogKeepDays: days(0)}}, wantSize: 20, wantKeep: 0},
-		{name: "absent keys use defaults", cfg: &Config{}, wantSize: logging.DefaultMaxSize, wantKeep: 7},
-		{name: "zero size uses default", cfg: &Config{App: AppCfg{LogSize: 0, LogKeepDays: days(3)}}, wantSize: logging.DefaultMaxSize, wantKeep: 3},
+		{name: "configured", cfg: &c.Config{App: c.AppCfg{LogSize: 20, LogKeepDays: days(30)}}, wantSize: 20, wantKeep: 30},
+		{name: "keep 0 keeps all", cfg: &c.Config{App: c.AppCfg{LogSize: 20, LogKeepDays: days(0)}}, wantSize: 20, wantKeep: 0},
+		{name: "absent keys use defaults", cfg: &c.Config{}, wantSize: logging.DefaultMaxSize, wantKeep: 7},
+		{name: "zero size uses default", cfg: &c.Config{App: c.AppCfg{LogSize: 0, LogKeepDays: days(3)}}, wantSize: logging.DefaultMaxSize, wantKeep: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			size, keep := logSettings(tc.cfg)
@@ -114,14 +115,14 @@ func TestConfigSetsRotationFromConfig(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 
-	oldCfg, oldCfgPath, oldLog, oldLogs, oldDefault := cfg, cfgPath, logPath, logs, slog.Default()
+	oldCfg, oldCfgPath, oldLog, oldLogs, oldDefault := ctx.Cfg, cfgPath, logPath, logs, slog.Default()
 	t.Cleanup(func() {
 		closeLogging()
-		cfg, cfgPath, logPath, logs = oldCfg, oldCfgPath, oldLog, oldLogs
+		ctx.Cfg, cfgPath, logPath, logs = oldCfg, oldCfgPath, oldLog, oldLogs
 		slog.SetDefault(oldDefault)
 	})
 
-	cfg, logs = nil, nil
+	ctx.Cfg, logs = nil, nil
 	cfgPath = path
 	logPath = filepath.Join(dir, "urphin.log")
 
