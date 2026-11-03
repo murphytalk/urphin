@@ -9,10 +9,11 @@ baseCmd
   | ratioCmd
   | help | u
   | prop
+  | watch
   ;
 
 // shared argument shapes (named groups in commands.py)
-tickerArg : TICKER | CCY_PAIR | CCY | SIDE | FILTER
+tickerArg : TICKER | PORTFOLIO | CCY_PAIR | CCY | SIDE | FILTER
           | TRUE_KW | BOOL_KW
           | brokers
           ;
@@ -51,10 +52,12 @@ prop        : PROP (txTarget | tickerTarget)
 txTarget    : PROP_TX b=brokers t=tickerArg id=INT ;
 tickerTarget: PROP_TICKER_KW t=tickerArg ;
 propWord    : PROP_PATH | PROP_VALUE | TICKER | INT
+            | PORTFOLIO
             | brokers
             | PROP_TX | PROP_TICKER_KW ;
 
 forceSpend  : TRUE_KW | BOOL_KW | INT ;
 
+watch     : WATCH (portfolio=PORTFOLIO)? ;
 mnq       : MNQ dateRange? ;
 dateRange : d=DATE (e=DATE)? ;

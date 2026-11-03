@@ -25,7 +25,7 @@ func (txTestBackend) CalculatePositionAndVWAP(*string, string) (databackend.Posi
 	return databackend.PositionWithAssetRatio{}, nil
 }
 
-func (txTestBackend) GetWatchlists() ([]databackend.Watchlist, error) {
+func (txTestBackend) GetWatchList(*string) ([]databackend.Watchlist, error) {
 	return nil, nil
 }
 

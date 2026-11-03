@@ -18,7 +18,7 @@ var labelKeys = map[string]string{
 	"F": "filter", "Fee": "fee", "Fo": "fixed_over_spend_amount",
 	"Fs": "force_spend", "Id": "tx_id", "IsClosed": "is_closed", "M": "months", "None": "value",
 	"O1": "open_date1", "O2": "open_date2", "Path": "prop_path",
-	"Pct": "pct", "Prem": "price", "Price": "price", "Ratio": "split_ratio",
+	"Pct": "pct", "Portfolio": "portfolio", "Prem": "price", "Price": "price", "Ratio": "split_ratio",
 	"S": "side", "Sh": "shares", "Strike": "sprice", "T": "ticker",
 	"Ts": "tickers", "Val": "value",
 }

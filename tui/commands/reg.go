@@ -18,6 +18,7 @@ func registerAll(r *Registry) {
 
 func registerPublic(r *Registry) {
 	r.Register(&TxCmd{})
+	r.Register(&WatchCmd{})
 }
 
 func init() {
