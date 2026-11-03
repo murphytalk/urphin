@@ -74,8 +74,11 @@ type Watchlist struct {
 	Themes  []string
 }
 
+type BackendType = string
+type BackendName = string
+
 type DataBackend interface {
-	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) []Tx
-	GetWatchlists() []Watchlist
+	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
+	GetWatchlists() ([]Watchlist, error)
 	Close() error
 }

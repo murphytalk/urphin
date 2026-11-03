@@ -8,6 +8,6 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 )
 
-func connectToExtendedDataBackend(backendName string, connName string, config c.Config) (databackend.DataBackend, error) {
-	return extensiondata.ConnectToExtendedDataBackend(backendName, connName, config)
+func connectToExtendedDataBackend(backendType databackend.BackendType, backendName databackend.BackendName, config *c.Config) (databackend.DataBackend, error) {
+	return extensiondata.ConnectToExtendedDataBackend(backendType, backendName, config)
 }
