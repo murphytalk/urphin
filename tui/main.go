@@ -202,6 +202,11 @@ func run() int {
 		}
 	}()
 
+	//todo: replace with market data feed
+	commands.SetCommandContext(func(ticker string) (float64, error) {
+		return 0, nil
+	})
+
 	if commandProvided {
 		err := runOneCommand(databackend, cmdLine)
 		if err != nil {

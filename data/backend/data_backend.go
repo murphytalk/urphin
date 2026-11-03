@@ -109,6 +109,6 @@ type BackendName = string
 type DataBackend interface {
 	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
 	CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error)
-	GetWatchlists() ([]Watchlist, error)
+	GetWatchList(name *string) ([]Watchlist, error)
 	Close() error
 }

@@ -20,6 +20,7 @@ SPLIT    : 'SPLIT'     -> pushMode(ARGS);
 TRANS    : 'TRANS'     -> pushMode(ARGS);
 TX       : 'TX'        -> pushMode(ARGS);
 ATX      : 'ATX'       -> pushMode(ARGS);
+WATCH    : 'WATCH'     -> pushMode(ARGS);
 U        : 'U'         -> pushMode(ARGS);
 PROP     : 'PROP'      -> pushMode(PROP_MODE);
 
@@ -30,14 +31,14 @@ fragment CCY_FRAG     : 'USD' | 'JPY' | 'CNY' | 'HKD' ;
 fragment WORD
   : [A-Z] [A-Z] [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]?
   ;
-fragment PORTFOLIO : WORD ;
+fragment PORTFOLIO_FRAG : WORD ;
 fragment TICKER_FRAG
   : [0-9][0-9][0-9][0-9] '.HK'
   | [0-9][0-9][0-9][0-9][0-9][0-9] '.SZ'
   | [0-9][0-9][0-9][0-9][0-9][0-9] '.SS'
   | [0-9][0-9][0-9][0-9A-Z] '.T'
   | [A-Z][A-Z][A-Z] '.' [A-Z][A-Z][A-Z]
-  | PORTFOLIO
+  | PORTFOLIO_FRAG
   | '/'? [A-Z] [A-Z]? [A-Z]? [A-Z]? [A-Z]? ('.' [A-Z] [A-Z]?)? ;
 
 // ──────────────────────────── ARGS mode ────────────────────────────
@@ -57,6 +58,7 @@ BROKER4  : 'B4' ;
 BROKER5  : 'B5' ;
 BROKER6  : 'B6' ;
 BROKER7  : 'B7' ;
+PORTFOLIO : PORTFOLIO_FRAG ;
 TICKER : TICKER_FRAG ;
 TICKERS_LIST : [A-Z,]+ ;
 INT   : [0-9]+ ;
