@@ -27,12 +27,17 @@ UNKNOWN_WORD : [A-Z0-9_-]+ ;
 UNKNOWN_CHAR : . ;
 
 fragment CCY_FRAG     : 'USD' | 'JPY' | 'CNY' | 'HKD' ;
+fragment WORD
+  : [A-Z] [A-Z] [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]? [A-Z]?
+  ;
+fragment PORTFOLIO : WORD ;
 fragment TICKER_FRAG
   : [0-9][0-9][0-9][0-9] '.HK'
   | [0-9][0-9][0-9][0-9][0-9][0-9] '.SZ'
   | [0-9][0-9][0-9][0-9][0-9][0-9] '.SS'
   | [0-9][0-9][0-9][0-9A-Z] '.T'
   | [A-Z][A-Z][A-Z] '.' [A-Z][A-Z][A-Z]
+  | PORTFOLIO
   | '/'? [A-Z] [A-Z]? [A-Z]? [A-Z]? [A-Z]? ('.' [A-Z] [A-Z]?)? ;
 
 // ──────────────────────────── ARGS mode ────────────────────────────
