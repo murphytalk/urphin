@@ -165,7 +165,7 @@ func validQuote(bid, ask float64) bool {
 }
 
 func midpoint(bid, ask float64) float64 {
-	return bid/2 + ask/2
+	return (bid + ask) / 2
 }
 
 func setPriceChange(quote *c.AssetQuote, price float64) {
