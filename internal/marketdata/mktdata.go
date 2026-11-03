@@ -3,10 +3,12 @@ package mktdata
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	//priceCoinbase "github.com/murphytalk/urphin/internal/marketdata/coinbase/monitor-price"
 	c "github.com/murphytalk/urphin/internal"
+	alpacaFeed "github.com/murphytalk/urphin/internal/marketdata/alpaca"
 	"github.com/murphytalk/urphin/internal/marketdata/cache"
 	currencyRate "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-currency-rates"
 	price "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price"
@@ -47,7 +49,7 @@ type MktDataFeeds struct {
 	cancel                  context.CancelFunc
 }
 
-func StartMktDataFeeds(cachePath string, targetCurrency string) (*MktDataFeeds, error) {
+func StartMktDataFeeds(cachePath string, targetCurrency string, alpacaCredentials c.KeySecretCfg) (*MktDataFeeds, error) {
 	chanError := make(chan error, errChanSize)
 	chanUpdateAssetQuote := make(chan c.MessageUpdate[c.AssetQuote], quoteChanSize)
 	chanUpdateCurrencyRate := make(chan c.CurrencyRates, quoteChanSize)
@@ -78,10 +80,27 @@ func StartMktDataFeeds(cachePath string, targetCurrency string) (*MktDataFeeds, 
 
 	ccyRate.SetTargetCurrency(targetCurrency)
 
+	feedMap := map[c.QuoteSource]MktDataFeed{
+		c.QuoteSourceYahoo: yahoo,
+	}
+	if alpacaCredentials.Key != "" && alpacaCredentials.Secret != "" {
+		alpaca, err := alpacaFeed.NewMktDataFeed(alpacaFeed.Config{
+			Ctx:                  ctx,
+			Credentials:          alpacaCredentials,
+			ChanError:            chanError,
+			ChanUpdateAssetQuote: chanUpdateAssetQuote,
+		})
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("create Alpaca market data feed: %w", err)
+		}
+		feedMap[c.QuoteSourceAlpaca] = alpaca
+	} else if alpacaCredentials.Key != "" || alpacaCredentials.Secret != "" {
+		slog.Error("Alpaca market data feed not registered: both API key and secret are required")
+	}
+
 	feeds := &MktDataFeeds{
-		feeds: map[c.QuoteSource]MktDataFeed{
-			c.QuoteSourceYahoo: yahoo,
-		},
+		feeds:                   feedMap,
 		monitorCurrencyRate:     ccyRate,
 		chanUpdateAssetQuote:    chanUpdateAssetQuote,
 		chanUpdateCurrencyRates: chanUpdateCurrencyRate,
@@ -93,8 +112,8 @@ func StartMktDataFeeds(cachePath string, targetCurrency string) (*MktDataFeeds, 
 	return feeds, nil
 }
 
-// GetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
-func GetLastPrices(symbols []string, cachePath string) (map[string]float64, error) {
+// YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
+func YahooGetLastPrices(symbols []string, cachePath string) (map[string]float64, error) {
 	if len(symbols) == 0 {
 		return map[string]float64{}, nil
 	}
@@ -106,6 +125,11 @@ func GetLastPrices(symbols []string, cachePath string) (map[string]float64, erro
 	}
 
 	return lastPricesFromQuotes(symbols, quotesBySymbol)
+}
+
+// AlpacaGetPrices fetches one fresh Alpaca snapshot batch without starting a stream.
+func AlpacaGetPrices(symbols []string, credentials c.KeySecretCfg) (map[string]float64, error) {
+	return alpacaFeed.GetPrices(symbols, credentials)
 }
 
 func lastPricesFromQuotes(symbols []string, quotesBySymbol map[string]*c.AssetQuote) (map[string]float64, error) {

@@ -27,11 +27,12 @@ import (
 const defaultLogKeepDays = 7
 
 var (
-	cfgPath string
-	cmdLine string
-	logPath string
-	ctx     c.AppCtx
-	logs    io.Closer // set once logging is configured, closed before exit
+	cfgPath             string
+	cmdLine             string
+	logPath             string
+	mktDataFeedOverride string
+	ctx                 c.AppCtx
+	logs                io.Closer // set once logging is configured, closed before exit
 )
 
 func logSettings(c *c.Config) (size, keep int) {
@@ -138,6 +139,7 @@ func runOneCommand(databackend databackend.DataBackend, line string) error {
 }
 
 func main() {
+	flag.Parse()
 	os.Exit(run())
 }
 
@@ -152,12 +154,12 @@ func init() {
 
 	flag.StringVar(&cfgPath, "config", cfgPathDefault, "config file")
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
+	flag.StringVar(&mktDataFeedOverride, "m", "", "override one-shot market-data feed (yahoo or alpaca)")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
 	flag.StringVar(&logPath, "l", logPathDefault, "log file")
 	flag.BoolVar(&ctx.Debug, "debug-log", false, "debug log")
 	flag.BoolVar(&ctx.Debug, "D", false, "debug log")
 
-	flag.Parse()
 }
 
 func run() int {
@@ -204,12 +206,15 @@ func run() int {
 
 	if commandProvided {
 		cachePath := ctx.Cfg.App.Cache
-		commands.SetCommandContext(func(tickers []string) (map[string]float64, error) {
-			return mktdata.GetLastPrices(tickers, cachePath)
-		})
+		getLastPrices, err := resolveOneShotMktDataFeed(ctx.Cfg.App.OneShotMktDataFeed, mktDataFeedOverride, ctx.Cfg.Alpaca, cachePath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		commands.SetCommandContext(getLastPrices)
 		defer commands.SetCommandContext(nil)
 
-		err := runOneCommand(databackend, cmdLine)
+		err = runOneCommand(databackend, cmdLine)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -238,13 +243,54 @@ func run() int {
 	})
 	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
 
-	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency)
+	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency, ctx.Cfg.Alpaca)
 	if f != nil {
 		slog.Error("Failed to start market data feeds", "error", f)
 		fmt.Fprintln(os.Stderr, f)
 		return 1
 	}
+
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
 
 	return 0
+}
+
+func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {
+	if override != "" {
+		feed = override
+	}
+	if feed == "" {
+		feed = "yahoo"
+	}
+	switch feed {
+	case "yahoo":
+		return func(tickers []string) (map[string]float64, error) {
+			return mktdata.YahooGetLastPrices(tickers, cachePath)
+		}, nil
+	case "alpaca":
+		return func(tickers []string) (map[string]float64, error) {
+			var alpacaErr error
+			if credentials.Key == "" || credentials.Secret == "" {
+				alpacaErr = errors.New("Alpaca API key and secret are required")
+			} else {
+				prices, err := mktdata.AlpacaGetPrices(tickers, credentials)
+				if err == nil {
+					return prices, nil
+				}
+				alpacaErr = err
+			}
+
+			slog.Error("Alpaca one-shot market-data lookup failed; falling back to Yahoo", "error", alpacaErr)
+			prices, yahooErr := mktdata.YahooGetLastPrices(tickers, cachePath)
+			if yahooErr != nil {
+				return nil, errors.Join(
+					fmt.Errorf("Alpaca lookup failed: %w", alpacaErr),
+					fmt.Errorf("Yahoo fallback failed: %w", yahooErr),
+				)
+			}
+			return prices, nil
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid one-shot market-data feed %q: expected yahoo or alpaca", feed)
+	}
 }

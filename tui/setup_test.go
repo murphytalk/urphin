@@ -27,6 +27,7 @@ func TestLoadConfigParsesTaggedKeys(t *testing.T) {
 	path := writeCfg(t, `app:
   logSize: 20
   logKeepDays: 7
+  one-shot-mkt-data-feed: alpaca
 postgres:
   neon: postgresql://user:pass@neon.lan/db
   router: postgresql://postgres:pass@router.lan:5432/urphin
@@ -45,6 +46,9 @@ alpaca:
 	}
 	if cfg.App.LogKeepDays == nil || *cfg.App.LogKeepDays != 7 {
 		t.Errorf("App.LogKeepDays = %v, want 7", cfg.App.LogKeepDays)
+	}
+	if cfg.App.OneShotMktDataFeed != "alpaca" {
+		t.Errorf("App.OneShotMktDataFeed = %q, want alpaca", cfg.App.OneShotMktDataFeed)
 	}
 	if want := "postgresql://user:pass@neon.lan/db"; cfg.Postgres["neon"] != want {
 		t.Errorf("Postgres[neon] = %q, want %q", cfg.Postgres["neon"], want)
