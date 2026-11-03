@@ -202,13 +202,13 @@ func run() int {
 		}
 	}()
 
-	//todo: replace with market data feed
-	commands.SetCommandContext(func(ticker string) (float64, error) {
-		//return 0, fmt.Errorf("last price lookup for %q is not configured", ticker)
-		return 0, nil
-	})
-
 	if commandProvided {
+		cachePath := ctx.Cfg.App.Cache
+		commands.SetCommandContext(func(tickers []string) (map[string]float64, error) {
+			return mktdata.GetLastPrices(tickers, cachePath)
+		})
+		defer commands.SetCommandContext(nil)
+
 		err := runOneCommand(databackend, cmdLine)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -216,6 +216,7 @@ func run() int {
 		}
 		return 0
 	}
+	commands.SetCommandContext(nil)
 
 	// build settingsPath : take the directory of cfgPath
 	// populate default settings if settings.yaml does not exist and saves it

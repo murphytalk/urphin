@@ -2,6 +2,7 @@ package mktdata
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	//priceCoinbase "github.com/murphytalk/urphin/internal/marketdata/coinbase/monitor-price"
@@ -55,13 +56,7 @@ func StartMktDataFeeds(cachePath string, targetCurrency string) (*MktDataFeeds, 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mktCache := cache.New(cachePath)
-	yahooApi := unaryClientYahoo.NewUnaryAPI(unaryClientYahoo.Config{
-		BaseURL:           yahooBaseURL,
-		SessionRootURL:    yahooSessionConsentURL,
-		SessionCrumbURL:   yahooSessionCrumbURL,
-		SessionConsentURL: yahooSessionConsentURL,
-		Cache:             mktCache,
-	})
+	yahooApi := newYahooAPI(mktCache)
 
 	yahoo := price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
@@ -96,4 +91,46 @@ func StartMktDataFeeds(cachePath string, targetCurrency string) (*MktDataFeeds, 
 	}
 
 	return feeds, nil
+}
+
+// GetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
+func GetLastPrices(symbols []string, cachePath string) (map[string]float64, error) {
+	if len(symbols) == 0 {
+		return map[string]float64{}, nil
+	}
+
+	yahooAPI := newYahooAPI(cache.New(cachePath))
+	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(symbols)
+	if err != nil {
+		return nil, err
+	}
+
+	return lastPricesFromQuotes(symbols, quotesBySymbol)
+}
+
+func lastPricesFromQuotes(symbols []string, quotesBySymbol map[string]*c.AssetQuote) (map[string]float64, error) {
+	prices := make(map[string]float64, len(symbols))
+	for _, symbol := range symbols {
+		quote, exists := quotesBySymbol[symbol]
+		if !exists || quote == nil {
+			return nil, fmt.Errorf("Yahoo returned no quote for ticker %q", symbol)
+		}
+		prices[symbol] = quote.QuotePrice.Price
+	}
+
+	return prices, nil
+}
+
+func newYahooAPI(mktCache c.Cache) *unaryClientYahoo.UnaryAPI {
+	return unaryClientYahoo.NewUnaryAPI(yahooAPIConfig(mktCache))
+}
+
+func yahooAPIConfig(mktCache c.Cache) unaryClientYahoo.Config {
+	return unaryClientYahoo.Config{
+		BaseURL:           yahooBaseURL,
+		SessionRootURL:    yahooSessionRootURL,
+		SessionCrumbURL:   yahooSessionCrumbURL,
+		SessionConsentURL: yahooSessionConsentURL,
+		Cache:             mktCache,
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,11 +69,21 @@ func TestWatchCommandPrintsSortedJSON(t *testing.T) {
 			{Name: "Alpha", Tickers: []string{"GOOG", "AAPL"}},
 		},
 	}
-	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(ticker string) (float64, error) {
-		return map[string]float64{"AAPL": 10, "GOOG": 20, "MSFT": 30}[ticker], nil
+	var requestedTickers []string
+	requestCount := 0
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(tickers []string) (map[string]float64, error) {
+		requestCount++
+		requestedTickers = append([]string(nil), tickers...)
+		return map[string]float64{"AAPL": 10, "GOOG": 20, "MSFT": 30}, nil
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
+	}
+	if requestCount != 1 {
+		t.Errorf("last-price requests = %d, want 1", requestCount)
+	}
+	if !reflect.DeepEqual(requestedTickers, []string{"AAPL", "GOOG", "MSFT"}) {
+		t.Errorf("requested tickers = %v, want [AAPL GOOG MSFT]", requestedTickers)
 	}
 	want := map[string]watchlistResult{
 		"Alpha": {
@@ -116,8 +127,11 @@ func TestWatchCommandFiltersByPortfolio(t *testing.T) {
 			{Name: "Core", Tickers: []string{"NVDA", "AAPL"}},
 		},
 	}
-	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{"portfolio": "Core"}, true, func(string) (float64, error) {
-		return 25, nil
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{"portfolio": "Core"}, true, func(tickers []string) (map[string]float64, error) {
+		if !reflect.DeepEqual(tickers, []string{"AAPL", "NVDA"}) {
+			t.Errorf("requested tickers = %v, want [AAPL NVDA]", tickers)
+		}
+		return map[string]float64{"AAPL": 25, "NVDA": 25}, nil
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -156,8 +170,8 @@ func TestWatchCommandDoesNotPrintPartialJSONOnPositionError(t *testing.T) {
 		positionErrSym: "GOOG",
 		positionErr:    positionErr,
 	}
-	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(string) (float64, error) {
-		return 10, nil
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func([]string) (map[string]float64, error) {
+		return map[string]float64{"AAPL": 10}, nil
 	})
 	if !errors.Is(err, positionErr) {
 		t.Fatalf("Execute() error = %v, want wrapped position error", err)
@@ -172,11 +186,26 @@ func TestWatchCommandDoesNotPrintJSONOnLastPriceError(t *testing.T) {
 	backend := &watchTestBackend{
 		watchlists: []databackend.Watchlist{{Name: "Core", Tickers: []string{"AAPL"}}},
 	}
-	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(string) (float64, error) {
-		return 0, priceErr
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func([]string) (map[string]float64, error) {
+		return nil, priceErr
 	})
 	if !errors.Is(err, priceErr) {
 		t.Fatalf("Execute() error = %v, want wrapped price error", err)
+	}
+	if output != "" {
+		t.Errorf("WATCH output = %q, want no output", output)
+	}
+}
+
+func TestWatchCommandDoesNotPrintJSONWhenLastPriceIsMissing(t *testing.T) {
+	backend := &watchTestBackend{
+		watchlists: []databackend.Watchlist{{Name: "Core", Tickers: []string{"AAPL", "GOOG"}}},
+	}
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func([]string) (map[string]float64, error) {
+		return map[string]float64{"AAPL": 10}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), `"GOOG"`) {
+		t.Fatalf("Execute() error = %v, want missing GOOG price error", err)
 	}
 	if output != "" {
 		t.Errorf("WATCH output = %q, want no output", output)
@@ -211,12 +240,16 @@ func TestParseWatchArgs(t *testing.T) {
 }
 
 func executeWatchForTest(t *testing.T, backend databackend.DataBackend, args map[string]string, jsonOutput bool) (string, error) {
-	return executeWatchWithPriceForTest(t, backend, args, jsonOutput, func(string) (float64, error) {
-		return 1, nil
+	return executeWatchWithPriceForTest(t, backend, args, jsonOutput, func(tickers []string) (map[string]float64, error) {
+		prices := make(map[string]float64, len(tickers))
+		for _, ticker := range tickers {
+			prices[ticker] = 1
+		}
+		return prices, nil
 	})
 }
 
-func executeWatchWithPriceForTest(t *testing.T, backend databackend.DataBackend, args map[string]string, jsonOutput bool, getLastPrice func(string) (float64, error)) (string, error) {
+func executeWatchWithPriceForTest(t *testing.T, backend databackend.DataBackend, args map[string]string, jsonOutput bool, getLastPrice func([]string) (map[string]float64, error)) (string, error) {
 	t.Helper()
 	oldCommandContext := cmdCtx
 	SetCommandContext(getLastPrice)

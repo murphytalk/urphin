@@ -21,6 +21,11 @@ type watchlistResult struct {
 	Positions   []watchPosition `json:"positions"`
 }
 
+type watchPositionInput struct {
+	watchlist string
+	position  databackend.PositionWithAssetRatio
+}
+
 func (w *WatchCmd) Name() string {
 	return "WATCH"
 }
@@ -42,12 +47,9 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 		return watchlists[i].Name < watchlists[j].Name
 	})
 
-	positionsByWatchlist := make(map[string]watchlistResult, len(watchlists))
+	positions := make([]watchPositionInput, 0)
+	tickerSet := make(map[string]struct{})
 	for _, watchlist := range watchlists {
-		result, exists := positionsByWatchlist[watchlist.Name]
-		if !exists {
-			result.Positions = make([]watchPosition, 0)
-		}
 		tickers := append([]string(nil), watchlist.Tickers...)
 		sort.Strings(tickers)
 		for _, ticker := range tickers {
@@ -55,21 +57,48 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 			if err != nil {
 				return fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
 			}
-			if cmdCtx.GetLastPrice == nil {
-				return fmt.Errorf("get last price for watchlist %q ticker %q: command context is not configured", watchlist.Name, ticker)
-			}
-			lastPrice, err := cmdCtx.GetLastPrice(ticker)
-			if err != nil {
-				return fmt.Errorf("get last price for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
-			}
-			marketValue := position.Pos.Shares * lastPrice
-			result.MarketValue += marketValue
-			result.Positions = append(result.Positions, watchPosition{
-				PositionWithAssetRatio: position,
-				MarketValue:            marketValue,
-			})
+			positions = append(positions, watchPositionInput{watchlist: watchlist.Name, position: position})
+			tickerSet[ticker] = struct{}{}
 		}
-		positionsByWatchlist[watchlist.Name] = result
+	}
+
+	tickers := make([]string, 0, len(tickerSet))
+	for ticker := range tickerSet {
+		tickers = append(tickers, ticker)
+	}
+	sort.Strings(tickers)
+
+	prices := make(map[string]float64, len(tickers))
+	if len(tickers) > 0 {
+		if cmdCtx.GetLastPrice == nil {
+			return fmt.Errorf("get last prices for tickers %v: command context is not configured", tickers)
+		}
+		prices, err = cmdCtx.GetLastPrice(tickers)
+		if err != nil {
+			return fmt.Errorf("get last prices for tickers %v: %w", tickers, err)
+		}
+		for _, ticker := range tickers {
+			if _, exists := prices[ticker]; !exists {
+				return fmt.Errorf("get last price for ticker %q: no price returned", ticker)
+			}
+		}
+	}
+
+	positionsByWatchlist := make(map[string]watchlistResult, len(watchlists))
+	for _, watchlist := range watchlists {
+		if _, exists := positionsByWatchlist[watchlist.Name]; !exists {
+			positionsByWatchlist[watchlist.Name] = watchlistResult{Positions: make([]watchPosition, 0)}
+		}
+	}
+	for _, position := range positions {
+		result := positionsByWatchlist[position.watchlist]
+		marketValue := position.position.Pos.Shares * prices[position.position.Pos.Sym]
+		result.MarketValue += marketValue
+		result.Positions = append(result.Positions, watchPosition{
+			PositionWithAssetRatio: position.position,
+			MarketValue:            marketValue,
+		})
+		positionsByWatchlist[position.watchlist] = result
 	}
 
 	encoded, err := json.Marshal(positionsByWatchlist)
