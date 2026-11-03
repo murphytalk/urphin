@@ -141,11 +141,10 @@ func main() {
 	os.Exit(run())
 }
 
-func run() int {
+func init() {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Println("Missing home directory")
-		return 1
 	}
 
 	cfgPathDefault := filepath.Join(home, ".urphin", "urphin.yaml")
@@ -159,7 +158,9 @@ func run() int {
 	flag.BoolVar(&ctx.Debug, "D", false, "debug log")
 
 	flag.Parse()
+}
 
+func run() int {
 	commandProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "C" {
