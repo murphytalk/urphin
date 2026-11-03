@@ -11,6 +11,16 @@ import (
 
 type WatchCmd struct{}
 
+type watchPosition struct {
+	databackend.PositionWithAssetRatio
+	MarketValue float64 `json:"market_value"`
+}
+
+type watchlistResult struct {
+	MarketValue float64         `json:"market_value"`
+	Positions   []watchPosition `json:"positions"`
+}
+
 func (w *WatchCmd) Name() string {
 	return "WATCH"
 }
@@ -32,10 +42,11 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 		return watchlists[i].Name < watchlists[j].Name
 	})
 
-	positionsByWatchlist := make(map[string][]databackend.PositionWithAssetRatio, len(watchlists))
+	positionsByWatchlist := make(map[string]watchlistResult, len(watchlists))
 	for _, watchlist := range watchlists {
-		if _, exists := positionsByWatchlist[watchlist.Name]; !exists {
-			positionsByWatchlist[watchlist.Name] = make([]databackend.PositionWithAssetRatio, 0)
+		result, exists := positionsByWatchlist[watchlist.Name]
+		if !exists {
+			result.Positions = make([]watchPosition, 0)
 		}
 		tickers := append([]string(nil), watchlist.Tickers...)
 		sort.Strings(tickers)
@@ -44,8 +55,21 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 			if err != nil {
 				return fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
 			}
-			positionsByWatchlist[watchlist.Name] = append(positionsByWatchlist[watchlist.Name], position)
+			if cmdCtx.GetLastPrice == nil {
+				return fmt.Errorf("get last price for watchlist %q ticker %q: command context is not configured", watchlist.Name, ticker)
+			}
+			lastPrice, err := cmdCtx.GetLastPrice(ticker)
+			if err != nil {
+				return fmt.Errorf("get last price for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
+			}
+			marketValue := position.Pos.Shares * lastPrice
+			result.MarketValue += marketValue
+			result.Positions = append(result.Positions, watchPosition{
+				PositionWithAssetRatio: position,
+				MarketValue:            marketValue,
+			})
 		}
+		positionsByWatchlist[watchlist.Name] = result
 	}
 
 	encoded, err := json.Marshal(positionsByWatchlist)
