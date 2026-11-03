@@ -89,7 +89,7 @@ func TestConfigLoadFailureLogsError(t *testing.T) {
 	slog.Error("urphin failed", "error", cfgErr)
 	closeLogging()
 
-	pattern := regexp.MustCompile(`^time=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} level=ERROR msg="urphin failed" trace=[0-9a-f]{8} error="config file .* does not exist"\n$`)
+	pattern := regexp.MustCompile(`^time=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2}) level=ERROR msg="urphin failed" trace=[0-9a-f]{8} error="config file .* does not exist"\n$`)
 	if data := readLog(t, logPath); !pattern.MatchString(data) {
 		t.Fatalf("log record = %q, want match for %s", data, pattern)
 	}

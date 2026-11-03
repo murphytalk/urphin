@@ -31,7 +31,7 @@ func TestSetupWritesRecordsToConfiguredPath(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	pattern := regexp.MustCompile(`^time=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2} level=INFO msg=started trace=testtrace config=/tmp/urphin\.yaml\n$`)
+	pattern := regexp.MustCompile(`^time=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2}) level=INFO msg=started trace=testtrace config=/tmp/urphin\.yaml\n$`)
 	if data := readLog(t, path); !pattern.MatchString(data) {
 		t.Fatalf("log record = %q, want match for %s", data, pattern)
 	}
