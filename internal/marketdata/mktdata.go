@@ -118,13 +118,21 @@ func YahooGetLastPrices(symbols []string, cachePath string) (map[string]float64,
 		return map[string]float64{}, nil
 	}
 
+	slog.Info("Connecting to Yahoo market-data feed for one-shot quotes", "symbols", symbols)
 	yahooAPI := newYahooAPI(cache.New(cachePath))
 	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(symbols)
 	if err != nil {
+		slog.Error("Yahoo one-shot market-data quote request failed", "error", err, "symbols", symbols)
 		return nil, err
 	}
 
-	return lastPricesFromQuotes(symbols, quotesBySymbol)
+	prices, err := lastPricesFromQuotes(symbols, quotesBySymbol)
+	if err != nil {
+		slog.Error("Yahoo one-shot market-data quote response was incomplete", "error", err, "symbols", symbols)
+		return nil, err
+	}
+	slog.Info("Received Yahoo one-shot market-data quotes", "symbols", symbols)
+	return prices, nil
 }
 
 // AlpacaGetPrices fetches one fresh Alpaca snapshot batch without starting a stream.

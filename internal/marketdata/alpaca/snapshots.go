@@ -2,6 +2,7 @@ package alpaca
 
 import (
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 	"time"
@@ -31,7 +32,14 @@ func GetPrices(symbols []string, credentials c.KeySecretCfg) (map[string]float64
 		return nil, fmt.Errorf("Alpaca API key and secret are required")
 	}
 
-	return getPrices(newSnapshotClient(credentials), symbols)
+	slog.Info("Connecting to Alpaca market-data feed for one-shot snapshots", "feed", "IEX", "symbols", uniqueSymbols(symbols))
+	prices, err := getPrices(newSnapshotClient(credentials), symbols)
+	if err != nil {
+		slog.Error("Alpaca one-shot market-data snapshot request failed", "error", err)
+		return nil, err
+	}
+	slog.Info("Received Alpaca one-shot market-data snapshots", "feed", "IEX", "symbols", uniqueSymbols(symbols))
+	return prices, nil
 }
 
 func getPrices(client snapshotClient, symbols []string) (map[string]float64, error) {
