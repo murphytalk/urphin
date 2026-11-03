@@ -21,6 +21,44 @@ func readLog(t *testing.T, name string) string {
 	return string(data)
 }
 
+func TestResolveOneShotMktDataFeed(t *testing.T) {
+	for _, test := range []struct {
+		input    string
+		override string
+		want     bool
+		wantErr  bool
+	}{
+		{input: "", want: true},
+		{input: "yahoo", want: true},
+		{input: "alpaca", want: true},
+		{input: "yahoo", override: "alpaca", want: true},
+		{input: "alpaca", override: "yahoo", want: true},
+		{input: "", override: "Yahoo", wantErr: true},
+		{input: "Yahoo", wantErr: true},
+		{input: "other", wantErr: true},
+	} {
+		t.Run(test.input+"/"+test.override, func(t *testing.T) {
+			getLastPrices, err := resolveOneShotMktDataFeed(test.input, test.override, c.KeySecretCfg{}, "")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("resolveOneShotMktDataFeed(%q, %q) error = %v, wantErr %v", test.input, test.override, err, test.wantErr)
+			}
+			if (getLastPrices != nil) != test.want {
+				t.Fatalf("resolveOneShotMktDataFeed(%q, %q) returned function = %t, want %t", test.input, test.override, getLastPrices != nil, test.want)
+			}
+			selected := test.input
+			if test.override != "" {
+				selected = test.override
+			}
+			if selected == "" || selected == "yahoo" {
+				prices, err := getLastPrices(nil)
+				if err != nil || len(prices) != 0 {
+					t.Errorf("Yahoo last-price function returned %v, %v; want empty prices and no error", prices, err)
+				}
+			}
+		})
+	}
+}
+
 // TestConfigLoadFailureLogsError pins the ordering: logging is configured
 // before the config path is validated, so the rejection is written in the
 // normal record format instead of the default handler's one.
