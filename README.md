@@ -59,7 +59,7 @@ Read these instead of a spec here, since the code is the truth:
 | `tui/commands/registry/registry.go` | the `Command` interface and the registry commands are looked up in |
 | `tui/commands/reg.go` | where public commands get registered |
 | `tui/commands/reg_extension.go`, `tui/commands/reg_no_extension.go` | the `extension` build tag switch: what an extension must provide, and the no-op used without it |
-| `tui/commands/antlr/*.g4` | the command grammar the parser is generated from |
+| `tui/commands/antlr/*.g4` | the command grammar the parser is generated from; `PORTFOLIO` words (2–10 letters) are parsed as tickers |
 
 To add your own commands, put a package at `extension/tui/commands` exposing the same
 entry point, add its grammar under `extension/tui/commands/antlr/`, and build with the
