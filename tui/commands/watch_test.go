@@ -61,7 +61,7 @@ func (b *watchTestBackend) Close() error {
 	return nil
 }
 
-func TestWatchCommandPrintsSortedJSON(t *testing.T) {
+func TestWatchCommandPreservesBackendOrder(t *testing.T) {
 	backend := &watchTestBackend{
 		shares: map[string]float64{"AAPL": 2, "GOOG": 3, "MSFT": 4},
 		watchlists: []databackend.Watchlist{
@@ -89,15 +89,15 @@ func TestWatchCommandPrintsSortedJSON(t *testing.T) {
 		"Alpha": {
 			MarketValue: 80,
 			Positions: []watchPosition{
-				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
 				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "GOOG", Shares: 3}}, MarketValue: 60},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
 			},
 		},
 		"Beta": {
 			MarketValue: 140,
 			Positions: []watchPosition{
-				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
 				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "MSFT", Shares: 4}}, MarketValue: 120},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
 			},
 		},
 	}
@@ -108,8 +108,8 @@ func TestWatchCommandPrintsSortedJSON(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("WATCH output = %#v, want %#v", got, want)
 	}
-	if !reflect.DeepEqual(backend.positionCalls, []string{"AAPL", "GOOG", "AAPL", "MSFT"}) {
-		t.Errorf("position calls = %v", backend.positionCalls)
+	if !reflect.DeepEqual(backend.positionCalls, []string{"MSFT", "AAPL", "GOOG", "AAPL"}) {
+		t.Errorf("position calls = %v, want backend watchlist/ticker order", backend.positionCalls)
 	}
 	if !backend.lastBrokerWasNil {
 		t.Error("CalculatePositionAndVWAP() broker was not nil")
@@ -139,8 +139,8 @@ func TestWatchCommandFiltersByPortfolio(t *testing.T) {
 	if backend.lastPortfolio == nil || *backend.lastPortfolio != "Core" {
 		t.Errorf("GetWatchList() portfolio = %v, want Core", backend.lastPortfolio)
 	}
-	if !reflect.DeepEqual(backend.positionCalls, []string{"AAPL", "NVDA"}) {
-		t.Errorf("position calls = %v, want [AAPL NVDA]", backend.positionCalls)
+	if !reflect.DeepEqual(backend.positionCalls, []string{"NVDA", "AAPL"}) {
+		t.Errorf("position calls = %v, want backend ticker order [NVDA AAPL]", backend.positionCalls)
 	}
 	if output == "" {
 		t.Error("WATCH output is empty")
@@ -153,8 +153,8 @@ func TestWatchCommandFiltersByPortfolio(t *testing.T) {
 		"Core": {
 			MarketValue: 125,
 			Positions: []watchPosition{
-				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 50},
 				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "NVDA", Shares: 3}}, MarketValue: 75},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 50},
 			},
 		},
 	}

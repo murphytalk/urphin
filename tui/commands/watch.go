@@ -43,16 +43,12 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 	if err != nil {
 		return fmt.Errorf("get watchlists: %w", err)
 	}
-	sort.Slice(watchlists, func(i, j int) bool {
-		return watchlists[i].Name < watchlists[j].Name
-	})
 
+	// GetWatchList orders watchlists and tickers in data backend; preserve that order here.
 	positions := make([]watchPositionInput, 0)
 	tickerSet := make(map[string]struct{})
 	for _, watchlist := range watchlists {
-		tickers := append([]string(nil), watchlist.Tickers...)
-		sort.Strings(tickers)
-		for _, ticker := range tickers {
+		for _, ticker := range watchlist.Tickers {
 			position, err := db.CalculatePositionAndVWAP(nil, ticker)
 			if err != nil {
 				return fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
