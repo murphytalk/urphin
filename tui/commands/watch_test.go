@@ -16,6 +16,7 @@ import (
 
 type watchTestBackend struct {
 	watchlists       []databackend.Watchlist
+	shares           map[string]float64
 	watchlistErr     error
 	positionErr      error
 	positionErrSym   string
@@ -35,7 +36,7 @@ func (b *watchTestBackend) CalculatePositionAndVWAP(broker *string, symbol strin
 	if symbol == b.positionErrSym && b.positionErr != nil {
 		return databackend.PositionWithAssetRatio{}, b.positionErr
 	}
-	return databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: symbol}}, nil
+	return databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: symbol, Shares: b.shares[symbol]}}, nil
 }
 
 func (b *watchTestBackend) GetWatchList(name *string) ([]databackend.Watchlist, error) {
@@ -61,26 +62,35 @@ func (b *watchTestBackend) Close() error {
 
 func TestWatchCommandPrintsSortedJSON(t *testing.T) {
 	backend := &watchTestBackend{
+		shares: map[string]float64{"AAPL": 2, "GOOG": 3, "MSFT": 4},
 		watchlists: []databackend.Watchlist{
 			{Name: "Beta", Tickers: []string{"MSFT", "AAPL"}},
 			{Name: "Alpha", Tickers: []string{"GOOG", "AAPL"}},
 		},
 	}
-	output, err := executeWatchForTest(t, backend, map[string]string{}, true)
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(ticker string) (float64, error) {
+		return map[string]float64{"AAPL": 10, "GOOG": 20, "MSFT": 30}[ticker], nil
+	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	want := map[string][]databackend.PositionWithAssetRatio{
+	want := map[string]watchlistResult{
 		"Alpha": {
-			{Pos: databackend.Position{Sym: "AAPL"}},
-			{Pos: databackend.Position{Sym: "GOOG"}},
+			MarketValue: 80,
+			Positions: []watchPosition{
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "GOOG", Shares: 3}}, MarketValue: 60},
+			},
 		},
 		"Beta": {
-			{Pos: databackend.Position{Sym: "AAPL"}},
-			{Pos: databackend.Position{Sym: "MSFT"}},
+			MarketValue: 140,
+			Positions: []watchPosition{
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 20},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "MSFT", Shares: 4}}, MarketValue: 120},
+			},
 		},
 	}
-	var got map[string][]databackend.PositionWithAssetRatio
+	var got map[string]watchlistResult
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
 		t.Fatalf("unmarshal WATCH output: %v", err)
 	}
@@ -100,12 +110,15 @@ func TestWatchCommandPrintsSortedJSON(t *testing.T) {
 
 func TestWatchCommandFiltersByPortfolio(t *testing.T) {
 	backend := &watchTestBackend{
+		shares: map[string]float64{"AAPL": 2, "NVDA": 3},
 		watchlists: []databackend.Watchlist{
 			{Name: "Other", Tickers: []string{"MSFT"}},
 			{Name: "Core", Tickers: []string{"NVDA", "AAPL"}},
 		},
 	}
-	output, err := executeWatchForTest(t, backend, map[string]string{"portfolio": "Core"}, true)
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{"portfolio": "Core"}, true, func(string) (float64, error) {
+		return 25, nil
+	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -118,14 +131,17 @@ func TestWatchCommandFiltersByPortfolio(t *testing.T) {
 	if output == "" {
 		t.Error("WATCH output is empty")
 	}
-	var got map[string][]databackend.PositionWithAssetRatio
+	var got map[string]watchlistResult
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
 		t.Fatalf("unmarshal WATCH output: %v", err)
 	}
-	want := map[string][]databackend.PositionWithAssetRatio{
+	want := map[string]watchlistResult{
 		"Core": {
-			{Pos: databackend.Position{Sym: "AAPL"}},
-			{Pos: databackend.Position{Sym: "NVDA"}},
+			MarketValue: 125,
+			Positions: []watchPosition{
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "AAPL", Shares: 2}}, MarketValue: 50},
+				{PositionWithAssetRatio: databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: "NVDA", Shares: 3}}, MarketValue: 75},
+			},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -140,12 +156,30 @@ func TestWatchCommandDoesNotPrintPartialJSONOnPositionError(t *testing.T) {
 		positionErrSym: "GOOG",
 		positionErr:    positionErr,
 	}
-	output, err := executeWatchForTest(t, backend, map[string]string{}, true)
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(string) (float64, error) {
+		return 10, nil
+	})
 	if !errors.Is(err, positionErr) {
 		t.Fatalf("Execute() error = %v, want wrapped position error", err)
 	}
 	if output != "" {
 		t.Errorf("WATCH output = %q, want no partial output", output)
+	}
+}
+
+func TestWatchCommandDoesNotPrintJSONOnLastPriceError(t *testing.T) {
+	priceErr := errors.New("price unavailable")
+	backend := &watchTestBackend{
+		watchlists: []databackend.Watchlist{{Name: "Core", Tickers: []string{"AAPL"}}},
+	}
+	output, err := executeWatchWithPriceForTest(t, backend, map[string]string{}, true, func(string) (float64, error) {
+		return 0, priceErr
+	})
+	if !errors.Is(err, priceErr) {
+		t.Fatalf("Execute() error = %v, want wrapped price error", err)
+	}
+	if output != "" {
+		t.Errorf("WATCH output = %q, want no output", output)
 	}
 }
 
@@ -177,7 +211,19 @@ func TestParseWatchArgs(t *testing.T) {
 }
 
 func executeWatchForTest(t *testing.T, backend databackend.DataBackend, args map[string]string, jsonOutput bool) (string, error) {
+	return executeWatchWithPriceForTest(t, backend, args, jsonOutput, func(string) (float64, error) {
+		return 1, nil
+	})
+}
+
+func executeWatchWithPriceForTest(t *testing.T, backend databackend.DataBackend, args map[string]string, jsonOutput bool, getLastPrice func(string) (float64, error)) (string, error) {
 	t.Helper()
+	oldCommandContext := cmdCtx
+	SetCommandContext(getLastPrice)
+	defer func() {
+		cmdCtx = oldCommandContext
+	}()
+
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("create stdout pipe: %v", err)

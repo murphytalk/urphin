@@ -204,6 +204,7 @@ func run() int {
 
 	//todo: replace with market data feed
 	commands.SetCommandContext(func(ticker string) (float64, error) {
+		//return 0, fmt.Errorf("last price lookup for %q is not configured", ticker)
 		return 0, nil
 	})
 
