@@ -68,6 +68,35 @@ type Tx struct {
 	Side      Side
 }
 
+type PositionTx struct {
+	Shares float64
+	Price  float64
+	Fee    float64
+	Side   Side
+}
+
+type Position struct {
+	Sym        string
+	Shares     float64
+	VWAP       float64
+	AvgCost    float64
+	Liquidated float64
+	Ccy        string
+	TotalFee   float64
+}
+
+type AssetRatio struct {
+	BondRatio  float64
+	StockRatio float64
+	CashRatio  float64
+	MetalRatio float64
+}
+
+type PositionWithAssetRatio struct {
+	Pos    Position
+	Assets AssetRatio
+}
+
 type Watchlist struct {
 	Name    string
 	Tickers []string
@@ -79,6 +108,7 @@ type BackendName = string
 
 type DataBackend interface {
 	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
+	CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error)
 	GetWatchlists() ([]Watchlist, error)
 	Close() error
 }
