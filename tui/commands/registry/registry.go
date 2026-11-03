@@ -1,10 +1,14 @@
 package registry
 
-import "context"
+import (
+	"context"
+
+	databackend "github.com/murphytalk/urphin/data/backend"
+)
 
 type Command interface {
 	Name() string
-	Execute(ctx context.Context, args map[string]string) error
+	Execute(ctx context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error
 }
 
 type Registry struct {

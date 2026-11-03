@@ -9,6 +9,6 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 )
 
-func connectToExtendedDataBackend(backendName string, connName string, config c.Config) (databackend.DataBackend, error) {
-	return nil, fmt.Errorf("data backend %q requires the extension build", backendName)
+func connectToExtendedDataBackend(backendType databackend.BackendType, backendName databackend.BackendName, config *c.Config) (databackend.DataBackend, error) {
+	return nil, fmt.Errorf("data backend %q requires the extension build", backendType)
 }

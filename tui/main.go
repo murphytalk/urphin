@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,8 +10,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/goccy/go-yaml"
+	data "github.com/murphytalk/urphin/data"
+	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
 	u "github.com/murphytalk/urphin/internal/util"
@@ -125,20 +129,23 @@ func loadCfgOrSettings[T any](cs *T, path string, loadFunc func(string) (*T, err
 	return nil
 }
 
-func runOneCommand(line string) error {
+func runOneCommand(databackend databackend.DataBackend, line string) error {
 	name, args, err := commands.Parse(line)
 	if err != nil {
 		return err
 	}
-	commands.RunCmd(name, args, true)
-	return nil
+	return commands.RunCmd(context.Background(), databackend, name, args, true)
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Println("Missing home directory")
-		os.Exit(1)
+		return 1
 	}
 
 	cfgPathDefault := filepath.Join(home, ".urphin", "urphin.yaml")
@@ -165,24 +172,42 @@ func main() {
 	if cfgErr != nil {
 		slog.Error("Failed to load config", "config", cfgPath, "error", cfgErr)
 		fmt.Fprintln(os.Stderr, cfgErr)
-		os.Exit(1)
+		return 1
 	}
 
 	if logs == nil {
 		if err := setupLogging(); err != nil {
 			fmt.Fprintf(os.Stderr, "setup logging: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	}
+	defer closeLogging()
+
+	backendFields := strings.Split(ctx.Cfg.App.Databackend, "|")
+	backendTypeName := backendFields[0]
+	backendName := ""
+	if len(backendFields) > 1 {
+		backendName = backendFields[1]
+	}
+	databackend, dataErr := data.ConnectToDataBackend(backendTypeName, backendName, ctx.Cfg)
+	if dataErr != nil {
+		slog.Error("Failed to connect to data backend", "backend", ctx.Cfg.App.Databackend, "error", dataErr)
+		fmt.Fprintln(os.Stderr, dataErr)
+		return 1
+	}
+	defer func() {
+		if err := databackend.Close(); err != nil {
+			slog.Error("Failed to close data backend", "error", err)
+		}
+	}()
 
 	if commandProvided {
-		err := runOneCommand(cmdLine)
-		closeLogging()
+		err := runOneCommand(databackend, cmdLine)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return 1
 		}
-		return
+		return 0
 	}
 
 	// build settingsPath : take the directory of cfgPath
@@ -209,9 +234,9 @@ func main() {
 	if f != nil {
 		slog.Error("Failed to start market data feeds", "error", f)
 		fmt.Fprintln(os.Stderr, f)
-		os.Exit(1)
+		return 1
 	}
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
 
-	closeLogging()
+	return 0
 }

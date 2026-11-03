@@ -39,6 +39,6 @@ func AssetClassTypeFromString(assetClassType string) (c.AssetClass, error) {
 
 type Instrument = databackend.Instrument
 
-func ConnectToDataBackend(name string, backendName string, cfg c.Config) (databackend.DataBackend, error) {
-	return connectToExtendedDataBackend(backendName, name, cfg)
+func ConnectToDataBackend(backendType databackend.BackendType, backendName databackend.BackendName, cfg *c.Config) (databackend.DataBackend, error) {
+	return connectToExtendedDataBackend(backendType, backendName, cfg)
 }

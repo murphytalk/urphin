@@ -3,15 +3,12 @@ package commands
 import (
 	"context"
 	"log/slog"
+
+	databackend "github.com/murphytalk/urphin/data/backend"
 )
-
-type JsonCmdOutputType string
-
-const JsonCmdOutput JsonCmdOutputType = "jsonOutput"
 
 var (
 	cmdReg = NewRegistry()
-	ctx    context.Context
 )
 
 func registerAll(r *Registry) {
@@ -26,10 +23,10 @@ func init() {
 	registerAll(cmdReg)
 }
 
-func RunCmd(cmdName string, args map[string]string, jsonOutput bool) {
+func RunCmd(ctx context.Context, db databackend.DataBackend, cmdName string, args map[string]string, jsonOutput bool) error {
 	cmd, ok := cmdReg.Get(cmdName)
 	if !ok {
-		slog.Warn("Unknown command", "name", cmdName)
+		slog.Warn("Unknown command", "name", cmdName, "jsonOutput", jsonOutput)
 		if len(args) == 0 {
 			slog.Warn("args: (none)")
 		}
@@ -43,8 +40,7 @@ func RunCmd(cmdName string, args map[string]string, jsonOutput bool) {
 			slog.Warn("args:", "name", k, "value", args[k])
 		}
 
-		return
+		return ErrUnknownCommand
 	}
-	ctx = context.WithValue(context.Background(), JsonCmdOutput, jsonOutput)
-	cmd.Execute(ctx, args)
+	return cmd.Execute(ctx, db, args, jsonOutput)
 }

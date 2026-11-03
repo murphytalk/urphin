@@ -16,6 +16,7 @@ type AppCfg struct {
 	// same meaning as lumberjack's MaxAge 0.
 	LogKeepDays *int              `yaml:"logKeepDays"`
 	Cache       string            `yaml:"cache"`
+	Databackend string            `yaml:"databackend"`
 	ColorScheme ConfigColorScheme `yaml:"colors"`
 }
 
