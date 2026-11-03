@@ -237,10 +237,18 @@ func (m *MktDataFeed) Start() error {
 		stream.WithReconnectSettings(reconnectLimit, reconnectDelay),
 		stream.WithQuotes(m.handleQuote, initialSymbols...),
 		stream.WithConnectCallback(func() {
+			slog.Info("Connected to Alpaca market-data stream", "feed", "IEX", "symbols", initialSymbols)
 			if firstConnectCallback.CompareAndSwap(false, true) {
 				return
 			}
 			m.reconcileAfterReconnect(initialSymbols)
+		}),
+		stream.WithDisconnectCallback(func() {
+			if streamCtx.Err() != nil {
+				slog.Info("Disconnected from Alpaca market-data stream")
+				return
+			}
+			slog.Warn("Disconnected from Alpaca market-data stream; reconnecting")
 		}),
 	)
 
@@ -250,7 +258,9 @@ func (m *MktDataFeed) Start() error {
 	m.activeSymbols = symbolSet(initialSymbols)
 	m.mu.Unlock()
 
+	slog.Info("Connecting to Alpaca market-data stream", "feed", "IEX", "symbols", initialSymbols)
 	if err := client.Connect(streamCtx); err != nil {
+		slog.Error("Failed to connect to Alpaca market-data stream", "error", err)
 		streamCancel()
 		m.mu.Lock()
 		m.streamClient = nil
