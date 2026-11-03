@@ -6,13 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/goccy/go-yaml"
 	data "github.com/murphytalk/urphin/data"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
@@ -20,6 +18,7 @@ import (
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 // defaultLogKeepDays is how long a rotated log file is kept when app.logKeepDays
@@ -31,7 +30,7 @@ var (
 	cmdLine             string
 	logPath             string
 	mktDataFeedOverride string
-	ctx                 c.AppCtx
+	ctx                 setup.AppCtx
 	logs                io.Closer // set once logging is configured, closed before exit
 )
 
@@ -86,48 +85,7 @@ func loadCfg() error {
 	if ctx.Cfg == nil {
 		ctx.Cfg = &c.Config{}
 	}
-	return loadCfgOrSettings(ctx.Cfg, cfgPath, LoadConfig, nil)
-}
-
-func saveCfgOrSettings[T any](path string, cfg *T) error {
-	//todo: block the saving of config file, only allows settings
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshal default config for %q: %w", path, err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create config directory for %q: %w", path, err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write default config %q: %w", path, err)
-	}
-	return nil
-}
-
-func loadCfgOrSettings[T any](cs *T, path string, loadFunc func(string) (*T, error), defaultVal *T) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		if defaultVal == nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("config file %q does not exist", path)
-			}
-			return fmt.Errorf("cannot access config file %q: %w", path, err)
-		}
-
-		*cs = *defaultVal
-		return saveCfgOrSettings(path, defaultVal)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("config path %q is a directory, not a file", path)
-	}
-
-	c, err := loadFunc(path)
-	if err != nil {
-		return fmt.Errorf("load config: %w", err)
-	}
-	*cs = *c
-
-	return nil
+	return setup.LoadOrCreate(ctx.Cfg, cfgPath, setup.LoadConfig, nil)
 }
 
 func runOneCommand(databackend databackend.DataBackend, line string) error {
@@ -204,6 +162,8 @@ func run() int {
 		}
 	}()
 
+	ctx.Db = databackend
+
 	if commandProvided {
 		cachePath := ctx.Cfg.App.Cache
 		getLastPrices, err := resolveOneShotMktDataFeed(ctx.Cfg.App.OneShotMktDataFeed, mktDataFeedOverride, ctx.Cfg.Alpaca, cachePath)
@@ -229,7 +189,7 @@ func run() int {
 	if ctx.Settings == nil {
 		ctx.Settings = &c.Settings{}
 	}
-	loadCfgOrSettings(ctx.Settings, settingsPath, LoadSettings, &c.Settings{
+	setup.LoadOrCreate(ctx.Settings, settingsPath, setup.LoadSettings, &c.Settings{
 		RefreshInterval:                   30,
 		Separate:                          true,
 		ExtraInfoExchange:                 true,
