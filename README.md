@@ -1,5 +1,7 @@
 # urphin
 
+[![Go build](https://github.com/murphytalk/urphin/actions/workflows/go.yml/badge.svg)](https://github.com/murphytalk/urphin/actions/workflows/go.yml)
+
 A handcrafted personal finance dashboard with a terminal UI.
 
 ## Build
@@ -47,24 +49,16 @@ warnings and is not meant to be edited or reformatted.
 
 ## Extension
 
-`extension/` is a git submodule for commands beyond the public set — it extends the same
-interfaces instead of modifying them. The extension shipped with this project lives in a
-separate private repository, so a public checkout has an empty `extension/` directory and
-builds the public binary only.
+The optional `extension/` submodule adds commands and data backends. It lives in a
+separate private repository, so public checkouts build the public version. With access to
+the submodule, build the extension version using `make extension`.
 
-Read these instead of a spec here, since the code is the truth:
-
-| File | What it defines |
-| --- | --- |
-| `tui/commands/registry/registry.go` | the `Command` interface and the registry commands are looked up in |
-| `tui/commands/reg.go` | where public commands get registered |
-| `tui/commands/reg_extension.go`, `tui/commands/reg_no_extension.go` | the `extension` build tag switch: what an extension must provide, and the no-op used without it |
-| `tui/commands/antlr/*.g4` | the command grammar the parser is generated from; `PORTFOLIO` words (2–10 letters) are parsed as tickers |
-
-To add your own commands, put a package at `extension/tui/commands` exposing the same
-entry point, add its grammar under `extension/tui/commands/antlr/`, and build with the
-`extension` tag (`make extension`). Without that tag the public tree compiles as if
-`extension/` did not exist.
+Commands implement the shared `Command` interface and are added through `Register`; the
+extension build calls this from its build-tagged registration hook. Extended data
+backends use a similar build-tagged hook to delegate connections to the extension package.
+See [the command registry](./tui/commands/registry/registry.go),
+[command registration](./tui/commands/reg_extension.go), and
+[data backend hook](./data/data_extension.go).
 
 ## Credits
 
