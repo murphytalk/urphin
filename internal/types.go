@@ -45,13 +45,6 @@ type Config struct {
 	Alpaca   KeySecretCfg      `yaml:"alpaca"`
 }
 
-type AppCtx struct {
-	Cfg      *Config   // loaded from --config, app only reads it
-	Settings *Settings // loaded from settings.yaml, app updates it with lastest settings
-	Debug    bool      // set by --debug-log, app only reads it
-	Styles   Styles    // derived from Cfg.App.ColorScheme, app only populates it once
-}
-
 type CurrencyRates map[string]CurrencyRate
 
 type CurrencyRate struct {

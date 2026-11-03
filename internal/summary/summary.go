@@ -22,10 +22,10 @@ type Model struct {
 type SetSummaryMsg fin.PositionSummary
 
 // NewModel returns a model with default values
-func NewModel(ctx c.AppCtx) *Model {
+func NewModel(styles c.Styles) *Model {
 	return &Model{
 		width:  80,
-		styles: ctx.Styles,
+		styles: styles,
 	}
 }
 

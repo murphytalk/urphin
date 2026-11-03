@@ -9,10 +9,11 @@ import (
 	"github.com/murphytalk/urphin/internal/summary"
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/shared/fin"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type Model struct {
-	ctx                c.AppCtx
+	ctx                setup.AppCtx
 	ready              bool
 	headerHeight       int
 	versionVector      int
@@ -56,7 +57,7 @@ type SetAssetGroupQuoteMsg struct {
 }
 
 // NewModel is the constructor for UI model
-//func NewModel(ctx c.AppCtx, mktFeeds mktdata.MktDataFeeds, version string) *Model {
+//func NewModel(ctx setup.AppCtx, version string) *Model {
 //
 //	groupMaxIndex := len(ctx.Groups) - 1
 //
@@ -78,7 +79,7 @@ type SetAssetGroupQuoteMsg struct {
 //			ExtraInfoFundamentals: ctx.Config.ExtraInfoFundamentals,
 //			Styles:                ctx.Reference.Styles,
 //		}),
-//		summary:            summary.NewModel(ctx),
+//		summary:            summary.NewModel(ctx.Styles),
 //		groupMaxIndex:      groupMaxIndex,
 //		groupSelectedIndex: 0,
 //		groupSelectedName:  "       ",

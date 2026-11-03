@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"os"
@@ -137,7 +137,7 @@ func TestLoadConfigReportsMalformedFile(t *testing.T) {
 	}
 }
 
-func TestLoadCfgOrSettingsWritesDefaultConfig(t *testing.T) {
+func TestLoadOrCreateWritesDefaultConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "configs", "urphin.yaml")
 	defaultCfg := c.Settings{
 		RefreshInterval: 30,
@@ -145,10 +145,10 @@ func TestLoadCfgOrSettingsWritesDefaultConfig(t *testing.T) {
 	}
 
 	var cfg c.Settings
-	if err := loadCfgOrSettings(&cfg, path, func(p string) (*c.Settings, error) {
+	if err := LoadOrCreate(&cfg, path, func(p string) (*c.Settings, error) {
 		return LoadSettings(p)
 	}, &defaultCfg); err != nil {
-		t.Fatalf("loadCfgOrSettings: %v", err)
+		t.Fatalf("LoadOrCreate: %v", err)
 	}
 	if cfg.RefreshInterval != defaultCfg.RefreshInterval || cfg.Sort != defaultCfg.Sort {
 		t.Fatalf("cfg = %#v, want %#v", cfg, defaultCfg)
