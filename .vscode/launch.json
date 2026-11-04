@@ -19,7 +19,7 @@
             "mode": "debug",
             "program": "${workspaceFolder}/tui",
             "buildFlags": "-tags=extension",
-            "args": ["-C", "tx NBIS"],
+            "args": ["-C", "watch"],
             "console": "integratedTerminal"
         }
     ]
