@@ -1,0 +1,18 @@
+tx:
+  Stock: # asset
+    USD: # currency
+      # broker,ticker,timestamp,side,price,share
+      - BK1,IBM,2020-09-01 10:00:00,BUY,100,10
+      - BK1,IBM,2020-09-02 10:00:00,SELL,200,5
+      - BK2,TSLA,2023-09-01 10:00:00,BUY,300,100
+      - BK2,TSLA,2024-09-02 10:00:00,SELL,400,50
+    JPY:
+      # broker,ticker,timestamp,side,price,share
+      - BK3,8604.T,2010-10-01 10:00:00,BUY,200,300
+      - BK3,8604.T,2015-10-01 10:00:00,BUY,300,1000
+watchlist:
+  US:
+    - TSLA
+    - IBM
+  Japan:
+    - 8604.T

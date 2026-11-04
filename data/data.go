@@ -39,6 +39,13 @@ func AssetClassTypeFromString(assetClassType string) (c.AssetClass, error) {
 
 type Instrument = databackend.Instrument
 
+const (
+	BackendTypeFile databackend.BackendType = "file"
+)
+
 func ConnectToDataBackend(backendType databackend.BackendType, backendName databackend.BackendName, cfg *c.Config) (databackend.DataBackend, error) {
+	if backendType == BackendTypeFile {
+		return databackend.NewFileBackend(backendName)
+	}
 	return connectToExtendedDataBackend(backendType, backendName, cfg)
 }
