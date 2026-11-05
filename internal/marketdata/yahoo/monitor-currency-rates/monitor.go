@@ -70,6 +70,8 @@ func NewMonitorCurrencyRateYahoo(config Config) *MonitorCurrencyRateYahoo {
 }
 
 func (m *MonitorCurrencyRateYahoo) Start() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if m.isStarted {
 		return errors.New("monitor already started")
@@ -87,6 +89,8 @@ func (m *MonitorCurrencyRateYahoo) Start() error {
 }
 
 func (m *MonitorCurrencyRateYahoo) Stop() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if !m.isStarted {
 		return errors.New("monitor not started")
@@ -101,9 +105,8 @@ func (m *MonitorCurrencyRateYahoo) Stop() error {
 
 func (m *MonitorCurrencyRateYahoo) SetTargetCurrency(targetCurrency string) {
 
-	fromCurrencies := make([]string, 0, len(m.currencyRateCache))
-
 	m.mu.RLock()
+	fromCurrencies := make([]string, 0, len(m.currencyRateCache))
 	for currency := range m.currencyRateCache {
 		fromCurrencies = append(fromCurrencies, currency)
 	}
@@ -112,7 +115,10 @@ func (m *MonitorCurrencyRateYahoo) SetTargetCurrency(targetCurrency string) {
 	rates, err := m.unaryAPI.GetCurrencyRates(fromCurrencies, targetCurrency)
 
 	if err != nil {
-		m.chanError <- err
+		select {
+		case <-m.ctx.Done():
+		case m.chanError <- err:
+		}
 
 		return
 	}
@@ -139,6 +145,7 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 			// Filter out currencies that are already in the cache
 			fromCurrenciesToRequest := make([]string, 0)
 			m.mu.RLock()
+			targetCurrency := m.targetCurrency
 			for _, currency := range fromCurrencies {
 				if _, exists := m.currencyRateCache[currency]; !exists {
 					fromCurrenciesToRequest = append(fromCurrenciesToRequest, currency)
@@ -158,7 +165,7 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 
 			for _, currency := range fromCurrenciesToRequest {
 				var cached c.CurrencyRate
-				if m.cache != nil && m.cache.Get(currencyRateKey(currency, m.targetCurrency), &cached) {
+				if m.cache != nil && m.cache.Get(currencyRateKey(currency, targetCurrency), &cached) {
 					resolvedRates[currency] = cached
 
 					continue
@@ -169,9 +176,13 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 
 			if len(currenciesToFetch) > 0 {
 				// Get currency rates from Yahoo unary API
-				rates, err := m.unaryAPI.GetCurrencyRates(currenciesToFetch, m.targetCurrency)
+				rates, err := m.unaryAPI.GetCurrencyRates(currenciesToFetch, targetCurrency)
 				if err != nil {
-					m.chanError <- err
+					select {
+					case <-m.ctx.Done():
+						return
+					case m.chanError <- err:
+					}
 
 					continue
 				}
@@ -180,7 +191,7 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 					resolvedRates[currency] = rate
 
 					if m.cache != nil {
-						m.cache.Set(currencyRateKey(currency, m.targetCurrency), rate, ttlCurrencyRates)
+						m.cache.Set(currencyRateKey(currency, targetCurrency), rate, ttlCurrencyRates)
 					}
 				}
 			}
@@ -188,8 +199,13 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 			// Update the cache
 			m.mu.Lock()
 			maps.Copy(m.currencyRateCache, resolvedRates)
+			rates := maps.Clone(m.currencyRateCache)
 			m.mu.Unlock()
-			m.chanUpdateCurrencyRates <- m.currencyRateCache
+			select {
+			case <-m.ctx.Done():
+				return
+			case m.chanUpdateCurrencyRates <- rates:
+			}
 		}
 	}
 }

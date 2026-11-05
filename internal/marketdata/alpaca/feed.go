@@ -61,7 +61,12 @@ type MktDataFeed struct {
 	streamCancel  context.CancelFunc
 }
 
+func (m *MktDataFeed) SupportsAssetClass(assetClass c.AssetClass) bool {
+	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
+}
+
 var _ interface {
+	SupportsAssetClass(c.AssetClass) bool
 	Start() error
 	GetAssetQuotes(...bool) ([]c.AssetQuote, error)
 	SetSymbols([]string, int) error
