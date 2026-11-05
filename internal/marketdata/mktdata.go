@@ -49,7 +49,7 @@ type MktDataFeeds struct {
 	cancel                  context.CancelFunc
 }
 
-func StartMktDataFeeds(cachePath string, targetCurrency string, alpacaCredentials c.KeySecretCfg) (*MktDataFeeds, error) {
+func StartMktDataFeeds(cachePath string, targetCurrency string, alpacaCredentials c.KeySecretCfg, randomMktData bool) (*MktDataFeeds, error) {
 	chanError := make(chan error, errChanSize)
 	chanUpdateAssetQuote := make(chan c.MessageUpdate[c.AssetQuote], quoteChanSize)
 	chanUpdateCurrencyRate := make(chan c.CurrencyRates, quoteChanSize)
@@ -58,7 +58,7 @@ func StartMktDataFeeds(cachePath string, targetCurrency string, alpacaCredential
 	ctx, cancel := context.WithCancel(context.Background())
 
 	mktCache := cache.New(cachePath)
-	yahooApi := newYahooAPI(mktCache)
+	yahooApi := newYahooAPI(mktCache, randomMktData)
 
 	yahoo := price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
@@ -113,13 +113,13 @@ func StartMktDataFeeds(cachePath string, targetCurrency string, alpacaCredential
 }
 
 // YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
-func YahooGetLastPrices(symbols []string, cachePath string) (map[string]float64, error) {
+func YahooGetLastPrices(symbols []string, cachePath string, randomMktData bool) (map[string]float64, error) {
 	if len(symbols) == 0 {
 		return map[string]float64{}, nil
 	}
 
-	slog.Info("Connecting to Yahoo market-data feed for one-shot quotes", "symbols", symbols)
-	yahooAPI := newYahooAPI(cache.New(cachePath))
+	slog.Info("Requesting Yahoo market-data quotes", "symbols", symbols)
+	yahooAPI := newYahooAPI(cache.New(cachePath), randomMktData)
 	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(symbols)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote request failed", "error", err, "symbols", symbols)
@@ -153,16 +153,17 @@ func lastPricesFromQuotes(symbols []string, quotesBySymbol map[string]*c.AssetQu
 	return prices, nil
 }
 
-func newYahooAPI(mktCache c.Cache) *unaryClientYahoo.UnaryAPI {
-	return unaryClientYahoo.NewUnaryAPI(yahooAPIConfig(mktCache))
+func newYahooAPI(mktCache c.Cache, randomMktData bool) *unaryClientYahoo.UnaryAPI {
+	return unaryClientYahoo.NewUnaryAPI(yahooAPIConfig(mktCache, randomMktData))
 }
 
-func yahooAPIConfig(mktCache c.Cache) unaryClientYahoo.Config {
+func yahooAPIConfig(mktCache c.Cache, randomMktData bool) unaryClientYahoo.Config {
 	return unaryClientYahoo.Config{
 		BaseURL:           yahooBaseURL,
 		SessionRootURL:    yahooSessionRootURL,
 		SessionCrumbURL:   yahooSessionCrumbURL,
 		SessionConsentURL: yahooSessionConsentURL,
 		Cache:             mktCache,
+		RandomMktData:     randomMktData,
 	}
 }

@@ -22,6 +22,10 @@ func readLog(t *testing.T, name string) string {
 }
 
 func TestResolveOneShotMktDataFeed(t *testing.T) {
+	oldCfg := ctx.Cfg
+	ctx.Cfg = &c.Config{}
+	t.Cleanup(func() { ctx.Cfg = oldCfg })
+
 	for _, test := range []struct {
 		input    string
 		override string

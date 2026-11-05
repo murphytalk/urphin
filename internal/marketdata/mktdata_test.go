@@ -8,12 +8,15 @@ import (
 )
 
 func TestYahooAPIConfigUsesFinanceSessionRootAndConsentHost(t *testing.T) {
-	config := yahooAPIConfig(nil)
+	config := yahooAPIConfig(nil, true)
 	if config.SessionRootURL != yahooSessionRootURL {
 		t.Errorf("SessionRootURL = %q, want %q", config.SessionRootURL, yahooSessionRootURL)
 	}
 	if config.SessionConsentURL != yahooSessionConsentURL {
 		t.Errorf("SessionConsentURL = %q, want %q", config.SessionConsentURL, yahooSessionConsentURL)
+	}
+	if !config.RandomMktData {
+		t.Error("RandomMktData = false, want true")
 	}
 }
 
