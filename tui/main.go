@@ -203,7 +203,7 @@ func run() int {
 	})
 	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
 
-	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency, ctx.Cfg.Alpaca)
+	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency, ctx.Cfg.Alpaca, ctx.Cfg.App.RandomMktData)
 	if f != nil {
 		slog.Error("Failed to start market data feeds", "error", f)
 		fmt.Fprintln(os.Stderr, f)
@@ -225,7 +225,7 @@ func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySe
 	switch feed {
 	case "yahoo":
 		return func(tickers []string) (map[string]float64, error) {
-			return mktdata.YahooGetLastPrices(tickers, cachePath)
+			return mktdata.YahooGetLastPrices(tickers, cachePath, ctx.Cfg.App.RandomMktData)
 		}, nil
 	case "alpaca":
 		return func(tickers []string) (map[string]float64, error) {
@@ -241,7 +241,7 @@ func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySe
 			}
 
 			slog.Error("Alpaca one-shot market-data lookup failed; falling back to Yahoo", "error", alpacaErr)
-			prices, yahooErr := mktdata.YahooGetLastPrices(tickers, cachePath)
+			prices, yahooErr := mktdata.YahooGetLastPrices(tickers, cachePath, ctx.Cfg.App.RandomMktData)
 			if yahooErr != nil {
 				return nil, errors.Join(
 					fmt.Errorf("Alpaca lookup failed: %w", alpacaErr),

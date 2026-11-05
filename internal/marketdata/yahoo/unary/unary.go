@@ -3,7 +3,9 @@ package unary
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,6 +35,7 @@ type UnaryAPI struct {
 	cookies           []*http.Cookie
 	crumb             string
 	cache             c.Cache
+	randomMktData     bool
 }
 
 // Config contains configuration options for the UnaryAPI client
@@ -42,6 +45,7 @@ type Config struct {
 	SessionCrumbURL   string
 	SessionConsentURL string
 	Cache             c.Cache
+	RandomMktData     bool
 }
 
 type SymbolToCurrency struct {
@@ -63,15 +67,21 @@ type sessionCookie struct {
 
 // NewUnaryAPI creates a new client
 func NewUnaryAPI(config Config) *UnaryAPI {
-	// Create client with limited redirects
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 1 {
-				return http.ErrUseLastResponse
-			}
+	var client *http.Client
+	if config.RandomMktData {
+		slog.Info("Yahoo random market-data mode enabled; network traffic disabled")
+	} else {
+		// Create client with limited redirects
+		client = &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 1 {
+					return http.ErrUseLastResponse
+				}
 
-			return nil
-		},
+				return nil
+			},
+		}
+		slog.Info("Yahoo HTTP client created")
 	}
 
 	return &UnaryAPI{
@@ -81,6 +91,7 @@ func NewUnaryAPI(config Config) *UnaryAPI {
 		sessionCrumbURL:   config.SessionCrumbURL,
 		sessionConsentURL: config.SessionConsentURL,
 		cache:             config.Cache,
+		randomMktData:     config.RandomMktData,
 	}
 }
 
@@ -232,6 +243,10 @@ func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) 
 }
 
 func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error) {
+	if u.randomMktData {
+		return randomResponse(symbols), nil
+	}
+
 
 	// Reuse a session shared by other instances when one is cached, so the first
 	// request is authenticated and the session handshake can be skipped.
@@ -312,4 +327,41 @@ func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error
 	}
 
 	return result, nil
+}
+
+func randomResponse(symbols []string) Response {
+	quotes := make([]ResponseQuote, 0, len(symbols))
+	for _, symbol := range symbols {
+		randomField := func() ResponseFieldFloat {
+			return ResponseFieldFloat{Raw: rand.Float64() * 100}
+		}
+		quotes = append(quotes, ResponseQuote{
+			ShortName:                  "Mock " + symbol,
+			Symbol:                     symbol,
+			MarketState:                "REGULAR",
+			Currency:                   "USD",
+			ExchangeName:               "Mock Exchange",
+			RegularMarketChange:        randomField(),
+			RegularMarketChangePercent: randomField(),
+			RegularMarketPrice:         randomField(),
+			RegularMarketPreviousClose: randomField(),
+			RegularMarketOpen:          randomField(),
+			RegularMarketDayRange:      ResponseFieldString{Raw: "mock range", Fmt: "Mock range"},
+			RegularMarketDayHigh:       randomField(),
+			RegularMarketDayLow:        randomField(),
+			RegularMarketVolume:        randomField(),
+			PostMarketChange:           randomField(),
+			PostMarketChangePercent:    randomField(),
+			PostMarketPrice:            randomField(),
+			PreMarketChange:            randomField(),
+			PreMarketChangePercent:     randomField(),
+			PreMarketPrice:             randomField(),
+			FiftyTwoWeekHigh:           randomField(),
+			FiftyTwoWeekLow:            randomField(),
+			QuoteType:                  "EQUITY",
+			MarketCap:                  randomField(),
+		})
+	}
+
+	return Response{QuoteResponse: ResponseQuoteResponse{Quotes: quotes}}
 }

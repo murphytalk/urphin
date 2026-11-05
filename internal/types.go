@@ -18,6 +18,7 @@ type AppCfg struct {
 	Cache              string            `yaml:"cache"`
 	Databackend        string            `yaml:"databackend"`
 	OneShotMktDataFeed string            `yaml:"one-shot-mkt-data-feed"`
+	RandomMktData      bool              `yaml:"random-mkt-data"`
 	ColorScheme        ConfigColorScheme `yaml:"colors"`
 }
 
