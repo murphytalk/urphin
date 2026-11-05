@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	data "github.com/murphytalk/urphin/data"
 	databackend "github.com/murphytalk/urphin/data/backend"
@@ -203,12 +204,24 @@ func run() int {
 	})
 	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
 
-	_, f := mktdata.StartMktDataFeeds(ctx.Cfg.App.Cache, ctx.Settings.BaseCurrency, ctx.Cfg.Alpaca, ctx.Cfg.App.RandomMktData)
-	if f != nil {
-		slog.Error("Failed to start market data feeds", "error", f)
-		fmt.Fprintln(os.Stderr, f)
+	marketData := mktdata.NewMktData()
+	err := marketData.Start(mktdata.MktDataConfig{
+		CachePath:         ctx.Cfg.App.Cache,
+		TargetCurrency:    ctx.Settings.BaseCurrency,
+		AlpacaCredentials: ctx.Cfg.Alpaca,
+		RandomMktData:     ctx.Cfg.App.RandomMktData,
+		RefreshInterval:   time.Duration(ctx.Settings.RefreshInterval) * time.Second,
+	})
+	if err != nil {
+		slog.Error("Failed to start market data feeds", "error", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	defer func() {
+		if err := marketData.Stop(); err != nil {
+			slog.Error("Failed to stop market data feeds", "error", err)
+		}
+	}()
 
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
 

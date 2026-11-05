@@ -10,7 +10,6 @@ import (
 	"github.com/goccy/go-yaml"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
-	mktdata "github.com/murphytalk/urphin/internal/marketdata"
 )
 
 type AppCtx struct {
@@ -19,7 +18,7 @@ type AppCtx struct {
 	Debug    bool                    // set by --debug-log, app only reads it
 	Styles   c.Styles                // derived from Cfg.App.ColorScheme, app only populates it once
 	Db       databackend.DataBackend // initialized in setup, used by app
-	mktFeeds mktdata.MktDataFeeds    // initialized in setup, used by app
+	watchlists []databackend.Watchlist         // initialized in setup, used by app	
 }
 
 // LoadConfig reads the YAML file at path into a Config.

@@ -68,7 +68,7 @@ func (m *Model) View() string {
 		m.styles.TextLabel("Cost: ") + m.styles.TextLabel(u.ConvertFloatToString(m.summary.Cost, false))
 	widthCost := ansi.PrintableRuneWidth(textValue)
 
-	return grid.Render(grid.Grid{
+	content := grid.Render(grid.Grid{
 		Rows: []grid.Row{
 			{
 				Width: m.width,
@@ -89,15 +89,11 @@ func (m *Model) View() string {
 					},
 				},
 			},
-			{
-				Width: m.width,
-				Cells: []grid.Cell{
-					{Text: m.styles.TextLine(strings.Repeat("━", m.width))},
-				},
-			},
 		},
 		GutterHorizontal: 1,
 	})
+	content = strings.TrimSuffix(content, "\n")
+	return content + "\n" + m.styles.TextLine(strings.Repeat("━", m.width))
 
 }
 

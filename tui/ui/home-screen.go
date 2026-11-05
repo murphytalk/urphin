@@ -5,7 +5,6 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	c "github.com/murphytalk/urphin/internal"
-	mktdata "github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/summary"
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/shared/fin"
@@ -30,7 +29,6 @@ type Model struct {
 	groupMaxIndex      int
 	groupSelectedName  string
 	currentSort        string
-	mktFeeds           mktdata.MktDataFeeds
 	mu                 sync.RWMutex
 	version            string
 	latestVersion      string

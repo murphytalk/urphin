@@ -3,6 +3,8 @@ package poller
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
@@ -11,6 +13,7 @@ import (
 
 // Poller represents a poller for Yahoo Finance
 type Poller struct {
+	mu                   sync.Mutex
 	refreshInterval      time.Duration
 	symbols              []string
 	isStarted            bool
@@ -47,12 +50,16 @@ func NewPoller(ctx context.Context, config PollerConfig) *Poller {
 
 // SetSymbols sets the symbols to poll
 func (p *Poller) SetSymbols(symbols []string, versionVector int) {
-	p.symbols = symbols
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.symbols = slices.Clone(symbols)
 	p.versionVector = versionVector
 }
 
 // SetRefreshInterval sets the refresh interval for the poller
 func (p *Poller) SetRefreshInterval(interval time.Duration) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	if p.isStarted {
 		return errors.New("cannot set refresh interval while poller is started")
@@ -65,6 +72,8 @@ func (p *Poller) SetRefreshInterval(interval time.Duration) error {
 
 // Start starts the poller
 func (p *Poller) Start() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.isStarted {
 		return errors.New("poller already started")
 	}
@@ -76,46 +85,58 @@ func (p *Poller) Start() error {
 	p.isStarted = true
 
 	// Start polling goroutine
-	go func() {
-		ticker := time.NewTicker(p.refreshInterval)
-		defer ticker.Stop()
+	go p.run(p.refreshInterval)
 
-		for {
-			select {
-			case <-p.ctx.Done():
+	return nil
+}
 
-				return
-			case <-ticker.C:
-				// Skip making a HTTP request if no symbols are set
-				if len(p.symbols) == 0 {
+func (p *Poller) run(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 
-					continue
+	for {
+		select {
+		case <-p.ctx.Done():
+
+			return
+		case <-ticker.C:
+			p.mu.Lock()
+			symbols := slices.Clone(p.symbols)
+			versionVector := p.versionVector
+			p.mu.Unlock()
+			// Skip making a HTTP request if no symbols are set
+			if len(symbols) == 0 {
+
+				continue
+			}
+
+			// Make a HTTP request to get the asset quotes
+			assetQuotes, _, err := p.unaryAPI.GetAssetQuotes(symbols)
+
+			if err != nil {
+				select {
+				case <-p.ctx.Done():
+					return
+				case p.chanError <- err:
 				}
 
-				versionVector := p.versionVector
+				continue
+			}
 
-				// Make a HTTP request to get the asset quotes
-				assetQuotes, _, err := p.unaryAPI.GetAssetQuotes(p.symbols)
-
-				if err != nil {
-					p.chanError <- err
-
-					continue
-				}
-
-				// Send the asset quotes to the update channel
-				for _, assetQuote := range assetQuotes {
-					p.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-						ID:            assetQuote.Meta.SymbolInSourceAPI,
-						Data:          assetQuote,
-						VersionVector: versionVector,
-					}
+			// Send the asset quotes to the update channel
+			for _, assetQuote := range assetQuotes {
+				select {
+				case <-p.ctx.Done():
+					return
+				case p.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
+					ID:            assetQuote.Meta.SymbolInSourceAPI,
+					Data:          assetQuote,
+					VersionVector: versionVector,
+				}:
 				}
 			}
 		}
-	}()
-
-	return nil
+	}
 }
 
 // Stop stops the poller

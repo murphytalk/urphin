@@ -43,6 +43,10 @@ type MonitorPriceYahoo struct {
 	chanRequestCurrencyRates chan []string
 }
 
+func (m *MonitorPriceYahoo) SupportsAssetClass(assetClass c.AssetClass) bool {
+	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
+}
+
 // input represents user input for the Yahoo monitor with any transformation
 type input struct {
 	symbols       []string
@@ -106,16 +110,10 @@ func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote,
 
 	// If ignoreCache is set, get the asset quotes from the unary API and update the cache
 	if len(ignoreCache) > 0 && ignoreCache[0] {
-		assetQuotes, err := m.getAssetQuotesAndReplaceCache()
+		_, err := m.getAssetQuotesAndReplaceCache()
 		if err != nil {
 			return []c.AssetQuote{}, err
 		}
-		result := make([]c.AssetQuote, len(assetQuotes))
-		for i, quote := range assetQuotes {
-			result[i] = *quote
-		}
-
-		return result, nil
 	}
 
 	// If ignoreCache is not set, return the asset quotes from the cache without making a HTTP request
@@ -138,8 +136,10 @@ func (m *MonitorPriceYahoo) SetSymbols(symbols []string, versionVector int) erro
 	m.mu.Lock()
 
 	// Deduplicate symbols since input may have duplicates
+	symbols = slices.Clone(symbols)
 	slices.Sort(symbols)
-	m.symbols = slices.Compact(symbols)
+	symbols = slices.Compact(symbols)
+	m.symbols = symbols
 	m.input.symbols = symbols
 	m.input.symbolsLookup = make(map[string]bool)
 	for _, symbol := range symbols {
@@ -162,7 +162,7 @@ func (m *MonitorPriceYahoo) SetSymbols(symbols []string, versionVector int) erro
 	}
 
 	// Set the symbols to monitor on the poller
-	m.poller.SetSymbols(m.symbols, versionVector)
+	m.poller.SetSymbols(symbols, versionVector)
 
 	return nil
 
@@ -232,15 +232,14 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 			return
 
 		case updateMessage := <-m.chanPollUpdateAssetQuote:
-			// Check if cache exists and values have changed before acquiring write lock
-			m.mu.RLock()
+			m.mu.Lock()
 
 			assetQuote, exists := m.assetQuotesCacheLookup[updateMessage.ID]
 
 			// If product id does not exist in cache, skip update (this would happen if the API returns a price for a symbol that was not requested)
 			if !exists {
 				// TODO: log product not found in cache - should not happen
-				m.mu.RUnlock()
+				m.mu.Unlock()
 
 				continue
 			}
@@ -250,15 +249,10 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 				assetQuote.Exchange.IsActive == updateMessage.Data.Exchange.IsActive &&
 				assetQuote.QuotePrice.PriceDayHigh == updateMessage.Data.QuotePrice.PriceDayHigh {
 
-				m.mu.RUnlock()
+				m.mu.Unlock()
 
 				continue
 			}
-			m.mu.RUnlock()
-
-			// Price is different so update cache
-			m.mu.Lock()
-
 			// Update properties on the asset quote which may have changed
 			assetQuote.QuotePrice.Price = updateMessage.Data.QuotePrice.Price
 			assetQuote.QuotePrice.Change = updateMessage.Data.QuotePrice.Change
@@ -274,13 +268,18 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 			assetQuote.Exchange.IsActive = updateMessage.Data.Exchange.IsActive
 			assetQuote.Exchange.IsRegularTradingSession = updateMessage.Data.Exchange.IsRegularTradingSession
 
+			quote := *assetQuote
 			m.mu.Unlock()
 
 			// Send a message with an updated quote
-			m.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-				ID:            assetQuote.Symbol,
-				Data:          *assetQuote,
+			select {
+			case <-m.ctx.Done():
+				return
+			case m.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
+				ID:            quote.Symbol,
+				Data:          quote,
 				VersionVector: updateMessage.VersionVector,
+			}:
 			}
 
 			continue
@@ -295,7 +294,10 @@ func (m *MonitorPriceYahoo) getAssetQuotesAndReplaceCache() ([]*c.AssetQuote, er
 	cache := make([]*c.AssetQuote, 0)
 
 	// Make a synchronous call to get price quotes
-	assetQuotes, _, err := m.unaryAPI.GetAssetQuotes(m.symbols)
+	m.mu.RLock()
+	symbols := slices.Clone(m.symbols)
+	m.mu.RUnlock()
+	assetQuotes, _, err := m.unaryAPI.GetAssetQuotes(symbols)
 	if err != nil {
 		return []*c.AssetQuote{}, err
 	}
@@ -330,8 +332,11 @@ func (m *MonitorPriceYahoo) getAssetQuotesAndReplaceCache() ([]*c.AssetQuote, er
 }
 
 func (m *MonitorPriceYahoo) getCurrencyForEachSymbolAndUpdateCurrencyMap() error {
+	m.mu.RLock()
+	symbols := slices.Clone(m.symbols)
+	m.mu.RUnlock()
 	// No need to process if no symbols are provided
-	if len(m.symbols) == 0 {
+	if len(symbols) == 0 {
 		return nil
 	}
 
@@ -339,7 +344,7 @@ func (m *MonitorPriceYahoo) getCurrencyForEachSymbolAndUpdateCurrencyMap() error
 
 	// Check if symbols already have a currency mapping
 	m.muCurrencyRates.RLock()
-	for _, symbol := range m.symbols {
+	for _, symbol := range symbols {
 		if _, exists := m.symbolToCurrency[symbol]; !exists {
 			symbolsWithoutCurrency = append(symbolsWithoutCurrency, symbol)
 		}
@@ -393,7 +398,10 @@ func (m *MonitorPriceYahoo) getCurrencyForEachSymbolAndUpdateCurrencyMap() error
 
 	m.muCurrencyRates.Unlock()
 
-	m.chanRequestCurrencyRates <- fromCurrenciesToRequest
-
-	return nil
+	select {
+	case <-m.ctx.Done():
+		return m.ctx.Err()
+	case m.chanRequestCurrencyRates <- fromCurrenciesToRequest:
+		return nil
+	}
 }
