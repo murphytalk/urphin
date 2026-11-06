@@ -138,10 +138,14 @@ func (m *mktDataImpl) Start(config MktDataConfig) error {
 		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanQuotes, chanRequestRates),
 	}
 	m.currencyRates = newYahooCurrencyRateMonitor(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanRates, chanRequestRates)
-	if err := addAlpacaProvider(m, config); err != nil {
-		m.cancel()
-		m.markStopped()
-		return err
+	if config.RandomMktData {
+		slog.Warn("Only random market-data feed is enabled")
+	} else {
+		if err := addAlpacaProvider(m, config); err != nil {
+			m.cancel()
+			m.markStopped()
+			return err
+		}
 	}
 	m.startConsumers()
 	if err := m.startCurrencyRateMonitor(m.currencyRates); err != nil {
