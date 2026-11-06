@@ -21,16 +21,16 @@ flowchart TD
 |---|---|
 | Application → UI | [tui/main.go](../tui/main.go): starts market data, calls `ui.Run`, then stops feeds and closes the backend. |
 | Receiver → home event loop | [tui/ui/session.go](../tui/ui/session.go): owns the caller-supplied quote channel and produces `QuoteBatchMsg`; never mutates portfolio maps. |
-| Home → child renderers | [tui/ui/home-screen.go](../tui/ui/home-screen.go) and [tui/ui/portfolio.go](../tui/ui/portfolio.go): cache quotes, derive visible assets and native-currency totals, manage keys and layout. |
+| Home → child renderers | [tui/ui/home-screen.go](../tui/ui/home-screen.go) and [tui/ui/portfolio.go](../tui/ui/portfolio.go): cache quotes and FX rates, derive visible assets and summary values, manage keys and layout. |
 | Watchlist → rows | [internal/watchlist/watchlist.go](../internal/watchlist/watchlist.go): sorts, retains rows by symbol, measures shared columns, dispatches row messages. |
 | Row → text | [internal/watchlist/row/row.go](../internal/watchlist/row/row.go) and [internal/watchlist/row/render.go](../internal/watchlist/row/render.go): format cells and animate known price changes. |
-| Portfolio → summary | [internal/summary/currency.go](../internal/summary/currency.go): `CurrencySummary` and `SetCurrencySummariesMsg` carry precomputed totals; the renderer does no conversion. |
+| Portfolio → summary | [internal/summary/currency.go](../internal/summary/currency.go): `CurrencySummary` and `SetCurrencySummariesMsg` carry precomputed native totals and base-currency values. |
 
 Keep message-boundary comments **role-based**: identify the producer, consumer and ownership constraint (receiver → event loop, portfolio owner → renderer, row animator → dispatcher). Background commands produce messages; only the home event loop mutates portfolio state. Renderers do not subscribe to feeds or load backend positions.
 
 ## 2. Startup and quote delivery
 
-`NewModel` requires a backend and settings in `setup.AppCtx`. It calls `GetWatchList(nil)` for all lists, rejects blank tickers, deduplicates each list while retaining its order and metadata, and builds a sorted union of symbols. For each unique symbol it calls `CalculatePositionAndVWAP(nil, symbol)` once: a nil broker aggregates all brokers. Positions are loaded at construction, not on navigation or every quote. Here, “whole portfolio” means that loaded watchlist union, not transaction symbols absent from every list.
+`NewModel` requires a backend and settings in `setup.AppCtx`. It calls `GetWatchList(nil)` for all lists, rejects blank tickers, deduplicates each list while retaining its order and metadata, and builds a sorted union of symbols. Configured `FxPairs` join the UI subscription, but do not become positions or watchlist rows. For each unique asset symbol it calls `CalculatePositionAndVWAP(nil, symbol)` once: a nil broker aggregates all brokers. Positions are loaded at construction, not on navigation or every quote. Here, “whole portfolio” means that loaded watchlist union, not transaction symbols absent from every list.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ flowchart LR
     Home --> Cache["All subscribed-symbol quote cache"]
     Cache --> Assets["Selected watchlist assets"]
     Assets --> Watchlist["SetAssetsMsg → rows → viewport"]
-    Cache --> Totals["Native summary for current scope"]
+    Cache --> Totals["Native and base-currency summary for current scope"]
     Totals --> Summary["SetCurrencySummariesMsg → summary"]
 ```
 
@@ -49,7 +49,7 @@ flowchart LR
 - One logical subscription (`"home"`, the same channel and complete union) lasts until exit. Startup makes at most **three attempts**, retrying `Subscribe` errors after cancellable **1 s / 2 s** waits. Partial failure can still deliver quotes; exhaustion is logged and leaves the UI running. Empty symbol sets start neither command. Navigation, sorting and summary toggles never resubscribe.
 - [The service contract](../internal/marketdata/mktdata.go) is nonblocking delivery: a full channel drops updates. The session capacity is `max(64, 2*len(symbols))`, enough to buffer one snapshot per symbol from both Yahoo and Alpaca, but not a lossless guarantee under concurrent traffic.
 - Each receiver command waits for one quote, then drains immediately available quotes, bounded to at most the channel capacity in additional reads. It normalizes an empty `Symbol` from `Meta.SymbolInSourceAPI` and keeps the last received quote per symbol. Batch order across different symbols is unspecified. There is **no flush timer or periodic render tick**; only row animations use recurring UI ticks (startup backoff has separate timers).
-- The event loop ignores symbols outside the loaded union, caches every accepted quote, and sends `UpdateAssetsMsg` to the selected watchlist only if the batch touches it. Membership replacements use `SetAssetsMsg` when navigating. It recomputes the current summary for accepted updates, refreshes layout/content, and re-arms one receiver command. Offscreen quotes remain cached for immediate use when switching lists.
+- The event loop accepts loaded asset symbols and configured FX pairs, caches each quote, and sends `UpdateAssetsMsg` to the selected watchlist only if the batch touches an asset. Membership replacements use `SetAssetsMsg` when navigating. It recomputes the current summary for accepted updates, refreshes layout/content, and re-arms one receiver command. Offscreen quotes remain cached for immediate use when switching lists.
 - There is **no source preference or freshness arbitration** in the UI: the last delivered quote wins, including between Yahoo and Alpaca. Watchlist changes do not create a UI version vector or restart a timer chain.
 
 | Message consumed by home | Effect |
@@ -77,7 +77,7 @@ The market-data sender holds its subscriber read lock during delivery; removal t
 
 The default scope is **Whole portfolio**; F3 toggles **follow selected watchlist**. Shared symbols count once in the union. Switching lists changes only visible assets and, when following, summary scope; it does not change the lifetime subscription.
 
-Currency grouping uses backend `Position.Ccy` first, quote `Currency.FromCurrencyCode` second, then **Unknown**. No conversion, rate repair or cross-currency grand total is performed, even when settings request conversion or quotes contain rates/target currencies. Quote fields remain native and intact.
+Currency grouping uses backend `Position.Ccy` first, quote `Currency.FromCurrencyCode` second, then **Unknown**. The summary keeps native values and shows a configured base-currency value in parentheses for non-base currencies. It uses configured FX pairs that include the base currency, inverting a valid reverse rate when needed. Missing or invalid rates show `N/A`; costs, day change and P&L remain native. Quote fields remain intact.
 
 For each currency and nonzero holding quantity $q_i$, with quote price $p_i$:
 
@@ -93,6 +93,7 @@ Backend [position calculation](../data/backend/position.go) already includes fee
 Availability is explicit, not a misleading zero:
 
 - A missing, nonfinite or nonpositive held quote marks its currency's Value, Day Change and P&L unavailable; known costs stay visible. Other currencies are unaffected. Zero-share symbols create no currency group and need no quote for summary valuation.
+- A missing or invalid FX rate leaves a valid native Value visible and marks only its base-currency value `N/A`.
 - Invalid day-change/previous-close inputs invalidate Day Change only. Nonfinite backend costs have their own cost-unavailable flags and invalidate P&L in that currency.
 - Nonempty backend/quote currencies that disagree are logged on entering the mismatch state. Valuation and P&L are unavailable until a consistent quote arrives, but the native quote and known backend costs remain visible; no implicit conversion masks the mismatch.
 
@@ -126,7 +127,7 @@ The footer is terse, one line, never wraps, and drops trailing help to fit while
 | Up / Down, Page Up / Page Down | Scroll viewport. |
 | Home / End | Jump to top / bottom. |
 
-Sort and scope changes are session-local; they do not persist settings. Rendering settings (`ShowSummary`, `ShowPositions`, exchange/fundamental extras, separators, styles) are honored; currency conversion remains deferred.
+Sort and scope changes are session-local; they do not persist settings. Rendering settings (`ShowSummary`, `ShowPositions`, exchange/fundamental extras, separators, styles) are honored. FX rates arrive through `QuoteBatchMsg` and refresh base values in the summary; pair symbols do not render as watchlist rows.
 
 ## 6. Embedding or supplying a custom feed
 

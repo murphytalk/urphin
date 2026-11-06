@@ -1,6 +1,24 @@
 package types
 
-import "time"
+import (
+	"strings"
+	"time"
+)
+
+// ParseCurrencyPair splits a configured six-letter currency pair symbol.
+// shortcut: validates six-letter shape only, add ISO 4217 lookup if config gains external sources.
+func ParseCurrencyPair(symbol string) (from, to string, ok bool) {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if len(symbol) != 6 {
+		return "", "", false
+	}
+	for _, r := range symbol {
+		if r < 'A' || r > 'Z' {
+			return "", "", false
+		}
+	}
+	return symbol[:3], symbol[3:], true
+}
 
 type Cache interface {
 	Get(key string, out any) bool
@@ -19,6 +37,7 @@ type AppCfg struct {
 	Databackend        string            `yaml:"databackend"`
 	OneShotMktDataFeed string            `yaml:"one-shot-mkt-data-feed"`
 	RandomMktData      bool              `yaml:"random-mkt-data"`
+	FxPairs            []string          `yaml:"fx-pairs"`
 	ColorScheme        ConfigColorScheme `yaml:"colors"`
 }
 

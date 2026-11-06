@@ -213,6 +213,7 @@ func run() int {
 	err := marketData.Start(mktdata.MktDataConfig{
 		CachePath:         ctx.Cfg.App.Cache,
 		TargetCurrency:    ctx.Settings.BaseCurrency,
+		FxPairs:           ctx.Cfg.App.FxPairs,
 		AlpacaCredentials: ctx.Cfg.Alpaca,
 		RandomMktData:     ctx.Cfg.App.RandomMktData,
 		RefreshInterval:   time.Duration(ctx.Settings.RefreshInterval) * time.Second,
