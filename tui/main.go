@@ -20,6 +20,7 @@ import (
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/setup"
+	"github.com/murphytalk/urphin/tui/ui"
 )
 
 // defaultLogKeepDays is how long a rotated log file is kept when app.logKeepDays
@@ -190,7 +191,7 @@ func run() int {
 	if ctx.Settings == nil {
 		ctx.Settings = &c.Settings{}
 	}
-	setup.LoadOrCreate(ctx.Settings, settingsPath, setup.LoadSettings, &c.Settings{
+	if err := setup.LoadOrCreate(ctx.Settings, settingsPath, setup.LoadSettings, &c.Settings{
 		RefreshInterval:                   30,
 		Separate:                          true,
 		ExtraInfoExchange:                 true,
@@ -201,7 +202,11 @@ func run() int {
 		CurrencyDisableUnitCostConversion: true,
 		Sort:                              "ticker",
 		BaseCurrency:                      "USD",
-	})
+	}); err != nil {
+		slog.Error("Failed to load UI settings", "error", err)
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
 
 	marketData := mktdata.NewMktData()
@@ -224,8 +229,18 @@ func run() int {
 	}()
 
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
+	if err := startUI(marketData); err != nil {
+		slog.Error("UI failed", "error", err)
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
 
 	return 0
+}
+
+func startUI(mktData mktdata.MktData) error {
+	// The UI session consumes quotes; this application retains feed/backend ownership.
+	return ui.Run(ctx, mktData)
 }
 
 func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {

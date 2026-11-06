@@ -13,9 +13,10 @@ type Sorter func([]*c.Asset) []*c.Asset
 // NewSorter creates a sorting function
 func NewSorter(sort string) Sorter {
 	var sortDict = map[string]Sorter{
-		"alpha": sortByAlpha,
-		"value": sortByValue,
-		"user":  sortByUser,
+		"alpha":  sortByAlpha,
+		"ticker": sortByAlpha,
+		"value":  sortByValue,
+		"user":   sortByUser,
 	}
 	if sorter, ok := sortDict[sort]; ok {
 		return sorter

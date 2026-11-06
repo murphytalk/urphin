@@ -1,14 +1,18 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
+	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/shared/logging"
+	"github.com/murphytalk/urphin/tui/setup"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -19,6 +23,49 @@ func readLog(t *testing.T, name string) string {
 		t.Fatalf("read %q: %v", name, err)
 	}
 	return string(data)
+}
+
+type startUITestBackend struct {
+	databackend.DataBackend
+	err    error
+	closed bool
+}
+
+func (b *startUITestBackend) GetWatchList(*string) ([]databackend.Watchlist, error) {
+	return nil, b.err
+}
+
+func (b *startUITestBackend) Close() error {
+	b.closed = true
+	return nil
+}
+
+func TestStartUIPropagatesValidationErrorsWithoutClosingBackend(t *testing.T) {
+	oldCtx := ctx
+	t.Cleanup(func() { ctx = oldCtx })
+	sentinel := errors.New("watchlist read failed")
+	for _, tc := range []struct {
+		name string
+		app  setup.AppCtx
+		want string
+		wrap bool
+	}{
+		{"missing backend", setup.AppCtx{Settings: &c.Settings{}}, "data backend and settings", false},
+		{"missing settings", setup.AppCtx{Db: &startUITestBackend{}}, "data backend and settings", false},
+		{"backend failure", setup.AppCtx{Db: &startUITestBackend{err: sentinel}, Settings: &c.Settings{}}, "load watchlists", true},
+		{"missing feed", setup.AppCtx{Db: &startUITestBackend{}, Settings: &c.Settings{}}, "UI requires market data", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx = tc.app
+			err := startUI(nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || (tc.wrap && !errors.Is(err, sentinel)) {
+				t.Fatalf("startUI error %v, want %q (wrapped=%t)", err, tc.want, tc.wrap)
+			}
+			if b, ok := ctx.Db.(*startUITestBackend); ok && b.closed {
+				t.Fatal("startUI closed the application-owned backend on failure")
+			}
+		})
+	}
 }
 
 func TestResolveOneShotMktDataFeed(t *testing.T) {

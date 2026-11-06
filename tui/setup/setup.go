@@ -18,7 +18,6 @@ type AppCtx struct {
 	Debug    bool                    // set by --debug-log, app only reads it
 	Styles   c.Styles                // derived from Cfg.App.ColorScheme, app only populates it once
 	Db       databackend.DataBackend // initialized in setup, used by app
-	watchlists []databackend.Watchlist         // initialized in setup, used by app	
 }
 
 // LoadConfig reads the YAML file at path into a Config.

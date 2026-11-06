@@ -200,7 +200,8 @@ type Position struct {
 	Cost        float64
 	Quantity    float64
 	UnitValue   float64
-	UnitCost    float64
+	UnitCost    float64 // VWAP per share, including fees.
+	AvgCost     float64 // Net investment per remaining share, including fees.
 	DayChange   PositionChange
 	TotalChange PositionChange
 	Weight      float64
@@ -218,6 +219,9 @@ type Asset struct {
 	QuoteSource   QuoteSource
 	Exchange      Exchange
 	Meta          Meta
+	// Portfolio/quote owners mark missing data; display consumers keep known costs.
+	QuoteUnavailable    bool
+	PositionUnavailable bool
 }
 
 // StyleFn is a function that styles text

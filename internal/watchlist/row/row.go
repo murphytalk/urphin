@@ -1,6 +1,7 @@
 package row
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -12,16 +13,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	grid "github.com/achannarasappa/term-grid"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
-	WidthMarketState    = 5
-	WidthGutter         = 1
-	WidthLabel          = 15
-	WidthName           = 20
-	WidthPositionGutter = 2
-	WidthChangeStatic   = 12 // "↓ " + " (100.00%)" = 12 length
-	WidthRangeStatic    = 3  // " - " = 3 length
+	WidthMarketState       = 5
+	WidthGutter            = 1
+	WidthLabel             = 15
+	WidthName              = 20
+	WidthPositionGutter    = 2
+	WidthChangeStatic      = 12 // "↓ " + " (100.00%)" = 12 length
+	WidthRangeStatic       = 3  // " - " = 3 length
+	PositionExtendedLabels = "VWAP:\nAvg Cost:\nQty:"
 )
 
 var lastID int64 //nolint:gochecknoglobals
@@ -32,14 +35,15 @@ type SetCellWidthsMsg struct {
 }
 
 type CellWidthsContainer struct {
-	PositionLength        int
-	QuoteLength           int
-	WidthQuote            int
-	WidthQuoteExtended    int
-	WidthQuoteRange       int
-	WidthPosition         int
-	WidthPositionExtended int
-	WidthVolumeMarketCap  int
+	PositionLength              int
+	QuoteLength                 int
+	WidthQuote                  int
+	WidthQuoteExtended          int
+	WidthQuoteRange             int
+	WidthPosition               int
+	WidthPositionExtended       int
+	WidthPositionExtendedLabels int
+	WidthVolumeMarketCap        int
 }
 
 type Config struct {
@@ -105,8 +109,15 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 
 	case UpdateAssetMsg:
 
-		// If symbol has not changed and price has changed then start the price animation
-		if m.config.Asset.Symbol == msg.Symbol && m.config.Asset.QuotePrice.Price != msg.QuotePrice.Price {
+		// Watchlist renderer supplies state; unchanged prices retain pending animation frames.
+		if m.config.Asset.Symbol == msg.Symbol && !m.config.Asset.QuoteUnavailable && !msg.QuoteUnavailable && m.config.Asset.QuotePrice.Price == msg.QuotePrice.Price {
+			m.config.Asset = msg
+			return m, nil
+		}
+
+		// Watchlist owner -> row renderer: animate only changes between known quotes.
+		if !m.config.Asset.QuoteUnavailable && !msg.QuoteUnavailable &&
+			m.config.Asset.Symbol == msg.Symbol && m.config.Asset.QuotePrice.Price != msg.QuotePrice.Price {
 			// Reset color and frame on number change
 			m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
 			m.frame = 0
@@ -149,6 +160,9 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		m.config.Asset = msg
 		m.priceNoChangeSegment = u.ConvertFloatToString(msg.QuotePrice.Price, msg.Meta.IsVariablePrecision)
 		m.priceChangeSegment = ""
+		m.priceChangeDirection = 0
+		m.frame = 0
+		m.priceStyle = lipgloss.NewStyle()
 
 		return m, nil
 
@@ -200,39 +214,21 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 
 // View rendering hook
 func (m *Model) View() string {
+	if m.width <= 0 {
+		return ""
+	}
 
-	rows := []grid.Row{}
-
-	rows = append(
-		rows,
-		grid.Row{
-			Width: m.width,
-			Cells: m.buildCells(),
-		})
+	rows := []string{renderCells(m.buildCells(), m.width)}
 
 	if m.config.ExtraInfoExchange {
-		rows = append(
-			rows,
-			grid.Row{
-				Width: m.width,
-				Cells: []grid.Cell{
-					{Text: textTags(m.config.Asset, m.config.Styles)},
-				},
-			})
+		rows = append(rows, ansi.Truncate(textTags(m.config.Asset, m.config.Styles), m.width, ""))
 	}
 
 	if m.config.Separate {
-		rows = append(
-			rows,
-			grid.Row{
-				Width: m.width,
-				Cells: []grid.Cell{
-					{Text: textSeparator(m.width, m.config.Styles)},
-				},
-			})
+		rows = append(rows, textSeparator(m.width, m.config.Styles))
 	}
 
-	return grid.Render(grid.Grid{Rows: rows, GutterHorizontal: WidthGutter})
+	return strings.Join(rows, "\n")
 }
 
 func (m *Model) buildCells() []grid.Cell {
@@ -259,13 +255,14 @@ func (m *Model) buildCells() []grid.Cell {
 	widthMinTerm := WidthName + WidthMarketState + m.cellWidths.WidthQuote + (3 * WidthGutter)
 
 	if m.config.ShowPositions {
-		widthHoldings := widthMinTerm + m.cellWidths.WidthPosition + (3 * WidthGutter) + m.cellWidths.WidthPositionExtended + WidthLabel
+		labelWidth := max(m.cellWidths.WidthPositionExtendedLabels, lipgloss.Width(PositionExtendedLabels))
+		widthHoldings := widthMinTerm + m.cellWidths.WidthPosition + (3 * WidthGutter) + m.cellWidths.WidthPositionExtended + labelWidth
 
 		cells = append(
 			[]grid.Cell{
 				{
 					Text:            textPositionExtendedLabels(m.config.Asset, m.config.Styles),
-					Width:           WidthLabel,
+					Width:           labelWidth,
 					Align:           grid.Right,
 					VisibleMinWidth: widthHoldings,
 				},
@@ -273,7 +270,7 @@ func (m *Model) buildCells() []grid.Cell {
 					Text:            textPositionExtended(m.config.Asset, m.config.Styles),
 					Width:           m.cellWidths.WidthPositionExtended,
 					Align:           grid.Right,
-					VisibleMinWidth: widthMinTerm + m.cellWidths.WidthPosition + (2 * WidthGutter) + m.cellWidths.WidthPositionExtended,
+					VisibleMinWidth: widthHoldings,
 				},
 				{
 					Text:            textPosition(m.config.Asset, m.config.Styles),
@@ -342,35 +339,56 @@ func (m *Model) buildCells() []grid.Cell {
 
 func textName(asset *c.Asset, styles c.Styles) string {
 
-	if len(asset.Name) > 20 {
-		asset.Name = asset.Name[:20]
-	}
-
 	return styles.TextBold(asset.Symbol) +
 		"\n" +
-		styles.TextLabel(asset.Name)
+		styles.TextLabel(ansi.Truncate(asset.Name, WidthName, ""))
 }
 
 func textQuote(asset *c.Asset, styles c.Styles, priceStyle lipgloss.Style, priceNoChangeSegment string, priceChangeSegment string) string {
+	if asset.QuoteUnavailable {
+		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
+	}
+	if math.IsNaN(asset.QuotePrice.Change) || math.IsInf(asset.QuotePrice.Change, 0) || math.IsNaN(asset.QuotePrice.ChangePercent) || math.IsInf(asset.QuotePrice.ChangePercent, 0) {
+		return priceNoChangeSegment + priceStyle.Render(priceChangeSegment) + "\n" + styles.TextLabel("N/A")
+	}
 	return priceNoChangeSegment + priceStyle.Render(priceChangeSegment) +
 		"\n" +
 		quoteChangeText(asset.QuotePrice.Change, asset.QuotePrice.ChangePercent, asset.Meta.IsVariablePrecision, styles)
 }
 
 func textPosition(asset *c.Asset, styles c.Styles) string {
+	if asset.PositionUnavailable || (asset.QuoteUnavailable && asset.Position != (c.Position{})) {
+		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
+	}
 
 	positionValue := ""
 	positionChange := ""
 
-	if asset.Position.Value != 0.0 {
-		positionValue = u.ValueText(asset.Position.Value, styles) +
+	if asset.Position.Value != 0.0 || asset.Position.Quantity != 0.0 {
+		positionValue = styles.Text(u.ConvertFloatToString(asset.Position.Value, false)) +
 			styles.TextLight(
 				" ("+
 					u.ConvertFloatToString(asset.Position.Weight, asset.Meta.IsVariablePrecision)+"%"+
 					")")
 	}
-	if asset.Position.TotalChange.Amount != 0.0 {
-		positionChange = quoteChangeText(asset.Position.TotalChange.Amount, asset.Position.TotalChange.Percent, asset.Meta.IsVariablePrecision, styles)
+	if asset.Position.TotalChange.Amount != 0.0 || asset.Position.Quantity != 0.0 {
+		change := asset.Position.TotalChange
+		text := u.ConvertFloatToString(change.Amount, asset.Meta.IsVariablePrecision)
+		if change.Amount > 0 {
+			text = "↑ " + text
+		} else if change.Amount < 0 {
+			text = "↓ " + text
+		}
+		if asset.Position.UnitCost*asset.Position.Quantity > 0 {
+			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
+		} else {
+			text += " (N/A)"
+		}
+		sign := -1.0
+		if change.Amount > 0 {
+			sign = 1
+		}
+		positionChange = styles.TextPrice(sign, text)
 	}
 
 	return positionValue +
@@ -379,6 +397,9 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 }
 
 func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
+	if asset.QuoteUnavailable {
+		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
+	}
 
 	if asset.Class == c.AssetClassFutures && asset.QuoteFutures.IndexPrice == 0.0 {
 		return ""
@@ -429,7 +450,23 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 		return ""
 	}
 
-	return styles.Text(u.ConvertFloatToString(asset.Position.UnitCost, asset.Meta.IsVariablePrecision)) +
+	costText := func(cost float64) string {
+		if math.IsNaN(cost) || math.IsInf(cost, 0) {
+			return styles.TextLabel("N/A")
+		}
+		text := u.ConvertFloatToString(cost, asset.Meta.IsVariablePrecision)
+		if asset.QuoteUnavailable || asset.PositionUnavailable {
+			return styles.Text(text)
+		}
+		sign := -1.0
+		if asset.QuotePrice.Price > cost {
+			sign = 1
+		}
+		return styles.TextPrice(sign, text)
+	}
+	return costText(asset.Position.UnitCost) +
+		"\n" +
+		ansi.NewStyle().Underline(true).Styled(costText(asset.Position.AvgCost)) +
 		"\n" +
 		styles.Text(u.ConvertFloatToString(asset.Position.Quantity, asset.Meta.IsVariablePrecision))
 
@@ -441,12 +478,18 @@ func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
 		return ""
 	}
 
-	return styles.TextLabel("Avg. Cost:") +
+	labels := strings.Split(PositionExtendedLabels, "\n")
+	return styles.TextLabel(labels[0]) +
 		"\n" +
-		styles.TextLabel("Quantity:")
+		ansi.NewStyle().Underline(true).Styled(styles.TextLabel(labels[1])) +
+		"\n" +
+		styles.TextLabel(labels[2])
 }
 
 func textQuoteRange(asset *c.Asset, styles c.Styles) string {
+	if asset.QuoteUnavailable {
+		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
+	}
 
 	if asset.Class == c.AssetClassFutures {
 
@@ -580,6 +623,7 @@ func formatTag(text string, style c.Styles) string {
 }
 
 func frameCmd(id int) tea.Cmd {
+	// Row animator -> watchlist dispatcher -> matching row renderer: advance one frame.
 	return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
 		return FrameMsg(id)
 	})
