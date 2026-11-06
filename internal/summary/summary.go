@@ -14,9 +14,12 @@ import (
 
 // Model for summary section
 type Model struct {
-	width   int
-	summary fin.PositionSummary
-	styles  c.Styles
+	width      int
+	summary    fin.PositionSummary
+	styles     c.Styles
+	native     bool
+	scope      string
+	currencies []CurrencySummary
 }
 
 type SetSummaryMsg fin.PositionSummary
@@ -43,7 +46,13 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		return m, nil
 	case SetSummaryMsg:
 		m.summary = fin.PositionSummary(msg)
+		m.native = false
+		m.currencies = nil
 
+		return m, nil
+	case SetCurrencySummariesMsg:
+		// Portfolio owner -> summary renderer: precomputed native totals, no conversion.
+		m.setCurrencies(msg)
 		return m, nil
 	}
 
@@ -52,6 +61,9 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 
 // View rendering hook for bubbletea
 func (m *Model) View() string {
+	if m.native {
+		return m.currencyView()
+	}
 
 	if m.width < 80 {
 		return ""
