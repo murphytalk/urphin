@@ -10,13 +10,16 @@ import (
 	u "github.com/murphytalk/urphin/internal/util"
 )
 
-// CurrencySummary contains native-currency totals calculated by the portfolio owner.
+// CurrencySummary contains native totals and an optional base-currency value.
 type CurrencySummary struct {
-	Currency                                                  string
-	Value, VWAPCost, AvgCost                                  float64
-	DayChange, VWAPChange, AvgCostChange                      c.PositionChange
-	ValueUnavailable, DayChangeUnavailable, ChangeUnavailable bool
-	VWAPCostUnavailable, AvgCostUnavailable                   bool
+	Currency                                string
+	BaseCurrency                            string
+	Value, VWAPCost, AvgCost                float64
+	BaseValue                               float64
+	DayChange, VWAPChange, AvgCostChange    c.PositionChange
+	ValueUnavailable, BaseValueUnavailable  bool
+	DayChangeUnavailable, ChangeUnavailable bool
+	VWAPCostUnavailable, AvgCostUnavailable bool
 }
 
 // SetCurrencySummariesMsg carries portfolio/scope-owner totals to the summary renderer.
@@ -87,6 +90,13 @@ func (m *Model) currencyLine(s CurrencySummary, metric int, compact, percent boo
 		value := m.styles.Text(u.ConvertFloatToString(s.Value, false))
 		if s.ValueUnavailable {
 			value = m.styles.TextLabel("N/A")
+		}
+		if s.BaseCurrency != "" && !strings.EqualFold(s.Currency, s.BaseCurrency) {
+			baseValue := m.styles.Text(u.ConvertFloatToString(s.BaseValue, false))
+			if s.BaseValueUnavailable {
+				baseValue = m.styles.TextLabel("N/A")
+			}
+			value += m.styles.TextLabel(" ("+s.BaseCurrency+" ") + baseValue + m.styles.TextLabel(")")
 		}
 		return m.styles.TextBold(currency) + m.styles.TextLabel(" • "+valueLabel) + value +
 			m.styles.TextLabel(" • "+dayLabel) + m.currencyChange(s.DayChange, s.ValueUnavailable || s.DayChangeUnavailable, true, percent)

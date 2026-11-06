@@ -26,6 +26,8 @@ type Model struct {
 	app           setup.AppCtx
 	lists         []databackend.Watchlist
 	symbols       []string
+	fxPairs       []string
+	fxPairSet     map[string]struct{}
 	positions     map[string]databackend.Position
 	quotes        map[string]c.AssetQuote
 	mismatches    map[string]bool
@@ -68,8 +70,32 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 		}
 		lists[i].Tickers = tickers
 	}
+	fxPairConfigs := []string(nil)
+	if app.Cfg != nil {
+		fxPairConfigs = app.Cfg.App.FxPairs
+	}
+	fxPairs := make([]string, 0, len(fxPairConfigs))
+	fxPairSet := make(map[string]struct{}, len(fxPairConfigs))
+	baseCurrency := strings.ToUpper(strings.TrimSpace(app.Settings.BaseCurrency))
+	if baseCurrency == "" {
+		baseCurrency = "USD"
+	}
+	for _, pair := range fxPairConfigs {
+		from, to, ok := c.ParseCurrencyPair(pair)
+		if !ok {
+			continue
+		}
+		if baseCurrency != from && baseCurrency != to {
+			continue
+		}
+		symbol := from + to
+		if _, exists := fxPairSet[symbol]; !exists {
+			fxPairs = append(fxPairs, symbol)
+			fxPairSet[symbol] = struct{}{}
+		}
+	}
 	m := &Model{
-		app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)),
+		app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles),
@@ -110,7 +136,7 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 	if marketData == nil {
 		return errors.New("UI requires market data")
 	}
-	m.session = newQuoteSession(marketData, m.symbols)
+	m.session = newQuoteSession(marketData, m.subscriptionSymbols())
 	defer func() { err = errors.Join(err, m.session.Close()) }()
 	_, err = tea.NewProgram(m).Run()
 	return err
@@ -118,7 +144,7 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 
 // Init starts the quote receiver and startup subscription producer concurrently.
 func (m *Model) Init() tea.Cmd {
-	if m.session == nil || len(m.symbols) == 0 {
+	if m.session == nil || len(m.session.symbols) == 0 {
 		return nil
 	}
 	return tea.Batch(m.session.receive(), m.session.subscribe())
@@ -137,12 +163,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, symbol := range m.visibleSymbols() {
 			visible[symbol] = struct{}{}
 		}
-		displayed, changed := false, false
+		displayed, changed, ratesChanged := false, false, false
 		for _, quote := range msg {
 			if quote.Symbol == "" {
 				quote.Symbol = quote.Meta.SymbolInSourceAPI
 			}
 			if _, exists := m.positions[quote.Symbol]; !exists {
+				if _, isFxPair := m.fxPairSet[quote.Symbol]; isFxPair {
+					m.quotes[quote.Symbol] = quote
+					ratesChanged = true
+				}
 				continue
 			}
 			m.quotes[quote.Symbol] = quote
@@ -163,7 +193,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.watchlist, cmd = m.watchlist.Update(watchlist.UpdateAssetsMsg(m.assets(m.visibleSymbols())))
 			m.refreshContent()
 		}
-		if changed {
+		if changed || ratesChanged {
 			m.updateSummary()
 			m.resize()
 		}
@@ -228,6 +258,16 @@ func (m *Model) visibleSymbols() []string {
 		return nil
 	}
 	return m.lists[m.selected].Tickers
+}
+
+func (m *Model) subscriptionSymbols() []string {
+	symbols := slices.Clone(m.symbols)
+	for _, pair := range m.fxPairs {
+		if !slices.Contains(symbols, pair) {
+			symbols = append(symbols, pair)
+		}
+	}
+	return symbols
 }
 
 func (m *Model) changeWatchlist(step int) tea.Cmd {

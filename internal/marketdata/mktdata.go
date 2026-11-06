@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"math"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +36,7 @@ type MktData interface {
 type MktDataConfig struct {
 	CachePath         string
 	TargetCurrency    string
+	FxPairs           []string
 	AlpacaCredentials c.KeySecretCfg
 	RandomMktData     bool
 	RefreshInterval   time.Duration
@@ -97,19 +100,23 @@ const (
 )
 
 type mktDataImpl struct {
-	mu            sync.RWMutex
-	opMu          sync.Mutex
-	subscribers   map[string]*subscriber
-	feeds         map[c.QuoteSource]mktDataFeed
-	pendingFeeds  map[c.QuoteSource]bool // Protected by opMu; failed updates must be retried even when desired keys are unchanged.
-	currencyRates c.MonitorCurrencyRate
-	state         lifecycleState
-	ctx           context.Context
-	cancel        context.CancelFunc
-	chanError     chan error
-	chanQuotes    chan c.MessageUpdate[c.AssetQuote]
-	chanRates     chan c.CurrencyRates
-	versionVector int
+	mu             sync.RWMutex
+	opMu           sync.Mutex
+	subscribers    map[string]*subscriber
+	feeds          map[c.QuoteSource]mktDataFeed
+	pendingFeeds   map[c.QuoteSource]bool // Protected by opMu; failed updates must be retried even when desired keys are unchanged.
+	currencyRates  c.MonitorCurrencyRate
+	fxPairSet      map[string]struct{}
+	fxQuotes       map[string]c.AssetQuote
+	fxRequests     chan []string
+	targetCurrency string
+	state          lifecycleState
+	ctx            context.Context
+	cancel         context.CancelFunc
+	chanError      chan error
+	chanQuotes     chan c.MessageUpdate[c.AssetQuote]
+	chanRates      chan c.CurrencyRates
+	versionVector  int
 }
 
 type subscriber struct {
@@ -124,6 +131,10 @@ func (m *mktDataImpl) Start(config MktDataConfig) error {
 	if err := m.beginStart(); err != nil {
 		return err
 	}
+	config.TargetCurrency = strings.ToUpper(strings.TrimSpace(config.TargetCurrency))
+	if config.TargetCurrency == "" {
+		config.TargetCurrency = "USD"
+	}
 	if config.RefreshInterval <= 0 {
 		config.RefreshInterval = 30 * time.Second
 	}
@@ -132,6 +143,20 @@ func (m *mktDataImpl) Start(config MktDataConfig) error {
 	m.chanQuotes = make(chan c.MessageUpdate[c.AssetQuote], quoteChanSize)
 	m.chanRates = make(chan c.CurrencyRates, quoteChanSize)
 	chanRequestRates := make(chan []string, quoteChanSize)
+	m.fxRequests = chanRequestRates
+	m.targetCurrency = config.TargetCurrency
+	m.fxPairSet = make(map[string]struct{}, len(config.FxPairs))
+	m.fxQuotes = make(map[string]c.AssetQuote, len(config.FxPairs))
+	for _, pair := range config.FxPairs {
+		from, to, ok := c.ParseCurrencyPair(pair)
+		if !ok {
+			slog.Warn("Skipping invalid FX pair", "pair", pair)
+		} else if from == config.TargetCurrency || to == config.TargetCurrency {
+			m.fxPairSet[from+to] = struct{}{}
+		} else {
+			slog.Warn("Skipping FX pair that does not include base currency", "pair", pair, "base_currency", config.TargetCurrency)
+		}
+	}
 	mktCache := cache.New(config.CachePath)
 	yahooAPI := newYahooAPI(mktCache, config.RandomMktData)
 	m.feeds = map[c.QuoteSource]mktDataFeed{
@@ -147,7 +172,7 @@ func (m *mktDataImpl) Start(config MktDataConfig) error {
 			return err
 		}
 	}
-	m.startConsumers()
+	m.startConsumers(slices.Sorted(maps.Keys(m.fxPairSet)))
 	if err := m.startCurrencyRateMonitor(m.currencyRates); err != nil {
 		m.cancel()
 		m.markStopped()
@@ -217,10 +242,10 @@ func addAlpacaProvider(m *mktDataImpl, config MktDataConfig) error {
 	return nil
 }
 
-func (m *mktDataImpl) startConsumers() {
+func (m *mktDataImpl) startConsumers(fxPairs []string) {
 	go m.consumeErrors(m.ctx, m.chanError)
 	go m.consumeQuoteUpdates(m.ctx, m.chanQuotes)
-	go m.discardCurrencyRateUpdates(m.ctx, m.chanRates)
+	go m.consumeCurrencyRateUpdates(m.ctx, m.chanRates, fxPairs)
 }
 
 func (m *mktDataImpl) startCurrencyRateMonitor(monitor c.MonitorCurrencyRate) error {
@@ -228,6 +253,38 @@ func (m *mktDataImpl) startCurrencyRateMonitor(monitor c.MonitorCurrencyRate) er
 		return fmt.Errorf("start Yahoo currency-rate monitor: %w", err)
 	}
 	return nil
+}
+
+func requestFxPairRates(ctx context.Context, pairs []string, targetCurrency string, requests chan<- []string) error {
+	if targetCurrency == "" {
+		targetCurrency = "USD"
+	}
+	targetCurrency = strings.ToUpper(strings.TrimSpace(targetCurrency))
+	currencies := make(map[string]struct{})
+	for _, pair := range pairs {
+		from, to, ok := c.ParseCurrencyPair(pair)
+		if !ok {
+			slog.Warn("Skipping invalid FX pair", "pair", pair)
+			continue
+		}
+		switch targetCurrency {
+		case from:
+			currencies[to] = struct{}{}
+		case to:
+			currencies[from] = struct{}{}
+		default:
+			slog.Warn("Skipping FX pair that does not include base currency", "pair", pair, "base_currency", targetCurrency)
+		}
+	}
+	if len(currencies) == 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case requests <- slices.Sorted(maps.Keys(currencies)):
+		return nil
+	}
 }
 
 func (m *mktDataImpl) startProviders() error {
@@ -339,6 +396,7 @@ func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.As
 	}
 	newSymbols := make(map[string]struct{})
 	requestedSymbols := make(map[string]struct{})
+	requestedFxPairs := make([]string, 0)
 	var errs []error
 	for _, symbol := range symbols {
 		if symbol == "" {
@@ -346,12 +404,27 @@ func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.As
 			continue
 		}
 		requestedSymbols[symbol] = struct{}{}
+		if _, isFxPair := m.fxPairSet[symbol]; isFxPair {
+			requestedFxPairs = append(requestedFxPairs, symbol)
+		}
 		if _, exists := sub.symbols[symbol]; !exists {
 			newSymbols[symbol] = struct{}{}
 			sub.symbols[symbol] = struct{}{}
 		}
 	}
 	m.mu.Unlock()
+	m.mu.RLock()
+	for symbol := range requestedSymbols {
+		if quote, exists := m.fxQuotes[symbol]; exists {
+			deliverQuote(sub, quote, requestedSymbols)
+		}
+	}
+	m.mu.RUnlock()
+	if len(requestedFxPairs) > 0 && m.state == lifecycleRunning {
+		if err := requestFxPairRates(m.ctx, requestedFxPairs, m.targetCurrency, m.fxRequests); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	newSubscriptions := m.subscriptionSymbols()
 	if m.state == lifecycleRunning {
 		for _, source := range feedSources(m.feeds) {
@@ -414,7 +487,9 @@ func (m *mktDataImpl) subscriptionSymbols() map[string]struct{} {
 	symbols := make(map[string]struct{})
 	for _, sub := range m.subscribers {
 		for symbol := range sub.symbols {
-			symbols[symbol] = struct{}{}
+			if _, isFxPair := m.fxPairSet[symbol]; !isFxPair {
+				symbols[symbol] = struct{}{}
+			}
 		}
 	}
 	return symbols
@@ -500,12 +575,54 @@ func (m *mktDataImpl) consumeQuoteUpdates(ctx context.Context, updates <-chan c.
 	}
 }
 
-func (m *mktDataImpl) discardCurrencyRateUpdates(ctx context.Context, updates <-chan c.CurrencyRates) {
+func (m *mktDataImpl) consumeCurrencyRateUpdates(ctx context.Context, updates <-chan c.CurrencyRates, pairs []string) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-updates:
+		case rates := <-updates:
+			for _, pair := range pairs {
+				from, to, ok := c.ParseCurrencyPair(pair)
+				if !ok {
+					continue
+				}
+				matched := false
+				for _, rate := range rates {
+					value := rate.Rate
+					switch {
+					case rate.FromCurrency == from && rate.ToCurrency == to:
+					case rate.FromCurrency == to && rate.ToCurrency == from && rate.Rate > 0:
+						value = 1 / rate.Rate
+					default:
+						continue
+					}
+					if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
+						continue
+					}
+					quote := c.AssetQuote{
+						Symbol: from + to, Class: c.AssetClassFx,
+						Currency:   c.Currency{FromCurrencyCode: from, ToCurrencyCode: to, Rate: value},
+						QuotePrice: c.QuotePrice{Price: value}, QuoteSource: c.QuoteSourceYahoo,
+					}
+					m.mu.Lock()
+					m.fxQuotes[quote.Symbol] = quote
+					m.mu.Unlock()
+					m.routeQuote(c.QuoteSourceYahoo, quote)
+					matched = true
+					break
+				}
+				if !matched {
+					quote := c.AssetQuote{
+						Symbol: from + to, Class: c.AssetClassFx,
+						Currency:    c.Currency{FromCurrencyCode: from, ToCurrencyCode: to},
+						QuoteSource: c.QuoteSourceYahoo,
+					}
+					m.mu.Lock()
+					m.fxQuotes[quote.Symbol] = quote
+					m.mu.Unlock()
+					m.routeQuote(c.QuoteSourceYahoo, quote)
+				}
+			}
 		}
 	}
 }

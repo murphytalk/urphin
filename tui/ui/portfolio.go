@@ -2,6 +2,7 @@ package ui
 
 import (
 	"math"
+	"strings"
 
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/summary"
@@ -33,6 +34,38 @@ func (m *Model) currency(symbol string) string {
 func (m *Model) quoteUsable(symbol string) bool {
 	quote, exists := m.quotes[symbol]
 	return exists && finite(quote.QuotePrice.Price) && quote.QuotePrice.Price > 0
+}
+
+func (m *Model) fxRate(from, to string) (float64, bool) {
+	from, to = strings.ToUpper(strings.TrimSpace(from)), strings.ToUpper(strings.TrimSpace(to))
+	if from == to && from != "" {
+		return 1, true
+	}
+	for _, pair := range m.fxPairs {
+		quote, exists := m.quotes[pair]
+		if !exists {
+			continue
+		}
+		rate := quote.Currency.Rate
+		if rate <= 0 || !finite(rate) {
+			rate = quote.QuotePrice.Price
+		}
+		if rate <= 0 || !finite(rate) {
+			continue
+		}
+		quoteFrom := strings.ToUpper(quote.Currency.FromCurrencyCode)
+		quoteTo := strings.ToUpper(quote.Currency.ToCurrencyCode)
+		switch {
+		case quoteFrom == from && quoteTo == to:
+			return rate, true
+		case quoteFrom == to && quoteTo == from:
+			inverse := 1 / rate
+			if finite(inverse) {
+				return inverse, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func (m *Model) assets(symbols []string) []c.Asset {
@@ -73,9 +106,13 @@ func (m *Model) assets(symbols []string) []c.Asset {
 	return assets
 }
 
-// updateSummary sends deduplicated, native-currency portfolio totals to the summary renderer.
+// updateSummary sends native totals and configured base-currency values to the summary renderer.
 func (m *Model) updateSummary() {
 	symbols, scope := m.symbols, "Whole portfolio"
+	baseCurrency := strings.ToUpper(strings.TrimSpace(m.app.Settings.BaseCurrency))
+	if baseCurrency == "" {
+		baseCurrency = "USD"
+	}
 	if m.follow {
 		symbols, scope = m.visibleSymbols(), "Watchlist: "+m.listName()
 	}
@@ -89,7 +126,7 @@ func (m *Model) updateSummary() {
 		currency := m.currency(symbol)
 		s := totals[currency]
 		if s == nil {
-			s = &summary.CurrencySummary{Currency: currency}
+			s = &summary.CurrencySummary{Currency: currency, BaseCurrency: baseCurrency}
 			totals[currency] = s
 		}
 		if finite(position.VWAP) {
@@ -117,6 +154,14 @@ func (m *Model) updateSummary() {
 	}
 	currencies := make([]summary.CurrencySummary, 0, len(totals))
 	for currency, s := range totals {
+		if baseCurrency != "" && strings.ToUpper(strings.TrimSpace(currency)) != baseCurrency {
+			if rate, ok := m.fxRate(currency, baseCurrency); ok && !s.ValueUnavailable {
+				s.BaseValue = s.Value * rate
+				s.BaseValueUnavailable = !finite(s.BaseValue)
+			} else {
+				s.BaseValueUnavailable = true
+			}
+		}
 		s.VWAPChange = c.PositionChange{Amount: s.Value - s.VWAPCost, Percent: percentage(s.Value-s.VWAPCost, s.VWAPCost)}
 		s.AvgCostChange = c.PositionChange{Amount: s.Value - s.AvgCost, Percent: percentage(s.Value-s.AvgCost, s.AvgCost)}
 		s.DayChange.Percent = percentage(s.DayChange.Amount, previous[currency])
