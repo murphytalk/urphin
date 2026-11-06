@@ -19,9 +19,14 @@ public: antlr-public
 	go build -tags public -o $(BUILD_DIR)/$(APP_NAME) ./tui
 
 # Build with the extensions submodule
-extension: antlr-ext
+build-extension: antlr-ext
 	mkdir -p $(BUILD_DIR)
 	go build -tags extension -o $(BUILD_DIR)/$(APP_NAME)-ext ./tui
+
+strip: build-extension
+	strip $(BUILD_DIR)/$(APP_NAME)-ext 
+
+extension: strip
 
 # Run all tests
 test:
