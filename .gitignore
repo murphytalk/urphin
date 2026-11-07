@@ -47,3 +47,6 @@ coverage.html
 Thumbs.db
 
 **/generated/
+
+# Planning notes
+/docs/**/*plan*.md
