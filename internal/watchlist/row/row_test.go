@@ -173,7 +173,7 @@ func TestRowPositionProfitPercentAndBreakeven(t *testing.T) {
 			asset.Position.TotalChange = c.PositionChange{Amount: test.amount, Percent: test.percent}
 			styles := rowStyles(true)
 			view := textPosition(asset, styles)
-			if !strings.HasPrefix(ansi.Strip(view), "1000.00 (25.00%)\n") || !strings.Contains(ansi.Strip(view), test.want) {
+			if !strings.HasPrefix(ansi.Strip(view), "1,000.00 (25.00%)\n") || !strings.Contains(ansi.Strip(view), test.want) {
 				t.Fatalf("position display: %q; expected %q", view, test.want)
 			}
 		})

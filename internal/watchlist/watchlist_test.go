@@ -49,7 +49,7 @@ func TestWatchlistMeasuresBothCostsQuantityAndLabels(t *testing.T) {
 			want := 0
 			want = max(want, lipgloss.Width(u.ConvertFloatToString(test.position.Quantity, test.variable)))
 			for _, value := range []float64{test.position.UnitCost, test.position.AvgCost} {
-				want = max(want, lipgloss.Width(u.ConvertFloatToString(value, test.variable))+2)
+				want = max(want, lipgloss.Width(u.ConvertFloatToStringWithThousandsSeparator(value, test.variable))+2)
 			}
 			if widths.WidthPositionExtended != want || widths.WidthPositionExtendedLabels != lipgloss.Width(row.PositionExtendedLabels) {
 				t.Fatalf("widths %+v; wanted value %d and measured labels", widths, want)
@@ -67,7 +67,7 @@ func TestWatchlistWidthUsesActualChangeAndWeightText(t *testing.T) {
 		Position:   c.Position{Quantity: 1, Value: 1, Weight: 123456789, TotalChange: c.PositionChange{Amount: -123456789, Percent: -123456789}},
 	}
 	widths := getCellWidths([]*c.Asset{asset})
-	quote := "↓ -123456789.00 (-123456789.00%)"
+	quote := "↓ -123,456,789.00 (-123456789.00%)"
 	value := "1.00 (123456789.00%)"
 	if widths.WidthQuote < lipgloss.Width(quote) || widths.WidthPosition < max(lipgloss.Width(quote), lipgloss.Width(value)) {
 		t.Fatalf("long percentages/amounts must not be clipped: %+v", widths)
@@ -83,7 +83,7 @@ func TestWatchlistWidthUsesActualChangeAndWeightText(t *testing.T) {
 func TestWatchlistRendersDualCostLabelsAndNativeValues(t *testing.T) {
 	m := watchlistFixture()
 	view := ansi.Strip(m.View())
-	for _, text := range []string{"AAA", "BBB", "VWAP:", "Avg Cost:", "Qty:", "90.00", "110.00", "1000.00", "15.00", "25.00", "200.00"} {
+	for _, text := range []string{"AAA", "BBB", "VWAP:", "Avg Cost:", "Qty:", "90.00", "110.00", "1,000.00", "15.00", "25.00", "200.00"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("missing %q in %s", text, view)
 		}
@@ -133,7 +133,7 @@ func TestWatchlistPartialUpdatesIgnoreOtherSymbolsAndResort(t *testing.T) {
 	if m.assetsBySymbol["UNRELATED"] != nil || m.rowsBySymbol["UNRELATED"] != nil {
 		t.Fatal("unrelated symbols must not enter visible state")
 	}
-	if m.cellWidths.WidthPositionExtended < len("123456789.00") || !strings.Contains(ansi.Strip(m.View()), "123456789.00") {
+	if m.cellWidths.WidthPositionExtended < len("123,456,789.00") || !strings.Contains(ansi.Strip(m.View()), "123,456,789.00") {
 		t.Fatal("new average cost must refresh all row widths")
 	}
 }
@@ -152,8 +152,24 @@ func TestWatchlistMissingToKnownQuoteAndKnownCostRecovery(t *testing.T) {
 	if _, cmd := m.Update(UpdateAssetsMsg{asset}); cmd != nil {
 		t.Fatal("first known quote must not generate animation commands")
 	}
-	if view := ansi.Strip(m.View()); strings.Contains(view, "N/A") || !strings.Contains(view, "1000.00") {
+	if view := ansi.Strip(m.View()); strings.Contains(view, "N/A") || !strings.Contains(view, "1,000.00") {
 		t.Fatalf("known quote did not replace unavailable valuation: %s", view)
+	}
+}
+
+func TestWatchlistGroupsPositionValueAndProfitLoss(t *testing.T) {
+	asset := &c.Asset{Position: c.Position{
+		Value: 1234567.89, UnitCost: 1000, Quantity: 1,
+		TotalChange: c.PositionChange{Amount: 2345.67, Percent: 12.34},
+	}}
+	m := NewModel(Config{ShowPositions: true, Styles: watchlistStyles()})
+	m.Update(tea.WindowSizeMsg{Width: 140})
+	m.Update(SetAssetsMsg{*asset})
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"1,234,567.89", "2,345.67"} {
+		if !strings.Contains(view, text) {
+			t.Errorf("missing grouped position number %q in %s", text, view)
+		}
 	}
 }
 

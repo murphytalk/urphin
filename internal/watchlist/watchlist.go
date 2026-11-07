@@ -214,7 +214,7 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 		} {
 			quoteLength = max(quoteLength, lipgloss.Width(format(value)))
 		}
-		changeWidth := lipgloss.Width("↓ " + format(asset.QuotePrice.Change) + " (" + u.ConvertFloatToString(asset.QuotePrice.ChangePercent, false) + "%)")
+		changeWidth := lipgloss.Width("↓ " + u.ConvertFloatToStringWithThousandsSeparator(asset.QuotePrice.Change, asset.Meta.IsVariablePrecision) + " (" + u.ConvertFloatToString(asset.QuotePrice.ChangePercent, false) + "%)")
 		cellMaxWidths.QuoteLength = max(cellMaxWidths.QuoteLength, quoteLength)
 		cellMaxWidths.WidthQuote = max(cellMaxWidths.WidthQuote, quoteLength, changeWidth)
 		cellMaxWidths.WidthQuoteExtended = max(cellMaxWidths.WidthQuoteExtended, quoteLength, lipgloss.Width(u.ConvertFloatToString(asset.QuoteFutures.Basis, false)+"%"))
@@ -223,15 +223,16 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 			cellMaxWidths.WidthVolumeMarketCap = max(cellMaxWidths.WidthVolumeMarketCap, lipgloss.Width(u.ConvertFloatToString(value, true)))
 		}
 		if asset.Position != (c.Position{}) {
-			valueWidth := lipgloss.Width(u.ConvertFloatToString(asset.Position.Value, false))
+			valueWidth := lipgloss.Width(u.ConvertFloatToStringWithThousandsSeparator(asset.Position.Value, false))
 			weightWidth := lipgloss.Width(" (" + format(asset.Position.Weight) + "%)")
-			changeWidth := lipgloss.Width("↓ " + format(asset.Position.TotalChange.Amount) + " (" + u.ConvertFloatToString(asset.Position.TotalChange.Percent, false) + "%)")
+			changeWidth := lipgloss.Width("↓ " + u.ConvertFloatToStringWithThousandsSeparator(asset.Position.TotalChange.Amount, asset.Meta.IsVariablePrecision) + " (" + u.ConvertFloatToString(asset.Position.TotalChange.Percent, false) + "%)")
 			cellMaxWidths.PositionLength = max(cellMaxWidths.PositionLength, valueWidth)
-			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3, valueWidth+weightWidth, changeWidth, lipgloss.Width(format(asset.Position.TotalChange.Amount)+" (N/A)"))
+			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3, valueWidth+weightWidth, changeWidth,
+				lipgloss.Width(u.ConvertFloatToStringWithThousandsSeparator(asset.Position.TotalChange.Amount, asset.Meta.IsVariablePrecision)+" (N/A)"))
 			cellMaxWidths.WidthPositionExtended = max(cellMaxWidths.WidthPositionExtended,
 				lipgloss.Width(format(asset.Position.Quantity)),
-				lipgloss.Width(format(asset.Position.UnitCost))+2,
-				lipgloss.Width(format(asset.Position.AvgCost))+2)
+				lipgloss.Width(u.ConvertFloatToStringWithThousandsSeparator(asset.Position.UnitCost, asset.Meta.IsVariablePrecision))+2,
+				lipgloss.Width(u.ConvertFloatToStringWithThousandsSeparator(asset.Position.AvgCost, asset.Meta.IsVariablePrecision))+2)
 		}
 		if asset.PositionUnavailable {
 			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3)

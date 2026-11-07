@@ -136,12 +136,12 @@ func (m *Model) currencyLineParts(s CurrencySummary, metric int, compact, percen
 		if compact {
 			valueLabel, dayLabel = "V: ", "D: "
 		}
-		value := m.styles.Text(u.ConvertFloatToString(s.Value, false))
+		value := m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.Value, false))
 		if s.ValueUnavailable {
 			value = m.styles.TextLabel("N/A")
 		}
 		if s.BaseCurrency != "" && !strings.EqualFold(s.Currency, s.BaseCurrency) {
-			baseValue := m.styles.Text(u.ConvertFloatToString(s.BaseValue, false))
+			baseValue := m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.BaseValue, false))
 			if s.BaseValueUnavailable {
 				baseValue = m.styles.TextLabel("N/A")
 			}
@@ -167,7 +167,7 @@ func (m *Model) currencyLineParts(s CurrencySummary, metric int, compact, percen
 			costLabel = "Avg: "
 		}
 	}
-	value := m.styles.Text(u.ConvertFloatToString(cost, false))
+	value := m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(cost, false))
 	if costUnavailable {
 		value = m.styles.TextLabel("N/A")
 	}
@@ -189,7 +189,7 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 	if unavailable {
 		return m.styles.TextLabel("N/A")
 	}
-	text := u.ConvertFloatToString(change.Amount, false)
+	text := u.ConvertFloatToStringWithThousandsSeparator(change.Amount, false)
 	if percent {
 		if validBasis {
 			percentText := u.ConvertFloatToString(change.Percent, false)

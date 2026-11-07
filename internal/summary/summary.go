@@ -74,10 +74,10 @@ func (m *Model) View() string {
 		m.styles.TextLabel("Change: ") + quoteChangeText(m.summary.TotalChange.Amount, m.summary.TotalChange.Percent, m.styles)
 	widthChange := ansi.PrintableRuneWidth(textChange)
 	textValue := m.styles.TextLabel(" • ") +
-		m.styles.TextLabel("Value: ") + m.styles.TextLabel(u.ConvertFloatToString(m.summary.Value, false))
+		m.styles.TextLabel("Value: ") + m.styles.TextLabel(u.ConvertFloatToStringWithThousandsSeparator(m.summary.Value, false))
 	widthValue := ansi.PrintableRuneWidth(textValue)
 	textCost := m.styles.TextLabel(" • ") +
-		m.styles.TextLabel("Cost: ") + m.styles.TextLabel(u.ConvertFloatToString(m.summary.Cost, false))
+		m.styles.TextLabel("Cost: ") + m.styles.TextLabel(u.ConvertFloatToStringWithThousandsSeparator(m.summary.Cost, false))
 	widthCost := ansi.PrintableRuneWidth(textValue)
 
 	content := grid.Render(grid.Grid{
@@ -110,6 +110,6 @@ func (m *Model) View() string {
 }
 
 func quoteChangeText(change float64, changePercent float64, styles theme.Styles) string {
-	text := u.ConvertFloatToString(change, false) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
+	text := u.ConvertFloatToStringWithThousandsSeparator(change, false) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
 	return theme.FormatChange(styles, change, changePercent, text)
 }

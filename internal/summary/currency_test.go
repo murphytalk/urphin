@@ -71,9 +71,9 @@ func TestCurrencySummaryNativeTextOrderingAndHeight(t *testing.T) {
 		"EUR • Value: 600.00 • Day Change:     ↓ -6.00 (-01.00%)",
 		"  VWAP Cost: 700.00 • VWAP P&L:     ↓ -100.00 (-14.29%)",
 		"  Avg Cost:  900.00 • Avg Cost P&L: ↓ -300.00 (-33.33%)",
-		"USD • Value: 1200.00 • Day Change:    ↑ 12.00 (01.00%)",
-		"  VWAP Cost: 1000.00 • VWAP P&L:     ↑ 200.00 (20.00%)",
-		"  Avg Cost:   800.00 • Avg Cost P&L: ↑ 400.00 (50.00%)",
+		"USD • Value: 1,200.00 • Day Change:    ↑ 12.00 (01.00%)",
+		"  VWAP Cost: 1,000.00 • VWAP P&L:     ↑ 200.00 (20.00%)",
+		"  Avg Cost:    800.00 • Avg Cost P&L: ↑ 400.00 (50.00%)",
 		strings.Repeat("━", 140),
 	}
 	if got := ansi.Strip(m.View()); got != strings.Join(want, "\n") {
@@ -181,9 +181,9 @@ func TestCurrencySummaryUnavailableFlags(t *testing.T) {
 				text    string
 				present bool
 			}{
-				{"Value: 1200.00", test.wantValue}, {"Day Change: ↑ 12.00 (01.00%)", test.wantDay},
+				{"Value: 1,200.00", test.wantValue}, {"Day Change: ↑ 12.00 (01.00%)", test.wantDay},
 				{"VWAP P&L: ↑ 200.00 (20.00%)", test.wantChange}, {"Avg Cost P&L: ↑ 400.00 (50.00%)", test.wantChange},
-				{"VWAP Cost: 1000.00", true}, {"Avg Cost: 800.00", true},
+				{"VWAP Cost: 1,000.00", true}, {"Avg Cost: 800.00", true},
 			} {
 				if strings.Contains(plain, check.text) != check.present {
 					t.Errorf("%q presence should be %t in %s", check.text, check.present, plain)
@@ -203,7 +203,8 @@ func TestCurrencySummaryNonpositiveBasisPercentages(t *testing.T) {
 			input.VWAPCost, input.AvgCost = basis, basis
 			view := strings.Join(strings.Fields(ansi.Strip(currencyModel(140, false, input).View())), " ")
 			for _, text := range []string{
-				fmt.Sprintf("%.2f • VWAP P&L:", basis), fmt.Sprintf("%.2f • Avg Cost P&L:", basis),
+				fmt.Sprintf("%s • VWAP P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
+				fmt.Sprintf("%s • Avg Cost P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
 				"VWAP P&L: ↑ 200.00 (N/A)", "Avg Cost P&L: ↑ 400.00 (N/A)", "Day Change: ↑ 12.00 (01.00%)",
 			} {
 				if !strings.Contains(view, text) {
@@ -227,7 +228,7 @@ func TestCurrencySummaryUnavailableCurrencyDoesNotHideOtherCurrencies(t *testing
 		!strings.HasSuffix(strings.Join(strings.Fields(lines[3]), " "), "Avg Cost P&L: N/A") {
 		t.Fatal("unavailable native-currency metrics must stay within their currency")
 	}
-	if !strings.Contains(lines[4], "USD • Value: 1200.00") || !strings.Contains(lines[5], "200.00 (20.00%)") || !strings.Contains(lines[6], "400.00 (50.00%)") {
+	if !strings.Contains(lines[4], "USD • Value: 1,200.00") || !strings.Contains(lines[5], "200.00 (20.00%)") || !strings.Contains(lines[6], "400.00 (50.00%)") {
 		t.Fatal("available currencies must retain their native valuation and P&L")
 	}
 }
@@ -289,7 +290,7 @@ func TestCurrencySummaryColorFollowsAmountNotPercentage(t *testing.T) {
 
 func TestCurrencySummaryUnderlinesAverageCostOnly(t *testing.T) {
 	lines := strings.Split(currencyModel(140, false, currencyFixture()).View(), "\n")
-	if !strings.Contains(lines[3], "\x1b[4m") || !strings.Contains(ansi.Strip(lines[3]), "Avg Cost:   800.00") {
+	if !strings.Contains(lines[3], "\x1b[4m") || !strings.Contains(ansi.Strip(lines[3]), "Avg Cost:    800.00") {
 		t.Fatalf("average cost must be underlined: %q", lines[3])
 	}
 	for _, i := range []int{0, 1, 2, 4} {

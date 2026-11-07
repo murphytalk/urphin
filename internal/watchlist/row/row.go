@@ -340,7 +340,7 @@ func textPosition(asset *c.Asset, styles theme.Styles) string {
 	positionChange := ""
 
 	if asset.Position.Value != 0.0 || asset.Position.Quantity != 0.0 {
-		positionValue = styles.Text(u.ConvertFloatToString(asset.Position.Value, false)) +
+		positionValue = styles.Text(u.ConvertFloatToStringWithThousandsSeparator(asset.Position.Value, false)) +
 			styles.TextLight(
 				" ("+
 					u.ConvertFloatToString(asset.Position.Weight, asset.Meta.IsVariablePrecision)+"%"+
@@ -348,7 +348,7 @@ func textPosition(asset *c.Asset, styles theme.Styles) string {
 	}
 	if asset.Position.TotalChange.Amount != 0.0 || asset.Position.Quantity != 0.0 {
 		change := asset.Position.TotalChange
-		text := u.ConvertFloatToString(change.Amount, asset.Meta.IsVariablePrecision)
+		text := u.ConvertFloatToStringWithThousandsSeparator(change.Amount, asset.Meta.IsVariablePrecision)
 		if asset.Position.UnitCost*asset.Position.Quantity > 0 {
 			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
 		} else {
@@ -420,7 +420,7 @@ func textPositionExtended(asset *c.Asset, styles theme.Styles) string {
 		if math.IsNaN(cost) || math.IsInf(cost, 0) {
 			return styles.TextLabel("N/A")
 		}
-		text := u.ConvertFloatToString(cost, asset.Meta.IsVariablePrecision)
+		text := u.ConvertFloatToStringWithThousandsSeparator(cost, asset.Meta.IsVariablePrecision)
 		if asset.QuoteUnavailable || asset.PositionUnavailable {
 			return styles.Text(text)
 		}
@@ -546,7 +546,7 @@ func textMarketState(asset *c.Asset, styles theme.Styles) string {
 }
 
 func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles theme.Styles) string {
-	text := u.ConvertFloatToString(change, isVariablePrecision) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
+	text := u.ConvertFloatToStringWithThousandsSeparator(change, isVariablePrecision) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
 	return theme.FormatChange(styles, change, changePercent, text)
 }
 

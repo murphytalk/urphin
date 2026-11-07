@@ -3,6 +3,7 @@ package util
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"github.com/murphytalk/urphin/internal/theme"
 )
@@ -61,6 +62,39 @@ func ConvertFloatToString(f float64, isVariablePrecision bool) string {
 	prec := getPrecision(f)
 
 	return strconv.FormatFloat(f, 'f', prec, 64) + unit
+}
+
+func ConvertFloatToStringWithThousandsSeparator(f float64, isVariablePrecision bool) string {
+	text := ConvertFloatToString(f, isVariablePrecision)
+	numberEnd := strings.IndexByte(text, ' ')
+	if numberEnd < 0 {
+		numberEnd = len(text)
+	}
+	integerEnd := strings.IndexByte(text[:numberEnd], '.')
+	if integerEnd < 0 {
+		integerEnd = numberEnd
+	}
+
+	start := 0
+	if strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
+		start = 1
+	}
+	digits := text[start:integerEnd]
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return text
+	}
+
+	var grouped strings.Builder
+	grouped.Grow(len(text) + len(digits)/3)
+	grouped.WriteString(text[:start])
+	for i, digit := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			grouped.WriteByte(',')
+		}
+		grouped.WriteByte(byte(digit))
+	}
+	grouped.WriteString(text[integerEnd:])
+	return grouped.String()
 }
 
 // ValueText formats a float as a styled string

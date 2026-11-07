@@ -88,4 +88,19 @@ var _ = Describe("Util", func() {
 			Expect(ConvertFloatToString(test.value, test.variable)).To(Equal(test.want))
 		}
 	})
+	It("adds thousands separators without changing precision or units", func() {
+		for _, test := range []struct {
+			value    float64
+			variable bool
+			want     string
+		}{
+			{1234.56, false, "1,234.56"},
+			{-1234567.89, false, "-1,234,567.89"},
+			{12345.6789, true, "12,345.68"},
+			{43523398, true, "43.523 M"},
+			{0.0001, true, "0.0001"},
+		} {
+			Expect(ConvertFloatToStringWithThousandsSeparator(test.value, test.variable)).To(Equal(test.want))
+		}
+	})
 })
