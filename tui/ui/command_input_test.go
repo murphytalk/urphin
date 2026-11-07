@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -198,5 +199,30 @@ func TestCommandEditingKeysAndPasteStayWithInput(t *testing.T) {
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
 	if m.follow || m.commandInput.Value() != "TX aapl " {
 		t.Fatal("F3 failed or changed input")
+	}
+}
+
+func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	history := textinput.NewFileHistory(filepath.Join(t.TempDir(), "history"), nil)
+	history.Add("TX AAPL")
+	history.Add("TX AMZN")
+	m.commandHistory = history
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("TX AA")
+	m.refreshCommandSuggestions()
+	if got := m.commandInput.CurrentSuggestion(); got != "TX AAPL" {
+		t.Fatalf("best candidate = %q", got)
+	}
+	if !strings.Contains(ansi.Strip(m.commandInput.View()), "PL") {
+		t.Fatal("best candidate suffix is not shown")
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
+	if got := m.commandInput.Value(); got != "TX AAPL" {
+		t.Fatalf("Tab completion = %q", got)
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	if got := history.Previous(); got != "TX AAPL" {
+		t.Fatalf("Enter history entry = %q", got)
 	}
 }

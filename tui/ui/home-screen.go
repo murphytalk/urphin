@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -25,25 +27,26 @@ import (
 
 // Model owns portfolio state; only the UI event loop mutates it.
 type Model struct {
-	app           setup.AppCtx
-	lists         []databackend.Watchlist
-	symbols       []string
-	fxPairs       []string
-	fxPairSet     map[string]struct{}
-	positions     map[string]databackend.Position
-	quotes        map[string]c.AssetQuote
-	mismatches    map[string]bool
-	selected      int
-	follow        bool
-	currentSort   string
-	width, height int
-	ready         bool
-	viewport      viewport.Model
-	watchlist     *watchlist.Model
-	summary       *summary.Model
-	session       *quoteSession
-	commandInput  textinput.Model
-	commandErr    error
+	app            setup.AppCtx
+	lists          []databackend.Watchlist
+	symbols        []string
+	fxPairs        []string
+	fxPairSet      map[string]struct{}
+	positions      map[string]databackend.Position
+	quotes         map[string]c.AssetQuote
+	mismatches     map[string]bool
+	selected       int
+	follow         bool
+	currentSort    string
+	width, height  int
+	ready          bool
+	viewport       viewport.Model
+	watchlist      *watchlist.Model
+	summary        *summary.Model
+	session        *quoteSession
+	commandInput   textinput.Model
+	commandErr     error
+	commandHistory textinput.TextHistory
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -136,7 +139,7 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 	}
 	m.commandInput.Placeholder = "Syntax check"
 	m.commandInput.AutoCase = true
-	m.commandInput.KeyMap.AcceptSuggestion.SetEnabled(false)
+	m.commandInput.ShowSuggestions = true
 	m.commandInput.KeyMap.NextSuggestion.SetEnabled(false)
 	m.commandInput.KeyMap.PrevSuggestion.SetEnabled(false)
 	m.commandInput.SetValidator(func(raw string) textinput.Validation {
@@ -157,6 +160,11 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 	}
 	if marketData == nil {
 		return errors.New("UI requires market data")
+	}
+	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+		m.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history"), slog.Default())
+	} else {
+		slog.Warn("command history disabled", "error", homeErr)
 	}
 	m.session = newQuoteSession(marketData, m.subscriptionSymbols())
 	defer func() { err = errors.Join(err, m.session.Close()) }()
@@ -249,6 +257,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "tab":
+			if m.commandInput.CurrentSuggestion() != "" {
+				var cmd tea.Cmd
+				m.commandInput, cmd = m.commandInput.Update(msg)
+				m.refreshCommandSuggestions()
+				return m, cmd
+			}
 			return m, m.changeWatchlist(1)
 		case "ctrl+tab", "shift+tab":
 			return m, m.changeWatchlist(-1)
@@ -268,6 +282,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshContent()
 			return m, cmd
 		case "enter":
+			if m.commandHistory != nil {
+				m.commandHistory.Add(m.commandInput.Value())
+			}
+			m.refreshCommandSuggestions()
 			return m, nil
 		case "esc":
 			m.commandInput.Reset()
@@ -292,6 +310,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				oldErr := m.displayedCommandError() != nil
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
+				m.refreshCommandSuggestions()
 				m.syncCommandPromptStyle()
 				if oldErr != (m.displayedCommandError() != nil) {
 					m.resize()
@@ -313,6 +332,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldErr := m.displayedCommandError() != nil
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
+		m.refreshCommandSuggestions()
 		m.syncCommandPromptStyle()
 		if oldErr != (m.displayedCommandError() != nil) {
 			m.resize()
@@ -508,4 +528,20 @@ func (m *Model) syncCommandPromptStyle() {
 		styles.Blurred.Prompt = styles.Blurred.Prompt.Foreground(m.app.Styles.ErrorColor)
 	}
 	m.commandInput.SetStyles(styles)
+}
+
+func (m *Model) refreshCommandSuggestions() {
+	if m.commandHistory == nil || m.commandInput.Value() == "" {
+		m.commandInput.SetSuggestions(nil)
+		return
+	}
+	best := m.commandHistory.Best(m.commandInput.Value())
+	if best == m.commandInput.Value() {
+		best = ""
+	}
+	if best == "" {
+		m.commandInput.SetSuggestions(nil)
+	} else {
+		m.commandInput.SetSuggestions([]string{best})
+	}
 }
