@@ -41,3 +41,11 @@ var _ = Describe("theme import command", func() {
 		Expect(os.IsNotExist(err)).To(BeTrue())
 	})
 })
+
+var _ = Describe("theme selector precedence", func() {
+	It("lets a provided flag override the config, including an empty default selection", func() {
+		Expect(resolveThemeSelector("custom", "ansi", true)).To(Equal("ansi"))
+		Expect(resolveThemeSelector("custom", "", true)).To(BeEmpty())
+		Expect(resolveThemeSelector("custom", "", false)).To(Equal("custom"))
+	})
+})

@@ -132,6 +132,7 @@ func run() int {
 	commandProvided := false
 	utilityProvided := false
 	importProvided := false
+	themeOverrideProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "C" {
 			commandProvided = true
@@ -141,6 +142,9 @@ func run() int {
 		}
 		if f.Name == "import-theme" {
 			importProvided = true
+		}
+		if f.Name == "theme" {
+			themeOverrideProvided = true
 		}
 	})
 	if listThemes && importProvided || utilityProvided && commandProvided || importProvided && importTheme == "" {
@@ -243,10 +247,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	selectedTheme := ctx.Cfg.App.Theme
-	if themeOverride != "" {
-		selectedTheme = themeOverride
-	}
+	selectedTheme := resolveThemeSelector(ctx.Cfg.App.Theme, themeOverride, themeOverrideProvided)
 	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.ColorScheme, ctx.Cfg.App.PriceColors)
 
 	marketData := mktdata.NewMktData()
@@ -277,6 +278,13 @@ func run() int {
 	}
 
 	return 0
+}
+
+func resolveThemeSelector(configTheme, flagTheme string, flagProvided bool) string {
+	if flagProvided {
+		return flagTheme
+	}
+	return configTheme
 }
 
 func importBase16Theme(source, themesDir string) error {
