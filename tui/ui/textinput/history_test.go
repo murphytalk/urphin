@@ -13,7 +13,7 @@ import (
 
 func histPath(t *testing.T) string {
 	t.Helper()
-	return filepath.Join(t.TempDir(), "history.txt")
+	return filepath.Join(t.TempDir(), "history.log")
 }
 
 func TestFileHistoryNormalisesAndDedupes(t *testing.T) {
@@ -110,7 +110,7 @@ func TestFileHistoryBest(t *testing.T) {
 }
 
 func TestFileHistoryPersistRoundtrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sub", "dir", "history.txt")
+	path := filepath.Join(t.TempDir(), "sub", "dir", "history.log")
 
 	h := NewFileHistory(path, nil)
 	h.Add("one two")
@@ -208,7 +208,7 @@ func TestFileHistoryAppendFailureIsLogged(t *testing.T) {
 	}
 
 	var logs bytes.Buffer
-	h := NewFileHistory(filepath.Join(file, "history.txt"), slog.New(slog.NewTextHandler(&logs, nil)))
+	h := NewFileHistory(filepath.Join(file, "history.log"), slog.New(slog.NewTextHandler(&logs, nil)))
 	logs.Reset()
 
 	h.Add("a")

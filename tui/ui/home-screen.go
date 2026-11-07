@@ -162,7 +162,7 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 		return errors.New("UI requires market data")
 	}
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
-		m.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history"), slog.Default())
+		m.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history.log"), slog.Default())
 	} else {
 		slog.Warn("command history disabled", "error", homeErr)
 	}
