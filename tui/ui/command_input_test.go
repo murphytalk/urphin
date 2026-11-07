@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -55,5 +56,36 @@ func TestCommandFooterWidthsAndEditing(t *testing.T) {
 	uiTestUpdate(t, m, uiTestKey(tea.KeyEscape))
 	if m.commandInput.Value() != "" || m.commandErr != nil {
 		t.Fatal("Escape did not clear input and diagnostic")
+	}
+}
+
+func TestCommandDiagnosticHeightFallback(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	m.commandErr = errors.New("syntax error")
+	for _, height := range []int{0, 1, 2, 3, 6, 7, 8} {
+		uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: height})
+		content := m.View().Content
+		if height == 0 {
+			if content != "" {
+				t.Fatalf("height 0 rendered %q", content)
+			}
+			continue
+		}
+		lines := strings.Split(content, "\n")
+		if len(lines) != height {
+			t.Fatalf("height %d rendered %d lines", height, len(lines))
+		}
+		if !strings.HasSuffix(lines[len(lines)-1], m.footer()) {
+			t.Fatalf("height %d lost bottom footer", height)
+		}
+		if height == 1 && strings.Contains(content, "syntax error") {
+			t.Fatal("height 1 should prioritize footer")
+		}
+		if height >= 2 && height < 7 && !strings.Contains(lines[len(lines)-2], "syntax error") {
+			t.Fatalf("height %d lost diagnostic above footer", height)
+		}
+		if height >= 7 && !strings.Contains(content, "syntax error") {
+			t.Fatalf("height %d lost diagnostic in normal layout", height)
+		}
 	}
 }
