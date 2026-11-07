@@ -108,6 +108,7 @@ type BackendName = string
 
 type DataBackend interface {
 	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
+	GetAssetsWithPositions(broker *string, assetClasses []c.AssetClass) ([]string, error)
 	CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error)
 	// GetWatchList returns watchlists ordered by name and tickers ordered by ticker.
 	GetWatchList(name *string) ([]Watchlist, error)

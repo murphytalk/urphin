@@ -177,6 +177,36 @@ func (b *FileBackend) GetEquityTx(ccy *string, ticker *string, broker *string, s
 	return result, nil
 }
 
+func (b *FileBackend) GetAssetsWithPositions(broker *string, assetClasses []c.AssetClass) ([]string, error) {
+	classes := make(map[c.AssetClass]struct{}, len(assetClasses))
+	for _, assetClass := range assetClasses {
+		classes[assetClass] = struct{}{}
+	}
+
+	candidates := make(map[string]struct{})
+	for _, transaction := range b.transactions {
+		if len(classes) > 0 {
+			if _, ok := classes[transaction.AssetClass]; !ok {
+				continue
+			}
+		}
+		candidates[transaction.Ticker] = struct{}{}
+	}
+
+	assets := make([]string, 0, len(candidates))
+	for symbol := range candidates {
+		position, err := b.CalculatePositionAndVWAP(broker, symbol)
+		if err != nil {
+			return nil, fmt.Errorf("calculate position for %q: %w", symbol, err)
+		}
+		if position.Pos.Shares != 0 {
+			assets = append(assets, symbol)
+		}
+	}
+	sort.Strings(assets)
+	return assets, nil
+}
+
 func (b *FileBackend) CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error) {
 	var currency string
 	var transactions []PositionTx

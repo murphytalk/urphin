@@ -31,6 +31,10 @@ func (b *watchTestBackend) GetEquityTx(*string, *string, *string, *time.Time, []
 	return nil, nil
 }
 
+func (b *watchTestBackend) GetAssetsWithPositions(*string, []c.AssetClass) ([]string, error) {
+	return nil, nil
+}
+
 func (b *watchTestBackend) CalculatePositionAndVWAP(broker *string, symbol string) (databackend.PositionWithAssetRatio, error) {
 	b.positionCalls = append(b.positionCalls, symbol)
 	b.lastBrokerWasNil = broker == nil

@@ -21,6 +21,10 @@ func (b txTestBackend) GetEquityTx(*string, *string, *string, *time.Time, []c.As
 	return b.txs, nil
 }
 
+func (txTestBackend) GetAssetsWithPositions(*string, []c.AssetClass) ([]string, error) {
+	return nil, nil
+}
+
 func (txTestBackend) CalculatePositionAndVWAP(*string, string) (databackend.PositionWithAssetRatio, error) {
 	return databackend.PositionWithAssetRatio{}, nil
 }
