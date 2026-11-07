@@ -269,6 +269,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
 			m.commandErr = nil
+			m.syncCommandPromptStyle()
 			m.resize()
 			return m, nil
 		case "up", "down", "pgup", "pgdown", "ctrl+home", "ctrl+end":
@@ -287,6 +288,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				oldErr := m.displayedCommandError() != nil
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
+				m.syncCommandPromptStyle()
 				if oldErr != (m.displayedCommandError() != nil) {
 					m.resize()
 				}
@@ -307,6 +309,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		oldErr := m.displayedCommandError() != nil
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
+		m.syncCommandPromptStyle()
 		if oldErr != (m.displayedCommandError() != nil) {
 			m.resize()
 		}
@@ -475,4 +478,13 @@ func (m *Model) commandDiagnostic() string {
 
 func (m *Model) commandVisible() bool {
 	return m.ready && m.width >= 80 && m.height > 0
+}
+
+func (m *Model) syncCommandPromptStyle() {
+	styles := textinput.DefaultStyles(m.app.Styles)
+	if m.displayedCommandError() != nil {
+		styles.Focused.Prompt = styles.Focused.Prompt.Foreground(m.app.Styles.ErrorColor)
+		styles.Blurred.Prompt = styles.Blurred.Prompt.Foreground(m.app.Styles.ErrorColor)
+	}
+	m.commandInput.SetStyles(styles)
 }

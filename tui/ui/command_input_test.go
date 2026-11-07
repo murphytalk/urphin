@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	databackend "github.com/murphytalk/urphin/data/backend"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
@@ -87,5 +89,35 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 		if height >= 7 && !strings.Contains(content, "syntax error") {
 			t.Fatalf("height %d lost diagnostic in normal layout", height)
 		}
+	}
+}
+
+func TestCommandInputKeepsGlobalShortcutsAndEnterIsInert(t *testing.T) {
+	m := uiTestModel(t, []databackend.Watchlist{{Name: "A"}, {Name: "B"}}, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("tx aapl")
+	uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	if m.commandInput.Value() != "tx aapl" {
+		t.Fatal("Enter changed command buffer")
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyF2))
+	if m.currentSort == "user" {
+		t.Fatal("F2 did not sort while input was populated")
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
+	if m.selected != 1 || m.commandInput.Value() != "tx aapl" {
+		t.Fatal("Tab did not navigate while preserving command")
+	}
+}
+
+func TestCommandErrorColorsPromptWithActiveTheme(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	m.app.Styles = theme.BuildStyles(theme.Default(), "")
+	m.commandInput.SetStyles(textinput.DefaultStyles(m.app.Styles))
+	m.commandInput.SetValue("NOPE")
+	m.syncCommandPromptStyle()
+	want := m.app.Styles.ErrorColor
+	if got := m.commandInput.Styles().Focused.Prompt.GetForeground(); got != want {
+		t.Fatalf("error prompt color = %v, want %v", got, want)
 	}
 }
