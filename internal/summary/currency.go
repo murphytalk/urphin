@@ -63,22 +63,70 @@ func (m *Model) currencyView() string {
 	}
 	lines := []string{ansi.Truncate(m.styles.TextBold("Summary: "+scope), m.width, "")}
 	for _, currency := range m.currencies {
-		for metric := range 3 {
-			line := m.currencyLine(currency, metric, false, true)
-			if ansi.StringWidth(line) > m.width {
-				line = m.currencyLine(currency, metric, false, false)
-			}
-			if ansi.StringWidth(line) > m.width {
-				line = m.currencyLine(currency, metric, true, false)
-			}
-			lines = append(lines, ansi.Truncate(line, m.width, ""))
-		}
+		lines = append(lines, m.currencyLines(currency)...)
 	}
 	lines = append(lines, m.styles.TextLine(strings.Repeat("━", m.width)))
 	return strings.Join(lines, "\n")
 }
 
-func (m *Model) currencyLine(s CurrencySummary, metric int, compact, percent bool) string {
+type currencyLineParts struct {
+	prefix, amount, changePrefix, change string
+}
+
+func (m *Model) currencyLines(s CurrencySummary) []string {
+	type layout struct {
+		compact, percent bool
+	}
+	layouts := [3]layout{{percent: true}, {percent: true}, {percent: true}}
+
+	for {
+		parts := [3]currencyLineParts{}
+		amountEnd := 0
+		for metric := range 3 {
+			parts[metric] = m.currencyLineParts(s, metric, layouts[metric].compact, layouts[metric].percent)
+			end := ansi.StringWidth(parts[metric].prefix) + ansi.StringWidth(parts[metric].amount)
+			amountEnd = max(amountEnd, end)
+		}
+		changeEnd := 0
+		for _, part := range parts {
+			end := amountEnd + ansi.StringWidth(part.changePrefix) + ansi.StringWidth(part.change)
+			changeEnd = max(changeEnd, end)
+		}
+
+		lines := make([]string, len(parts))
+		changed := false
+		for metric, part := range parts {
+			amountPadding := amountEnd - ansi.StringWidth(part.prefix) - ansi.StringWidth(part.amount)
+			changePadding := changeEnd - amountEnd - ansi.StringWidth(part.changePrefix) - ansi.StringWidth(part.change)
+			line := part.prefix + strings.Repeat(" ", amountPadding) + part.amount + part.changePrefix +
+				strings.Repeat(" ", changePadding) + part.change
+			if ansi.StringWidth(line) > m.width {
+				if layouts[metric].percent {
+					layouts[metric].percent = false
+					changed = true
+				} else if !layouts[metric].compact {
+					layouts[metric].compact = true
+					changed = true
+				}
+			}
+			lines[metric] = line
+		}
+		if !changed {
+			for metric, line := range lines {
+				if ansi.StringWidth(line) > m.width {
+					part := m.currencyLineParts(s, metric, layouts[metric].compact, layouts[metric].percent)
+					lines[metric] = part.prefix + part.amount + part.changePrefix + part.change
+				}
+			}
+			for i, line := range lines {
+				lines[i] = ansi.Truncate(line, m.width, "")
+			}
+			return lines
+		}
+	}
+}
+
+func (m *Model) currencyLineParts(s CurrencySummary, metric int, compact, percent bool) currencyLineParts {
 	if metric == 0 {
 		currency := singleLine(s.Currency)
 		if currency == "" {
@@ -99,8 +147,12 @@ func (m *Model) currencyLine(s CurrencySummary, metric int, compact, percent boo
 			}
 			value += m.styles.TextLabel(" ("+s.BaseCurrency+" ") + baseValue + m.styles.TextLabel(")")
 		}
-		return m.styles.TextBold(currency) + m.styles.TextLabel(" • "+valueLabel) + value +
-			m.styles.TextLabel(" • "+dayLabel) + m.currencyChange(s.DayChange, s.ValueUnavailable || s.DayChangeUnavailable, true, percent)
+		return currencyLineParts{
+			prefix:       m.styles.TextBold(currency) + m.styles.TextLabel(" • "+valueLabel),
+			amount:       value,
+			changePrefix: m.styles.TextLabel(" • " + dayLabel),
+			change:       m.currencyChange(s.DayChange, s.ValueUnavailable || s.DayChangeUnavailable, true, percent),
+		}
 	}
 	cost, change, costUnavailable := s.VWAPCost, s.VWAPChange, s.VWAPCostUnavailable
 	costLabel, changeLabel := "VWAP Cost: ", "VWAP P&L: "
@@ -119,13 +171,18 @@ func (m *Model) currencyLine(s CurrencySummary, metric int, compact, percent boo
 	if costUnavailable {
 		value = m.styles.TextLabel("N/A")
 	}
-	costText := m.styles.TextLabel(costLabel) + value
+	prefix, amount := "  "+m.styles.TextLabel(costLabel), value
 	if metric == 2 {
 		underline := ansi.NewStyle().Underline(true)
-		costText = underline.Styled(m.styles.TextLabel(costLabel)) + underline.Styled(value)
+		prefix = "  " + underline.Styled(m.styles.TextLabel(costLabel))
+		amount = underline.Styled(value)
 	}
-	return "  " + costText + m.styles.TextLabel(" • "+changeLabel) +
-		m.currencyChange(change, s.ValueUnavailable || s.ChangeUnavailable, cost > 0, percent)
+	return currencyLineParts{
+		prefix:       prefix,
+		amount:       amount,
+		changePrefix: m.styles.TextLabel(" • " + changeLabel),
+		change:       m.currencyChange(change, s.ValueUnavailable || s.ChangeUnavailable, cost > 0, percent),
+	}
 }
 
 func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis, percent bool) string {
@@ -135,7 +192,15 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 	text := u.ConvertFloatToString(change.Amount, false)
 	if percent {
 		if validBasis {
-			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
+			percentText := u.ConvertFloatToString(change.Percent, false)
+			if change.Percent > -10 && change.Percent < 10 {
+				if strings.HasPrefix(percentText, "-") {
+					percentText = "-0" + percentText[1:]
+				} else {
+					percentText = "0" + percentText
+				}
+			}
+			text += " (" + percentText + "%)"
 		} else {
 			text += " (N/A)"
 		}

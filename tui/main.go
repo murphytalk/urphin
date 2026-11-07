@@ -122,8 +122,6 @@ func init() {
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
 	flag.StringVar(&mktDataFeedOverride, "m", "", "override one-shot market-data feed (yahoo or alpaca)")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
-	flag.StringVar(&logPath, "l", logPathDefault, "log file")
-	flag.BoolVar(&ctx.Debug, "debug-log", false, "debug log")
 	flag.BoolVar(&ctx.Debug, "D", false, "debug log")
 
 }
