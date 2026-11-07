@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,5 +30,23 @@ var _ = Describe("home screen theme roles", func() {
 		heading := styles.Accent.Render("WL: Main") + styles.TextLight(" · Sort: user")
 		Expect(view).To(ContainSubstring(heading))
 		Expect(view).To(ContainSubstring(model.footer()))
+	})
+
+	It("keeps the home view transparent and honors NO_COLOR", func() {
+		appWithTheme := func() *Model {
+			app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
+			app.Settings.ShowSummary = false
+			app.Styles = theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+			model, err := NewModel(app)
+			Expect(err).NotTo(HaveOccurred())
+			model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
+			return model
+		}
+		GinkgoT().Setenv("NO_COLOR", "")
+		view := appWithTheme().View().Content
+		Expect(view).NotTo(ContainSubstring("\x1b[48;"))
+		GinkgoT().Setenv("NO_COLOR", "1")
+		view = appWithTheme().View().Content
+		Expect(strings.Contains(view, "\x1b[")).To(BeFalse())
 	})
 })

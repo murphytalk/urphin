@@ -127,6 +127,7 @@ palette:
 		loaded := theme.Load("partial", filepath.Join(dir, "config.yaml"))
 		Expect(loaded.Colors[theme.FG]).To(Equal(theme.Color("#123456")))
 		Expect(loaded.Colors[theme.Loss]).To(Equal(theme.Default().Colors[theme.Loss]))
+		Expect(loaded.Validate()).To(Succeed())
 		Expect(logs.String()).To(ContainSubstring("Theme roles missing"))
 	})
 
@@ -148,8 +149,10 @@ palette:
 		DeferCleanup(func() { slog.SetDefault(previous) })
 		Expect(theme.Load("missing-theme", cfg).Colors).To(Equal(theme.Default().Colors))
 		Expect(theme.Load("broken", cfg).Colors).To(Equal(theme.Default().Colors))
+		Expect(theme.Load(themesDir, cfg).Colors).To(Equal(theme.Default().Colors))
 		Expect(logs.String()).To(ContainSubstring("Theme not found"))
 		Expect(logs.String()).To(ContainSubstring("Theme invalid"))
+		Expect(logs.String()).To(ContainSubstring("Theme load failed"))
 	})
 
 	It("swaps gain/loss and dimensions for red-up", func() {
@@ -191,6 +194,32 @@ palette:
 		Expect(atFive).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(mid)).Render("x")))
 		Expect(atTen).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
 		Expect(atTwenty).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
+	})
+
+	It("derives dim colors from legacy muted, preserves indexed colors, and does not mutate themes", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		base := theme.Default()
+		originalGain, originalLoss := base.Colors[theme.Gain], base.Colors[theme.Loss]
+		green := theme.BuildStyles(base, theme.LegacyColors{}, "green-up")
+		red := theme.BuildStyles(base, theme.LegacyColors{}, "red-up")
+		Expect(base.Colors[theme.Gain]).To(Equal(originalGain))
+		Expect(base.Colors[theme.Loss]).To(Equal(originalLoss))
+		Expect(green.Gain.GetForeground()).NotTo(Equal(red.Gain.GetForeground()))
+
+		legacyMuted := theme.BuildStyles(base, theme.LegacyColors{TextLight: "#ffffff"}, "green-up")
+		gain, _ := colorful.Hex(string(originalGain))
+		muted, _ := colorful.Hex("#ffffff")
+		dim := gain.BlendHsv(muted, .5).Hex()
+		Expect(legacyMuted.TextPrice(10, "x")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
+
+		ansiPalette := theme.Load("ansi", "")
+		ansiStyles := theme.BuildStyles(ansiPalette, theme.LegacyColors{}, "green-up")
+		Expect(ansiStyles.TextPrice(1, "x")).To(Equal(ansiStyles.Gain.Render("x")))
+		Expect(ansiStyles.TextPrice(10, "x")).To(Equal(ansiStyles.Gain.Render("x")))
+		mixed := theme.Default()
+		mixed.Colors[theme.Gain] = theme.Color("ansi:2")
+		mixedStyles := theme.BuildStyles(mixed, theme.LegacyColors{}, "green-up")
+		Expect(mixedStyles.TextPrice(10, "x")).To(Equal(mixedStyles.Gain.Render("x")))
 	})
 
 	It("adds direction glyphs and renders zero in muted without an arrow", func() {

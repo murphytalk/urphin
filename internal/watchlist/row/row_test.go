@@ -16,8 +16,12 @@ import (
 )
 
 func rowStyles(colored bool) theme.Styles {
+	return rowStylesFor(colored, "green-up")
+}
+
+func rowStylesFor(colored bool, priceColors string) theme.Styles {
 	plain := func(text string) string { return text }
-	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, priceColors)
 	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
 	styles.TextBold, styles.TextLine, styles.Tag = plain, plain, plain
 	if !colored {
