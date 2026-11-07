@@ -3,6 +3,8 @@ package types
 import (
 	"strings"
 	"time"
+
+	"github.com/murphytalk/urphin/internal/theme"
 )
 
 // ParseCurrencyPair splits a configured six-letter currency pair symbol.
@@ -32,13 +34,15 @@ type AppCfg struct {
 	// LogKeepDays is a pointer so an absent key stays distinct from a configured
 	// 0: absent falls back to the default, while 0 keeps every rotated file, the
 	// same meaning as lumberjack's MaxAge 0.
-	LogKeepDays        *int              `yaml:"logKeepDays"`
-	Cache              string            `yaml:"cache"`
-	Databackend        string            `yaml:"databackend"`
-	OneShotMktDataFeed string            `yaml:"one-shot-mkt-data-feed"`
-	RandomMktData      bool              `yaml:"random-mkt-data"`
-	FxPairs            []string          `yaml:"fx-pairs"`
-	ColorScheme        ConfigColorScheme `yaml:"colors"`
+	LogKeepDays        *int               `yaml:"logKeepDays"`
+	Cache              string             `yaml:"cache"`
+	Databackend        string             `yaml:"databackend"`
+	OneShotMktDataFeed string             `yaml:"one-shot-mkt-data-feed"`
+	RandomMktData      bool               `yaml:"random-mkt-data"`
+	FxPairs            []string           `yaml:"fx-pairs"`
+	ColorScheme        theme.LegacyColors `yaml:"colors"`
+	Theme              string             `yaml:"theme"`
+	PriceColors        string             `yaml:"price-colors"`
 }
 
 type Settings struct {
@@ -243,26 +247,4 @@ type Asset struct {
 	PositionUnavailable bool
 }
 
-// StyleFn is a function that styles text
-type StyleFn func(string) string
-
-// Styles represents style functions for components of the UI
-type Styles struct {
-	Text      StyleFn
-	TextLight StyleFn
-	TextLabel StyleFn
-	TextBold  StyleFn
-	TextLine  StyleFn
-	TextPrice func(float64, string) string
-	Tag       StyleFn
-}
-
-// ConfigColorScheme represents user defined color scheme
-type ConfigColorScheme struct {
-	Text          string `yaml:"text"`
-	TextLight     string `yaml:"text-light"`
-	TextLabel     string `yaml:"text-label"`
-	TextLine      string `yaml:"text-line"`
-	TextTag       string `yaml:"text-tag"`
-	BackgroundTag string `yaml:"background-tag"`
-}
+type Styles = theme.Styles

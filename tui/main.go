@@ -16,7 +16,7 @@ import (
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
-	u "github.com/murphytalk/urphin/internal/util"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/shared/logging"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/setup"
@@ -32,6 +32,7 @@ var (
 	cmdLine             string
 	logPath             string
 	mktDataFeedOverride string
+	themeOverride       string
 	ctx                 setup.AppCtx
 	logs                io.Closer // set once logging is configured, closed before exit
 )
@@ -113,6 +114,7 @@ func init() {
 	logPathDefault := filepath.Join(home, ".urphin", "urphin.log")
 
 	flag.StringVar(&cfgPath, "config", cfgPathDefault, "config file")
+	flag.StringVar(&themeOverride, "theme", "", "theme name or file")
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
 	flag.StringVar(&mktDataFeedOverride, "m", "", "override one-shot market-data feed (yahoo or alpaca)")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
@@ -207,7 +209,11 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	ctx.Styles = u.GetColorScheme(ctx.Cfg.App.ColorScheme)
+	selectedTheme := ctx.Cfg.App.Theme
+	if themeOverride != "" {
+		selectedTheme = themeOverride
+	}
+	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.ColorScheme, ctx.Cfg.App.PriceColors)
 
 	marketData := mktdata.NewMktData()
 	err := marketData.Start(mktdata.MktDataConfig{

@@ -7,9 +7,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	c "github.com/murphytalk/urphin/internal"
+	u "github.com/murphytalk/urphin/internal/util"
 	row "github.com/murphytalk/urphin/internal/watchlist/row"
 	s "github.com/murphytalk/urphin/internal/watchlist/sorter"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
 )
 
 // Config represents the configuration for the watchlist component

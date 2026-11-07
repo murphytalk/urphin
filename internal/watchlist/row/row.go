@@ -8,7 +8,7 @@ import (
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
+	u "github.com/murphytalk/urphin/internal/util"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -119,7 +119,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		if !m.config.Asset.QuoteUnavailable && !msg.QuoteUnavailable &&
 			m.config.Asset.Symbol == msg.Symbol && m.config.Asset.QuotePrice.Price != msg.QuotePrice.Price {
 			// Reset color and frame on number change
-			m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
+			m.priceStyle = m.config.Styles.Flash(m.priceChangeDirection, 3)
 			m.frame = 0
 
 			oldPrice := u.ConvertFloatToString(m.config.Asset.QuotePrice.Price, m.config.Asset.Meta.IsVariablePrecision)
@@ -162,7 +162,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		m.priceChangeSegment = ""
 		m.priceChangeDirection = 0
 		m.frame = 0
-		m.priceStyle = lipgloss.NewStyle()
+		m.priceStyle = m.config.Styles.Flash(0, 3)
 
 		return m, nil
 
@@ -172,35 +172,8 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.frame < 4 && m.priceChangeDirection > 0 {
-			switch m.frame {
-			case 0:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("154")).Background(lipgloss.Color("22"))
-			case 1:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("154")).Background(lipgloss.Color("22"))
-			case 2:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("157")).Background(lipgloss.Color("232"))
-			case 3:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
-			}
-
-			m.frame++
-
-			return m, frameCmd(m.id)
-		}
-
-		if m.frame < 4 && m.priceChangeDirection < 0 {
-			switch m.frame {
-			case 0:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("52"))
-			case 1:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("52"))
-			case 2:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("210")).Background(lipgloss.Color("232"))
-			case 3:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
-			}
-
+		if m.frame < 4 && m.priceChangeDirection != 0 {
+			m.priceStyle = m.config.Styles.Flash(m.priceChangeDirection, m.frame)
 			m.frame++
 
 			return m, frameCmd(m.id)

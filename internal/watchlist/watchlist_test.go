@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
+	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
 )
 
 func watchlistStyles() c.Styles {
