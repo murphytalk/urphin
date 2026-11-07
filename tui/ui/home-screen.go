@@ -128,12 +128,14 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 	m.viewport.KeyMap.HalfPageDown.SetEnabled(false)
 	m.viewport.FillHeight = true
 	m.commandInput = textinput.New()
-	m.commandInput.SetStyles(textinput.DefaultStyles(app.Styles))
+	styles := textinput.DefaultStyles(app.Styles)
+	styles.Valid = app.Styles.Gain
+	m.commandInput.SetStyles(styles)
 	if _, noColor := app.Styles.ErrorColor.(lipgloss.NoColor); noColor {
 		m.commandInput.SetVirtualCursor(false)
 	}
 	m.commandInput.Placeholder = "Syntax check"
-	m.commandInput.AutoCase = false
+	m.commandInput.AutoCase = true
 	m.commandInput.KeyMap.AcceptSuggestion.SetEnabled(false)
 	m.commandInput.KeyMap.NextSuggestion.SetEnabled(false)
 	m.commandInput.KeyMap.PrevSuggestion.SetEnabled(false)
@@ -500,6 +502,7 @@ func (m *Model) commandVisible() bool {
 
 func (m *Model) syncCommandPromptStyle() {
 	styles := textinput.DefaultStyles(m.app.Styles)
+	styles.Valid = m.app.Styles.Gain
 	if m.displayedCommandError() != nil {
 		styles.Focused.Prompt = styles.Focused.Prompt.Foreground(m.app.Styles.ErrorColor)
 		styles.Blurred.Prompt = styles.Blurred.Prompt.Foreground(m.app.Styles.ErrorColor)

@@ -23,7 +23,7 @@ func TestValidateCommand(t *testing.T) {
 		hasErr bool
 	}{
 		{"  \t", textinput.StatusNone, "", false},
-		{"tx aapl", textinput.StatusValid, "tx aapl", false},
+		{"tx aapl", textinput.StatusValid, "TX aapl", false},
 		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", true},
 		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", true},
 		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", true},
@@ -106,7 +106,7 @@ func TestCommandInputKeepsGlobalShortcutsAndEnterIsInert(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.commandInput.SetValue("tx aapl")
 	uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
-	if m.commandInput.Value() != "tx aapl" {
+	if m.commandInput.Value() != "TX aapl" {
 		t.Fatal("Enter changed command buffer")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF2))
@@ -114,7 +114,7 @@ func TestCommandInputKeepsGlobalShortcutsAndEnterIsInert(t *testing.T) {
 		t.Fatal("F2 did not sort while input was populated")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
-	if m.selected != 1 || m.commandInput.Value() != "tx aapl" {
+	if m.selected != 1 || m.commandInput.Value() != "TX aapl" {
 		t.Fatal("Tab did not navigate while preserving command")
 	}
 }
@@ -128,6 +128,9 @@ func TestCommandErrorColorsPromptWithActiveTheme(t *testing.T) {
 	want := m.app.Styles.ErrorColor
 	if got := m.commandInput.Styles().Focused.Prompt.GetForeground(); got != want {
 		t.Fatalf("error prompt color = %v, want %v", got, want)
+	}
+	if got, want := m.commandInput.Styles().Valid.GetForeground(), m.app.Styles.Gain.GetForeground(); got != want {
+		t.Fatalf("valid text color = %v, want theme gain color %v", got, want)
 	}
 }
 
@@ -182,7 +185,7 @@ func TestCommandEditingKeysAndPasteStayWithInput(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	uiTestUpdate(t, m, tea.PasteMsg{Content: "tx\naapl\t"})
-	if got := m.commandInput.Value(); got != "tx aapl " {
+	if got := m.commandInput.Value(); got != "TX aapl " {
 		t.Fatalf("sanitized paste = %q", got)
 	}
 	before := m.viewport.YOffset()
@@ -193,7 +196,7 @@ func TestCommandEditingKeysAndPasteStayWithInput(t *testing.T) {
 	}
 	m.follow = true
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
-	if m.follow || m.commandInput.Value() != "tx aapl " {
+	if m.follow || m.commandInput.Value() != "TX aapl " {
 		t.Fatal("F3 failed or changed input")
 	}
 }

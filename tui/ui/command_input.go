@@ -40,10 +40,10 @@ func validateCommand(raw string) (textinput.Validation, error) {
 		valid := textinput.Validation{Status: textinput.StatusInvalid}
 		if col > 0 {
 			valid.Status = textinput.StatusPartialInvalid
-			valid.Valid = string(runes[:position])
+			valid.Valid = canonicalCommand(string(runes[:position]))
 		}
 		if col == len(trimmed) {
-			valid.Valid = raw
+			valid.Valid = canonicalCommand(raw)
 		}
 		message := parseErr.Msg
 		if len(parseErr.Expected) > 0 {
@@ -54,5 +54,18 @@ func validateCommand(raw string) (textinput.Validation, error) {
 			cause:   err,
 		}
 	}
-	return textinput.Validation{Status: textinput.StatusValid, Valid: raw}, nil
+	return textinput.Validation{Status: textinput.StatusValid, Valid: canonicalCommand(raw)}, nil
+}
+
+func canonicalCommand(raw string) string {
+	runes := []rune(raw)
+	start := 0
+	for start < len(runes) && unicode.IsSpace(runes[start]) {
+		start++
+	}
+	end := start
+	for end < len(runes) && !unicode.IsSpace(runes[end]) {
+		end++
+	}
+	return string(runes[:start]) + strings.ToUpper(string(runes[start:end])) + string(runes[end:])
 }
