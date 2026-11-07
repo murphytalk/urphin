@@ -89,6 +89,7 @@ func New(config Config) *Model {
 		id:                   id,
 		width:                80,
 		config:               config,
+		priceStyle:           config.Styles.Flash(0, 3),
 		priceNoChangeSegment: u.ConvertFloatToString(config.Asset.QuotePrice.Price, config.Asset.Meta.IsVariablePrecision),
 		priceChangeSegment:   "",
 	}

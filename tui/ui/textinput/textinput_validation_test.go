@@ -2,12 +2,19 @@ package textinput
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/murphytalk/urphin/internal/theme"
 )
+
+func TestMain(m *testing.M) {
+	_ = os.Setenv("NO_COLOR", "")
+	os.Exit(m.Run())
+}
 
 func paint(s lipgloss.Style, text string) string {
 	return s.Inline(true).Render(text)
@@ -98,13 +105,12 @@ func TestValidationColouring(t *testing.T) {
 func TestValidationDefaultColours(t *testing.T) {
 	s := New().Styles()
 
-	green := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	red := lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	if paint(s.Valid, "x") != paint(green, "x") {
-		t.Error("default valid colour should be green")
+	colors := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	if s.Valid.GetForeground() != colors.TextColor {
+		t.Error("default valid colour should use fg")
 	}
-	if paint(s.Invalid, "x") != paint(red, "x") {
-		t.Error("default invalid colour should be red")
+	if s.Invalid.GetForeground() != colors.ErrorColor {
+		t.Error("default invalid colour should use error")
 	}
 }
 
@@ -112,8 +118,12 @@ func TestValidationCustomColours(t *testing.T) {
 	m := newValidated(fixed(Validation{Status: StatusPartialInvalid, Valid: "ab"}), "abcd")
 
 	s := m.Styles()
-	s.Valid = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	s.Invalid = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	custom := theme.Default()
+	custom.Colors[theme.FG] = "#112233"
+	custom.Colors[theme.Error] = "#445566"
+	colors := theme.BuildStyles(custom, theme.LegacyColors{}, "")
+	s.Valid = lipgloss.NewStyle().Foreground(colors.TextColor)
+	s.Invalid = lipgloss.NewStyle().Foreground(colors.ErrorColor)
 	m.SetStyles(s)
 
 	view := m.View()
@@ -216,7 +226,7 @@ func TestNoValidatorRendersUnchanged(t *testing.T) {
 	}
 
 	s := m.Styles()
-	if strings.Contains(want, paint(s.Valid, "abc")) || strings.Contains(want, paint(s.Invalid, "abc")) {
+	if strings.Contains(want, paint(s.Invalid, "abc")) {
 		t.Fatalf("no validator but text coloured: %q", want)
 	}
 }

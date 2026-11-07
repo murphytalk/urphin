@@ -6,44 +6,23 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/murphytalk/urphin/internal/theme"
 )
 
 // DefaultStyles returns the default styles for focused and blurred states for
 // the textarea.
-func DefaultStyles(isDark bool) Styles {
-	lightDark := lipgloss.LightDark(isDark)
-
+func DefaultStyles(colors theme.Styles) Styles {
 	var s Styles
-	s.Focused = StyleState{
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Suggestion:  lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
-		Text:        lipgloss.NewStyle(),
-	}
-	s.Blurred = StyleState{
-		Placeholder: lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Suggestion:  lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-		Prompt:      lipgloss.NewStyle().Foreground(lipgloss.Color("7")),
-		Text:        lipgloss.NewStyle().Foreground(lightDark(lipgloss.Color("245"), lipgloss.Color("7"))),
-	}
+	s.Focused = StyleState{Placeholder: lipgloss.NewStyle().Foreground(colors.FaintColor), Suggestion: lipgloss.NewStyle().Foreground(colors.FaintColor), Prompt: lipgloss.NewStyle().Foreground(colors.AccentColor), Text: lipgloss.NewStyle().Foreground(colors.TextColor)}
+	s.Blurred = s.Focused
 	s.Cursor = CursorStyle{
-		Color: lipgloss.Color("7"),
+		Color: colors.CursorColor(),
 		Shape: tea.CursorBlock,
 		Blink: true,
 	}
-	s.Valid = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	s.Invalid = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	s.Valid = lipgloss.NewStyle().Foreground(colors.TextColor)
+	s.Invalid = lipgloss.NewStyle().Foreground(colors.ErrorColor)
 	return s
-}
-
-// DefaultLightStyles returns the default styles for a light background.
-func DefaultLightStyles() Styles {
-	return DefaultStyles(false)
-}
-
-// DefaultDarkStyles returns the default styles for a dark background.
-func DefaultDarkStyles() Styles {
-	return DefaultStyles(true)
 }
 
 // Styles are the styles for the textarea, separated into focused and blurred

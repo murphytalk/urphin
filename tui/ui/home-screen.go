@@ -321,7 +321,7 @@ func (m *Model) View() tea.View {
 	view := tea.NewView("")
 	view.AltScreen = true
 	if !m.ready {
-		view.SetContent("Initializing...")
+		view.SetContent(m.app.Styles.TextLight("Initializing..."))
 		return view
 	}
 	if m.width == 0 || m.height == 0 {
@@ -335,7 +335,7 @@ func (m *Model) View() tea.View {
 	if m.width < 80 || m.height < header+4 {
 		lines := make([]string, m.height)
 		if m.height > 1 {
-			lines[0] = ansi.Truncate(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4), m.width, "")
+			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4)), m.width, "")
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
@@ -345,7 +345,8 @@ func (m *Model) View() tea.View {
 	if m.app.Settings.ShowSummary {
 		lines = append(lines, m.summary.View())
 	}
-	lines = append(lines, ansi.Truncate("WL: "+m.listName()+" · Sort: "+m.currentSort, m.width, ""), m.viewport.View(), footer)
+	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
+	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View(), footer)
 	view.SetContent(strings.Join(lines, "\n"))
 	return view
 }
@@ -366,5 +367,5 @@ func (m *Model) footer() string {
 	if text == "" {
 		text = ansi.Truncate("F10 Exit", m.width, "")
 	}
-	return text
+	return m.app.Styles.TextLight(text)
 }
