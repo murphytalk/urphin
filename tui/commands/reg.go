@@ -28,9 +28,9 @@ func init() {
 func RunCmd(ctx context.Context, db databackend.DataBackend, cmdName string, args map[string]string, jsonOutput bool) error {
 	cmd, ok := cmdReg.Get(cmdName)
 	if !ok {
-		slog.Warn("Unknown command", "name", cmdName, "jsonOutput", jsonOutput)
+		slog.Error("Unknown command", "name", cmdName, "jsonOutput", jsonOutput)
 		if len(args) == 0 {
-			slog.Warn("args: (none)")
+			slog.Error("args: (none)")
 		}
 
 		keys := make([]string, 0, len(args))
@@ -39,10 +39,16 @@ func RunCmd(ctx context.Context, db databackend.DataBackend, cmdName string, arg
 		}
 
 		for _, k := range keys {
-			slog.Warn("args:", "name", k, "value", args[k])
+			slog.Error("args:", "name", k, "value", args[k])
 		}
 
 		return ErrUnknownCommand
 	}
 	return cmd.Execute(ctx, db, args, jsonOutput)
+}
+
+// IsRegistered reports whether cmdName is available in this build's registry.
+func IsRegistered(cmdName string) bool {
+	_, ok := cmdReg.Get(cmdName)
+	return ok
 }

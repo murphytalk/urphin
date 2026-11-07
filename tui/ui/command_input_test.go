@@ -226,3 +226,13 @@ func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
 		t.Fatalf("Enter history entry = %q", got)
 	}
 }
+
+func TestValidateCommandRejectsUnregisteredSyntax(t *testing.T) {
+	validation, err := validateCommand("MKT USD AAPL")
+	if err == nil || !errors.Is(err, commands.ErrUnknownCommand) || validation.Status != textinput.StatusInvalid {
+		t.Fatalf("unregistered parsed command = %#v, %v", validation, err)
+	}
+	if !strings.Contains(err.Error(), "MKT") {
+		t.Fatalf("diagnostic omits command name: %v", err)
+	}
+}
