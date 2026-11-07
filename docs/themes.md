@@ -10,25 +10,25 @@ Each theme is a root key in YAML. Put one theme in `<name>.yaml` under the `them
 
 ```yaml
 my-theme:
-  fg: '#cdd6f4'
-  muted: '#bac2de'
-  faint: '#a6adc8'
-  accent: '#89b4fa'
-  gain: '#23f311'
-  loss: '#ec260c'
-  warning: '#bd558e'
-  error: '#eb0808'
-  border: '#45475a'
-  selection_bg: '#313244'
-  popup_bg: '#181825'
-  series_1: '#fab387'
-  series_2: '#f9e2af'
-  series_3: '#74c7ec'
-  series_4: '#cba6f7'
-  series_5: '#89b4fa'
-  series_6: '#b4befe'
-  gain_dim: '#91c99a' # optional
-  loss_dim: '#d89aaf' # optional
+  fg: '#cdd6f4' # Main text
+  muted: '#bac2de' # Secondary text
+  faint: '#a6adc8' # Dim labels
+  accent: '#89b4fa' # Heading, prompt, and cursor
+  gain: '#23f311' # Up values and price flashes
+  loss: '#ec260c' # Down values and price flashes
+  warning: '#bd558e' # Warnings
+  error: '#eb0808' # Errors and invalid input
+  border: '#45475a' # Separators and borders
+  selection_bg: '#313244' # Selected content background
+  popup_bg: '#181825' # Popup background
+  series_1: '#fab387' # Chart series 1
+  series_2: '#f9e2af' # Chart series 2
+  series_3: '#74c7ec' # Chart series 3
+  series_4: '#cba6f7' # Chart series 4
+  series_5: '#89b4fa' # Chart series 5
+  series_6: '#b4befe' # Chart series 6
+  gain_dim: '#91c99a' # Optional gain gradient endpoint
+  loss_dim: '#d89aaf' # Optional loss gradient endpoint
 ```
 
 Hex colors accept `#rgb` and `#rrggbb`; quote them as strings. ANSI themes may use
