@@ -12,9 +12,20 @@ func TestRunCmdFormatsUnknownCommandAndArguments(t *testing.T) {
 	if !errors.Is(err, ErrUnknownCommand) {
 		t.Fatalf("error = %v", err)
 	}
-	for _, part := range []string{"MKT", "CCY:USD", "TICKER:AAPL"} {
+	want := "unknown command: MKT args: CCY=USD TICKER=AAPL"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+	for _, part := range []string{"MKT", "CCY=USD", "TICKER=AAPL"} {
 		if !strings.Contains(err.Error(), part) {
 			t.Errorf("error %q omits %q", err, part)
 		}
+	}
+}
+
+func TestRunCmdFormatsUnknownCommandWithoutArgs(t *testing.T) {
+	err := RunCmd(nil, nil, "MKT", nil, false)
+	if got, want := err.Error(), "unknown command: MKT"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
 	}
 }

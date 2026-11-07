@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
 	databackend "github.com/murphytalk/urphin/data/backend"
 )
@@ -43,7 +45,15 @@ func RunCmd(ctx context.Context, db databackend.DataBackend, cmdName string, arg
 			slog.Error("args:", "name", k, "value", args[k])
 		}
 
-		return fmt.Errorf("%w: %s %v", ErrUnknownCommand, cmdName, args)
+		if len(args) == 0 {
+			return fmt.Errorf("%w: %s", ErrUnknownCommand, cmdName)
+		}
+		sort.Strings(keys)
+		values := make([]string, 0, len(keys))
+		for _, key := range keys {
+			values = append(values, fmt.Sprintf("%s=%s", key, args[key]))
+		}
+		return fmt.Errorf("%w: %s args: %s", ErrUnknownCommand, cmdName, strings.Join(values, " "))
 	}
 	return cmd.Execute(ctx, db, args, jsonOutput)
 }

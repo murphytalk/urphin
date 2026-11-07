@@ -245,7 +245,7 @@ func TestEnterShowsUnknownCommandExecutionError(t *testing.T) {
 		t.Fatal("Enter did not return command execution")
 	}
 	uiTestUpdate(t, m, cmd())
-	if !strings.Contains(m.commandDiagnostic(), "unknown command: MKT") || !strings.Contains(m.commandDiagnostic(), "ticker:AAPL") {
+	if !strings.Contains(m.commandDiagnostic(), "unknown command: MKT") || !strings.Contains(m.commandDiagnostic(), "ticker=AAPL") {
 		t.Fatalf("unknown command diagnostic = %q", m.commandDiagnostic())
 	}
 }
