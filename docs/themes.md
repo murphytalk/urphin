@@ -6,30 +6,29 @@ default theme is the embedded Catppuccin Mocha palette. Select another theme wit
 
 ## Native YAML format
 
-Save a file as `<name>.yaml` in the `themes/` directory beside the config file.
-It contains a name and one color for every required role:
+Each theme is a root key in YAML. Put one theme in `<name>.yaml` under the `themes/` directory beside the config file. The embedded `default.yaml` contains all bundled themes:
 
 ```yaml
-name: my-theme
-fg: '#cdd6f4'
-muted: '#bac2de'
-faint: '#a6adc8'
-accent: '#89b4fa'
-gain: '#a6e3a1'
-loss: '#f38ba8'
-warning: '#f9e2af'
-error: '#eba0ac'
-border: '#45475a'
-selection_bg: '#313244'
-popup_bg: '#181825'
-series_1: '#fab387'
-series_2: '#f9e2af'
-series_3: '#74c7ec'
-series_4: '#cba6f7'
-series_5: '#89b4fa'
-series_6: '#b4befe'
-gain_dim: '#91c99a' # optional
-loss_dim: '#d89aaf' # optional
+my-theme:
+  fg: '#cdd6f4'
+  muted: '#bac2de'
+  faint: '#a6adc8'
+  accent: '#89b4fa'
+  gain: '#23f311'
+  loss: '#ec260c'
+  warning: '#bd558e'
+  error: '#eb0808'
+  border: '#45475a'
+  selection_bg: '#313244'
+  popup_bg: '#181825'
+  series_1: '#fab387'
+  series_2: '#f9e2af'
+  series_3: '#74c7ec'
+  series_4: '#cba6f7'
+  series_5: '#89b4fa'
+  series_6: '#b4befe'
+  gain_dim: '#91c99a' # optional
+  loss_dim: '#d89aaf' # optional
 ```
 
 Hex colors accept `#rgb` and `#rrggbb`; quote them as strings. ANSI themes may use
@@ -79,7 +78,7 @@ HSV. ANSI colors do not interpolate.
 A local file may shadow a bundled name. A value containing a path separator, or
 ending in `.yaml`/`.yml`, loads as a file path directly. Relative explicit paths
 are relative to the current working directory. With no selector, Urphin uses
-`catppuccin-mocha`.
+`catppuccin-mocha` from embedded `default.yaml`.
 
 All role colors come from the selected theme. `app.price-colors` only controls gain/loss direction.
 
@@ -103,7 +102,7 @@ it to the config's `themes/` directory. It refuses to overwrite an existing file
 the source filename (without extension) becomes the selectable name. It does not
 change the config or automatically select the imported theme.
 
-The importer requires six-digit Base16 values for every source key listed in the
+The importer writes the selected theme as a single root entry. It requires six-digit Base16 values for every Base16 source key listed in the
 table. `base00`, `base06`, and `base07` are ignored; in particular, ignoring
 `base00` preserves terminal transparency. Base16 maps `base08` to both `loss` and
 `error`, so imported themes may show those roles in the same color. Bundled Mocha

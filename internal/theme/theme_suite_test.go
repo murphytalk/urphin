@@ -22,29 +22,31 @@ func TestTheme(t *testing.T) {
 }
 
 var _ = Describe("theme loading and styles", func() {
-	It("accepts short and long hex and rejects malformed hex", func() {
-		parsed, err := theme.Parse([]byte("name: short\nfg: '#AbC'\n"), "short.yaml")
+	It("parses root-keyed themes and validates hex colors", func() {
+		parsed, err := theme.Parse([]byte("short:\n  fg: '#AbC'\n"), "short.yaml")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(parsed.Name).To(Equal("short"))
 		Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("#abc")))
-		parsed, err = theme.Parse([]byte("name: long\nfg: '#AbCdEf'\ngain_dim: '#ABCDEF'\n"), "long.yaml")
+		parsed, err = theme.Parse([]byte("long:\n  fg: '#AbCdEf'\n  gain_dim: '#ABCDEF'\n"), "long.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("#abcdef")))
 		Expect(parsed.Colors[theme.GainDim]).To(Equal(theme.Color("#abcdef")))
-		_, err = theme.Parse([]byte("name: bad\nfg: '#12xz'\n"), "bad.yaml")
-		Expect(err).To(MatchError(ContainSubstring("bad.yaml: role fg")))
+		_, err = theme.Parse([]byte("bad:\n  fg: '#12xz'\n"), "bad.yaml")
+		Expect(err).To(MatchError(ContainSubstring("bad.yaml: theme bad: role fg")))
 	})
 
 	It("validates ANSI boundaries, scalar types, names, duplicate keys, and unknown roles", func() {
 		for _, value := range []string{"0", "15"} {
-			parsed, err := theme.Parse([]byte("name: ansi\nfg: "+value+"\n"), "ansi.yaml")
+			parsed, err := theme.Parse([]byte("ansi:\n  fg: "+value+"\n"), "ansi.yaml")
 			Expect(err).NotTo(HaveOccurred())
 			Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("ansi:" + value)))
 		}
 		for _, input := range []string{
-			"name: bad\nfg: 16\n", "name: bad\nfg: -1\n", "name: bad\nfg: 1.5\n",
-			"name: bad\nfg: true\n", "name: bad\nfg: null\n", "name: bad\nfg: red\n",
-			"name: bad\nunknown: '#123456'\n", "fg: '#ffffff'\n", "name: ''\n", "name: 1\n",
-			"name: bad\nfg: '#ffffff'\nfg: '#000000'\n",
+			"bad:\n  fg: 16\n", "bad:\n  fg: -1\n", "bad:\n  fg: 1.5\n",
+			"bad:\n  fg: true\n", "bad:\n  fg: null\n", "bad:\n  fg: red\n",
+			"bad:\n  unknown: '#123456'\n", "fg: '#ffffff'\n", "\"\": {}\n",
+			"bad:\n  fg: '#ffffff'\n  fg: '#000000'\n",
+			"one:\n  fg: '#ffffff'\ntwo:\n  fg: '#000000'\n",
 		} {
 			_, err := theme.Parse([]byte(input), "invalid.yaml")
 			Expect(err).To(HaveOccurred(), "input: %s", input)
@@ -53,6 +55,7 @@ var _ = Describe("theme loading and styles", func() {
 
 	It("loads both embedded palettes and lists names", func() {
 		Expect(theme.Default().Validate()).To(Succeed())
+		Expect(theme.Default().Name).To(Equal("catppuccin-mocha"))
 		ansiTheme := theme.Load("ansi", "")
 		Expect(ansiTheme.Colors[theme.FG]).To(Equal(theme.Color("ansi:7")))
 		dir := GinkgoT().TempDir()
@@ -119,7 +122,7 @@ palette:
 	It("fills missing roles from the embedded default", func() {
 		dir := GinkgoT().TempDir()
 		Expect(os.Mkdir(filepath.Join(dir, "themes"), 0o700)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(dir, "themes", "partial.yaml"), []byte("name: partial\nfg: '#123456'\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "themes", "partial.yaml"), []byte("partial:\n  fg: '#123456'\n"), 0o600)).To(Succeed())
 		var logs bytes.Buffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -135,13 +138,13 @@ palette:
 		dir := GinkgoT().TempDir()
 		themesDir := filepath.Join(dir, "themes")
 		Expect(os.Mkdir(themesDir, 0o700)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(themesDir, "catppuccin-mocha.yaml"), []byte("name: shadow\nfg: '#123456'\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(themesDir, "catppuccin-mocha.yaml"), []byte("shadow:\n  fg: '#123456'\n"), 0o600)).To(Succeed())
 		explicit := filepath.Join(dir, "explicit.yml")
-		Expect(os.WriteFile(explicit, []byte("name: explicit\nfg: '#654321'\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(explicit, []byte("explicit:\n  fg: '#654321'\n"), 0o600)).To(Succeed())
 		cfg := filepath.Join(dir, "urphin.yaml")
 		Expect(theme.Load("catppuccin-mocha", cfg).Colors[theme.FG]).To(Equal(theme.Color("#123456")))
 		Expect(theme.Load(explicit, cfg).Colors[theme.FG]).To(Equal(theme.Color("#654321")))
-		Expect(os.WriteFile(filepath.Join(themesDir, "broken.yaml"), []byte("name: broken\nunknown: '#ffffff'\n"), 0o600)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(themesDir, "broken.yaml"), []byte("broken:\n  unknown: '#ffffff'\n"), 0o600)).To(Succeed())
 
 		var logs bytes.Buffer
 		previous := slog.Default()

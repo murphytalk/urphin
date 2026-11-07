@@ -7,13 +7,13 @@ type Importer interface {
 }
 
 func Serialize(theme Theme) ([]byte, error) {
-	values := map[string]any{"name": theme.Name}
+	roles := make(map[string]any, len(theme.Colors))
 	for role, value := range theme.Colors {
 		if i, ok := value.ansiIndex(); ok {
-			values[string(role)] = i
+			roles[string(role)] = i
 		} else {
-			values[string(role)] = string(value)
+			roles[string(role)] = string(value)
 		}
 	}
-	return yaml.Marshal(values)
+	return yaml.Marshal(map[string]any{theme.Name: roles})
 }

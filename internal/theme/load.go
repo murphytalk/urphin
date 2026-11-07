@@ -3,7 +3,6 @@ package theme
 import (
 	"embed"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -13,38 +12,53 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-//go:embed themes/*.yaml
+//go:embed themes/default.yaml
 var embedded embed.FS
 
 func Parse(data []byte, source string) (Theme, error) {
-	var fields map[string]any
-	if err := yaml.Unmarshal(data, &fields); err != nil {
-		return Theme{}, fmt.Errorf("parse %s: %w", source, err)
+	themes, err := parseThemes(data, source)
+	if err != nil {
+		return Theme{}, err
 	}
-	theme := Theme{Colors: make(map[Role]Color)}
-	for key, value := range fields {
-		if key == "name" {
-			name, ok := value.(string)
-			if !ok || strings.TrimSpace(name) == "" {
-				return Theme{}, fmt.Errorf("%s: name must be a nonempty string, got %v", source, value)
+	if len(themes) != 1 {
+		return Theme{}, fmt.Errorf("%s: expected one root theme entry, got %d", source, len(themes))
+	}
+	for _, theme := range themes {
+		return theme, nil
+	}
+	panic("unreachable")
+}
+
+func parseThemes(data []byte, source string) (map[string]Theme, error) {
+	var entries map[string]any
+	if err := yaml.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", source, err)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("%s: no root theme entries", source)
+	}
+	themes := make(map[string]Theme, len(entries))
+	for name, value := range entries {
+		name = strings.TrimSpace(name)
+		roles, ok := value.(map[string]any)
+		if name == "" || !ok {
+			return nil, fmt.Errorf("%s: theme %q must contain a role map", source, name)
+		}
+		theme := Theme{Name: name, Colors: make(map[Role]Color)}
+		for key, value := range roles {
+			role := Role(key)
+			if !isRole(role) {
+				return nil, fmt.Errorf("%s: theme %s has unknown role %q", source, name, key)
 			}
-			theme.Name = name
-			continue
+			color, err := parseColor(role, value)
+			if err != nil {
+				return nil, fmt.Errorf("%s: theme %s: %w; value %v", source, name, err, value)
+			}
+			theme.Colors[role] = color
 		}
-		role := Role(key)
-		if !isRole(role) {
-			return Theme{}, fmt.Errorf("%s: unknown theme role %q", source, key)
-		}
-		color, err := parseColor(role, value)
-		if err != nil {
-			return Theme{}, fmt.Errorf("%s: %w; value %v", source, err, value)
-		}
-		theme.Colors[role] = color
+		themes[name] = theme
 	}
-	if theme.Name == "" {
-		return Theme{}, fmt.Errorf("%s: missing name", source)
-	}
-	return theme, nil
+	return themes, nil
 }
 
 func isRole(role Role) bool {
@@ -59,22 +73,36 @@ func isRole(role Role) bool {
 	return false
 }
 
+func embeddedThemes() (map[string]Theme, error) {
+	data, err := embedded.ReadFile("themes/default.yaml")
+	if err != nil {
+		return nil, err
+	}
+	return parseThemes(data, "embedded themes/default.yaml")
+}
+
 func Default() Theme {
-	data, _ := embedded.ReadFile("themes/catppuccin-mocha.yaml")
-	theme, _ := Parse(data, "embedded catppuccin-mocha")
+	themes, err := embeddedThemes()
+	if err != nil {
+		panic(err)
+	}
+	theme, ok := themes["catppuccin-mocha"]
+	if !ok {
+		panic("embedded default theme catppuccin-mocha is missing")
+	}
 	return theme
 }
 
 func Names(themeDir string) ([]string, error) {
-	set := make(map[string]struct{})
-	files, err := fs.Glob(embedded, "themes/*.yaml")
+	themes, err := embeddedThemes()
 	if err != nil {
 		return nil, err
 	}
-	for _, file := range files {
-		set[strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))] = struct{}{}
+	set := make(map[string]struct{}, len(themes))
+	for name := range themes {
+		set[name] = struct{}{}
 	}
-	files, err = filepath.Glob(filepath.Join(themeDir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(themeDir, "*.yaml"))
 	if err != nil {
 		return nil, err
 	}
@@ -117,12 +145,16 @@ func Load(selector, cfgPath string) Theme {
 			slog.Warn("Theme load failed; using default", "theme", local, "error", err)
 			return Default()
 		} else {
-			data, err = embedded.ReadFile("themes/" + selector + ".yaml")
+			themes, err := embeddedThemes()
 			if err != nil {
-				slog.Warn("Theme not found; using default", "theme", selector)
+				slog.Warn("Embedded themes failed to load; using default", "error", err)
 				return Default()
 			}
-			source = "embedded " + selector
+			if theme, ok := themes[selector]; ok {
+				return fillMissing(theme, "embedded themes/default.yaml")
+			}
+			slog.Warn("Theme not found; using default", "theme", selector)
+			return Default()
 		}
 	}
 	theme, err := Parse(data, source)
@@ -130,6 +162,10 @@ func Load(selector, cfgPath string) Theme {
 		slog.Warn("Theme invalid; using default", "theme", source, "error", err)
 		return Default()
 	}
+	return fillMissing(theme, source)
+}
+
+func fillMissing(theme Theme, source string) Theme {
 	base := Default()
 	missing := make([]string, 0)
 	for _, role := range requiredRoles {
