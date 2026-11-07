@@ -131,6 +131,7 @@ func init() {
 func run() int {
 	commandProvided := false
 	utilityProvided := false
+	importProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "C" {
 			commandProvided = true
@@ -138,8 +139,11 @@ func run() int {
 		if f.Name == "list-themes" || f.Name == "import-theme" {
 			utilityProvided = true
 		}
+		if f.Name == "import-theme" {
+			importProvided = true
+		}
 	})
-	if listThemes && importTheme != "" || utilityProvided && commandProvided {
+	if listThemes && importProvided || utilityProvided && commandProvided || importProvided && importTheme == "" {
 		fmt.Fprintln(os.Stderr, "theme utility flags cannot be combined")
 		return 2
 	}

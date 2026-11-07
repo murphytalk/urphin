@@ -1107,7 +1107,10 @@ func (m *Model) updateVirtualCursorStyle() {
 		return
 	}
 
-	m.virtualCursor.Style = lipgloss.NewStyle().Foreground(m.styles.Cursor.Color)
+	m.virtualCursor.Style = lipgloss.NewStyle()
+	if m.styles.Cursor.Color != nil {
+		m.virtualCursor.Style = m.virtualCursor.Style.Foreground(m.styles.Cursor.Color)
+	}
 
 	// By default, the blink speed of the cursor is set to a default
 	// internally.

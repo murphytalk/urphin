@@ -104,7 +104,11 @@ func BuildStyles(theme Theme, legacy LegacyColors, priceColors string) Styles {
 			s.Tag = render(lipgloss.NewStyle().Foreground(lipgloss.Color(strings.ToLower(legacy.TextTag))))
 		}
 		if hexColor.MatchString(legacy.BackgroundTag) {
-			s.Tag = render(lipgloss.NewStyle().Foreground(lipgloss.Color(colors[Muted].lipglossValue())).Background(lipgloss.Color(strings.ToLower(legacy.BackgroundTag))))
+			foreground := colors[Muted].lipglossValue()
+			if hexColor.MatchString(legacy.TextTag) {
+				foreground = strings.ToLower(legacy.TextTag)
+			}
+			s.Tag = render(lipgloss.NewStyle().Foreground(lipgloss.Color(foreground)).Background(lipgloss.Color(strings.ToLower(legacy.BackgroundTag))))
 		}
 	}
 	for i := range s.Series {

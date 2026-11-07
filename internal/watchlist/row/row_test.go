@@ -10,6 +10,7 @@ import (
 	grid "github.com/achannarasappa/term-grid"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 )
 
 func rowStyles(colored bool) c.Styles {
@@ -24,6 +25,8 @@ func rowStyles(colored bool) c.Styles {
 		}
 		return "\x1b[31m" + text + "\x1b[0m"
 	}
+	resolved := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles.Gain, styles.Loss = resolved.Gain, resolved.Loss
 	return styles
 }
 
@@ -68,7 +71,7 @@ func TestRowCostColorsAtPositiveZeroAndNegativeBases(t *testing.T) {
 		{"mixed", 100, 90, 110, "32", "31"},
 		{"reverse mixed", 100, 110, 90, "31", "32"},
 		{"breakeven", 100, 100, 100, "", ""},
-		{"zero basis profit", 10, 0, 0, "32", "32"},
+		{"zero basis profit", 10, 0, 0, "role", "role"},
 		{"zero breakeven", 0, 0, 0, "", ""},
 		{"negative bases profit", 10, -5, -10, "32", "32"},
 		{"negative quote loss", -20, -5, -10, "31", "31"},
@@ -83,7 +86,9 @@ func TestRowCostColorsAtPositiveZeroAndNegativeBases(t *testing.T) {
 					if strings.Contains(lines[i], "↑") || strings.Contains(lines[i], "↓") {
 						t.Errorf("break-even cost has a glyph: %q", lines[i])
 					}
-				} else if !strings.Contains(lines[i], "\x1b["+color+"m") {
+				} else if color == "role" && !strings.Contains(ansi.Strip(lines[i]), "↑ 0.00") {
+					t.Errorf("cost %d must retain its up direction: %q", i, lines[i])
+				} else if color != "role" && !strings.Contains(lines[i], "\x1b["+color+"m") {
 					t.Errorf("cost %d expected color %s: %q", i, color, lines[i])
 				}
 			}

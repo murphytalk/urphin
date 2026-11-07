@@ -424,7 +424,12 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 		if asset.QuoteUnavailable || asset.PositionUnavailable {
 			return styles.Text(text)
 		}
-		return theme.FormatChange(styles, asset.QuotePrice.Price-cost, math.Abs(asset.QuotePrice.Price-cost), text)
+		change := asset.QuotePrice.Price - cost
+		percent := 0.0
+		if cost != 0 {
+			percent = 100 * change / math.Abs(cost)
+		}
+		return theme.FormatChange(styles, change, percent, text)
 	}
 	return costText(asset.Position.UnitCost) +
 		"\n" +

@@ -91,6 +91,12 @@ var _ = Describe("theme loading and styles", func() {
 		Expect(styles.Selected.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		Expect(styles.Popup.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 	})
+	It("keeps the legacy tag foreground when its background is overridden", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#000000"}, "")
+		custom := theme.BuildStyles(theme.Default(), theme.LegacyColors{TextTag: "#ffffff", BackgroundTag: "#000000"}, "")
+		Expect(custom.Tag("tag")).NotTo(Equal(defaults.Tag("tag")))
+	})
 	It("removes all theme colors when NO_COLOR is nonempty", func() {
 		GinkgoT().Setenv("NO_COLOR", "anything")
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
