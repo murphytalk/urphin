@@ -102,11 +102,13 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 	}
 }
 
-func TestCommandInputKeepsGlobalShortcutsAndEnterIsInert(t *testing.T) {
+func TestCommandInputKeepsGlobalShortcutsAndEnterPreservesInput(t *testing.T) {
 	m := uiTestModel(t, []databackend.Watchlist{{Name: "A"}, {Name: "B"}}, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.commandInput.SetValue("tx aapl")
-	uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	if cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter)); cmd == nil {
+		t.Fatal("Enter did not dispatch execution")
+	}
 	if m.commandInput.Value() != "TX aapl" {
 		t.Fatal("Enter changed command buffer")
 	}
@@ -227,12 +229,23 @@ func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
 	}
 }
 
-func TestValidateCommandRejectsUnregisteredSyntax(t *testing.T) {
+func TestValidateCommandOnlyChecksSyntax(t *testing.T) {
 	validation, err := validateCommand("MKT USD AAPL")
-	if err == nil || !errors.Is(err, commands.ErrUnknownCommand) || validation.Status != textinput.StatusInvalid {
-		t.Fatalf("unregistered parsed command = %#v, %v", validation, err)
+	if err != nil || validation.Status != textinput.StatusValid {
+		t.Fatalf("syntax-valid command rejected before execution: %#v, %v", validation, err)
 	}
-	if !strings.Contains(err.Error(), "MKT") {
-		t.Fatalf("diagnostic omits command name: %v", err)
+}
+
+func TestEnterShowsUnknownCommandExecutionError(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("MKT USD AAPL")
+	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("Enter did not return command execution")
+	}
+	uiTestUpdate(t, m, cmd())
+	if !strings.Contains(m.commandDiagnostic(), "unknown command: MKT") || !strings.Contains(m.commandDiagnostic(), "ticker:AAPL") {
+		t.Fatalf("unknown command diagnostic = %q", m.commandDiagnostic())
 	}
 }

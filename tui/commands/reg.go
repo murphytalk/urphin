@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	databackend "github.com/murphytalk/urphin/data/backend"
@@ -42,13 +43,7 @@ func RunCmd(ctx context.Context, db databackend.DataBackend, cmdName string, arg
 			slog.Error("args:", "name", k, "value", args[k])
 		}
 
-		return ErrUnknownCommand
+		return fmt.Errorf("%w: %s %v", ErrUnknownCommand, cmdName, args)
 	}
 	return cmd.Execute(ctx, db, args, jsonOutput)
-}
-
-// IsRegistered reports whether cmdName is available in this build's registry.
-func IsRegistered(cmdName string) bool {
-	_, ok := cmdReg.Get(cmdName)
-	return ok
 }

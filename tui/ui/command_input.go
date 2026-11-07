@@ -21,11 +21,8 @@ func validateCommand(raw string) (textinput.Validation, error) {
 	if strings.TrimSpace(raw) == "" {
 		return textinput.Validation{}, nil
 	}
-	name, _, err := commands.Parse(raw)
+	_, _, err := commands.Parse(raw)
 	if err == nil {
-		if !commands.IsRegistered(name) {
-			return textinput.Validation{Status: textinput.StatusInvalid}, fmt.Errorf("%w: %s", commands.ErrUnknownCommand, name)
-		}
 		return textinput.Validation{Status: textinput.StatusValid, Valid: canonicalCommand(raw)}, nil
 	}
 	var parseErr *commands.ParseError

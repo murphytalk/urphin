@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,6 +22,7 @@ import (
 	"github.com/murphytalk/urphin/internal/summary"
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
+	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/setup"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
@@ -51,6 +53,8 @@ type Model struct {
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
 type QuoteBatchMsg []c.AssetQuote
+
+type commandResultMsg struct{ err error }
 
 // NewModel loads each unique position once, independently of the visible watchlist.
 func NewModel(app setup.AppCtx) (*Model, error) {
@@ -238,6 +242,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(cmd, m.session.receive())
 		}
 		return m, cmd
+	case commandResultMsg:
+		oldErr := m.displayedCommandError() != nil
+		m.commandErr = msg.err
+		m.syncCommandPromptStyle()
+		if oldErr != (m.displayedCommandError() != nil) {
+			m.resize()
+		}
 	case subscriptionMsg:
 		// Startup subscription producer reports completion; partial failures keep the UI alive.
 		if msg.err != nil {
@@ -282,11 +293,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshContent()
 			return m, cmd
 		case "enter":
+			line := m.commandInput.Value()
 			if m.commandHistory != nil {
-				m.commandHistory.Add(m.commandInput.Value())
+				m.commandHistory.Add(line)
 			}
 			m.refreshCommandSuggestions()
-			return m, nil
+			name, args, err := commands.Parse(line)
+			if err != nil {
+				return m, nil
+			}
+			m.commandErr = nil
+			m.syncCommandPromptStyle()
+			m.resize()
+			return m, func() tea.Msg {
+				return commandResultMsg{err: commands.RunCmd(context.Background(), m.app.Db, name, args, false)}
+			}
 		case "esc":
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
