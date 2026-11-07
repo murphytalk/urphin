@@ -368,6 +368,10 @@ func (m *Model) resize() {
 		header = m.summary.Height()
 	}
 	m.viewport.SetWidth(m.width)
+	if m.commandVisible() {
+		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
+		m.commandInput.SetWidth(max(1, region-3))
+	}
 	m.viewport.SetHeight(max(0, m.height-header-2-boolInt(m.displayedCommandError() != nil)))
 	m.refreshContent()
 }
@@ -440,7 +444,6 @@ func (m *Model) footer() string {
 	}
 	if m.commandVisible() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
-		m.commandInput.SetWidth(max(1, region-3))
 		right := m.commandInput.View()
 		leftBudget := max(0, m.width-region-1)
 		text = ansi.Truncate(text, leftBudget, "")

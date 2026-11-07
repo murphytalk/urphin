@@ -395,3 +395,23 @@ func TestValidatorsAreMutuallyExclusive(t *testing.T) {
 		m.View()
 	})
 }
+
+func TestSetWidthReflowsAroundMiddleCursor(t *testing.T) {
+	m := New()
+	m.Focus()
+	m.SetValue("ab界defgh")
+	m.SetCursor(4)
+	position := m.Position()
+	for _, width := range []int{2, 8, 3, 12} {
+		m.SetWidth(width)
+		if m.Position() != position {
+			t.Fatalf("width %d moved cursor: got %d want %d", width, m.Position(), position)
+		}
+		if m.offset > position || m.offsetRight < position {
+			t.Fatalf("width %d hid cursor: interval [%d,%d), position %d", width, m.offset, m.offsetRight, position)
+		}
+		if got := lipgloss.Width(m.View()); got > width+3 {
+			t.Fatalf("width %d rendered %d columns including prompt and cursor", width, got)
+		}
+	}
+}

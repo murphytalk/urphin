@@ -480,21 +480,20 @@ func TestModelResizeClampsAndNativeSummaryHeaderReservation(t *testing.T) {
 
 func TestModelFooterIsSingleLineUTF8SafeAndPrioritizesQuitAtEveryWidth(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
-	for width := 0; width <= 120; width++ {
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 120, Height: 24})
+	for width := 0; width <= 160; width++ {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			m.width = width
+			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: width, Height: 24})
 			footer := m.footer()
 			if !utf8.ValidString(footer) || strings.ContainsAny(footer, "\r\n") || ansi.StringWidth(footer) > width {
-				t.Fatalf("footer width %d: %q", width, footer)
+				t.Fatalf("footer width %d rendered %d: %q", width, ansi.StringWidth(footer), footer)
 			}
 			if width >= ansi.StringWidth("F10 Exit") && !strings.HasPrefix(footer, "F10") {
 				t.Fatal("quit must survive before any other help")
 			}
 			if width >= 80 {
-				for _, part := range []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr"} {
-					if !strings.Contains(footer, part) {
-						t.Fatalf("wide footer omitted %q: %q", part, footer)
-					}
+				if ansi.StringWidth(footer) != width || !strings.Contains(ansi.Strip(footer), "Syntax check") || !strings.Contains(footer, "F10/^C Exit") {
+					t.Fatalf("command field not right-aligned or exit help missing: %q", footer)
 				}
 			}
 		})

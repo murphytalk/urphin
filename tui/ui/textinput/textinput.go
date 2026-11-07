@@ -250,6 +250,7 @@ func (m Model) Width() int {
 // SetWidth sets the width of the text input.
 func (m *Model) SetWidth(w int) {
 	m.width = w
+	m.handleOverflow()
 }
 
 // SetValue sets the value of the text input.
@@ -420,40 +421,31 @@ func (m *Model) handleOverflow() {
 		return
 	}
 
-	// Correct right offset if we've deleted characters
-	m.offsetRight = min(m.offsetRight, len(m.value))
-
-	if m.pos < m.offset {
-		m.offset = m.pos
-
-		w := 0
-		i := 0
-		runes := m.value[m.offset:]
-
-		for i < len(runes) && w <= m.Width() {
-			w += rw.RuneWidth(runes[i])
-			if w <= m.Width()+1 {
-				i++
-			}
+	// Keep cursor visible after value or width changes, even when it remains
+	// inside the previous viewport interval.
+	start, leftWidth := m.pos, 0
+	for start > 0 {
+		w := rw.RuneWidth(m.value[start-1])
+		if leftWidth+w > m.Width() {
+			break
 		}
-
-		m.offsetRight = m.offset + i
-	} else if m.pos >= m.offsetRight {
-		m.offsetRight = m.pos
-
-		w := 0
-		runes := m.value[:m.offsetRight]
-		i := len(runes) - 1
-
-		for i > 0 && w < m.Width() {
-			w += rw.RuneWidth(runes[i])
-			if w <= m.Width() {
-				i--
-			}
-		}
-
-		m.offset = m.offsetRight - (len(runes) - 1 - i)
+		start--
+		leftWidth += w
 	}
+	end, rightWidth := m.pos, 0
+	budget := m.Width() + 1 - leftWidth
+	if m.pos < len(m.value) {
+		budget -= rw.RuneWidth(m.value[m.pos])
+	}
+	for end < len(m.value) {
+		w := rw.RuneWidth(m.value[end])
+		if rightWidth+w > budget {
+			break
+		}
+		end++
+		rightWidth += w
+	}
+	m.offset, m.offsetRight = start, end
 }
 
 // deleteBeforeCursor deletes all text before the cursor.
