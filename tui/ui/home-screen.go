@@ -171,7 +171,12 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 		slog.Warn("command history disabled", "error", homeErr)
 	}
 	m.session = newQuoteSession(marketData, m.subscriptionSymbols())
-	defer func() { err = errors.Join(err, m.session.Close()) }()
+	defer func() {
+		err = errors.Join(err, m.session.Close())
+		if m.commandHistory != nil {
+			err = errors.Join(err, m.commandHistory.Persist())
+		}
+	}()
 	_, err = tea.NewProgram(m).Run()
 	return err
 }
