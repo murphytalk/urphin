@@ -6,6 +6,7 @@ import (
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 	"strings"
+	"unicode"
 )
 
 func validateCommand(raw string) (textinput.Validation, error) {
@@ -19,7 +20,7 @@ func validateCommand(raw string) (textinput.Validation, error) {
 		}
 		runes := []rune(raw)
 		start := 0
-		for start < len(runes) && strings.TrimSpace(string(runes[start])) == "" {
+		for start < len(runes) && unicode.IsSpace(runes[start]) {
 			start++
 		}
 		trimmed := []rune(strings.TrimSpace(raw))
@@ -36,7 +37,11 @@ func validateCommand(raw string) (textinput.Validation, error) {
 		if col == len(trimmed) {
 			valid.Valid = raw
 		}
-		return valid, fmt.Errorf("Error at character %d: %s", position+1, parseErr.Msg)
+		message := parseErr.Msg
+		if len(parseErr.Expected) > 0 {
+			message += " (expected " + strings.Join(parseErr.Expected, ", ") + ")"
+		}
+		return valid, fmt.Errorf("Error at character %d: %s", position+1, message)
 	}
 	return textinput.Validation{Status: textinput.StatusValid, Valid: raw}, nil
 }

@@ -14,7 +14,8 @@ flowchart TD
     Viewport --> Watchlist["watchlist.Model: visible assets, sort, shared widths"]
     Watchlist --> Rows["row.Model per symbol: cells and price flash"]
     Rows --> Cells["renderCells: ANSI/display-width-safe layout"]
-    Home --> Chrome["Watchlist heading and one-line footer"]
+    Home --> CommandInput["Syntax-check input and live parser validation"]
+    Home --> Chrome["Watchlist heading and footer"]
 ```
 
 | Boundary | Implementation and responsibility |
@@ -106,7 +107,7 @@ The existing `SetSummaryMsg` and legacy two-line renderer remain supported in [i
 
 ## 5. Layout, widths and keys
 
-Vertical layout is summary → one watchlist-name/sort heading → viewport → one footer line. Viewport height is $\max(0,H-\text{summaryHeight}-2)$. A usable screen needs width **at least 80** and height **at least summaryHeight + 4**, leaving two body lines. Otherwise home shows a resize notice and the footer, not a scrolling summary; shortcuts still work. Before the first size message it shows `Initializing...`; zero width/height renders nothing. Watchlist switching resets scrolling to the top.
+Vertical layout is summary → one watchlist-name/sort heading → viewport → one footer line. Viewport height is $\max(0,H-\text{summaryHeight}-2-\text{diagnosticRows})$. A usable screen needs width **at least 80** and height **at least summaryHeight + 4 + diagnosticRows**, leaving two body lines. `diagnosticRows` is zero or one. Otherwise home shows a resize notice and the footer, not a scrolling summary; shortcuts still work. Before the first size message it shows `Initializing...`; zero width/height renders nothing. Watchlist switching resets scrolling to the top.
 
 Horizontal layout remains component-owned:
 
@@ -127,6 +128,7 @@ The footer keeps exit help on the left and a syntax-only command input on the ri
 | F10 / Ctrl+C | Cancel session waits and quit. |
 | Up / Down, Page Up / Page Down | Scroll viewport. |
 | Home / End | Edit command input. |
+| Ctrl+Home / Ctrl+End | Jump watchlist to top / bottom. |
 | Ctrl+Home / Ctrl+End | Jump watchlist to top / bottom. |
 | Left / Right, editing shortcuts, printable text | Edit syntax-check input. |
 | Enter | Keep input; no command execution in this slice. |
