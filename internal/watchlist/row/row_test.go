@@ -2,6 +2,7 @@ package row
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,23 +12,31 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
+	u "github.com/murphytalk/urphin/internal/util"
 )
 
 func rowStyles(colored bool) c.Styles {
 	plain := func(text string) string { return text }
-	styles := c.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain}
-	styles.TextPrice = func(sign float64, text string) string {
-		if !colored {
-			return text
-		}
-		if sign > 0 {
-			return "\x1b[32m" + text + "\x1b[0m"
-		}
-		return "\x1b[31m" + text + "\x1b[0m"
+	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
+	styles.TextBold, styles.TextLine, styles.Tag = plain, plain, plain
+	if !colored {
+		styles.TextPrice = func(_ float64, text string) string { return text }
 	}
-	resolved := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
-	styles.Gain, styles.Loss = resolved.Gain, resolved.Loss
 	return styles
+}
+
+func expectedCostLine(asset *c.Asset, cost float64, styles c.Styles) string {
+	text := u.ConvertFloatToString(cost, asset.Meta.IsVariablePrecision)
+	if asset.QuoteUnavailable || asset.PositionUnavailable {
+		return styles.Text(text)
+	}
+	change := asset.QuotePrice.Price - cost
+	percent := 0.0
+	if cost != 0 {
+		percent = 100 * change / math.Abs(cost)
+	}
+	return theme.FormatChange(styles, change, percent, text)
 }
 
 func rowAsset() *c.Asset {
@@ -49,7 +58,8 @@ func TestRowPositionExtendedLabelsAndDualCost(t *testing.T) {
 		t.Fatalf("labels %q; costs %q", labels, costs)
 	}
 	costLines, labelLines := strings.Split(costs, "\n"), strings.Split(labels, "\n")
-	if !strings.Contains(costLines[0], "\x1b[32m↑ 90.00") || !strings.Contains(costLines[1], "\x1b[31m↓ 110.00") {
+	styles := rowStyles(true)
+	if costLines[0] != expectedCostLine(asset, 90, styles) || !strings.Contains(costLines[1], expectedCostLine(asset, 110, styles)) {
 		t.Fatalf("each cost needs its own profitability color: %q", costs)
 	}
 	if !strings.Contains(costLines[1], "\x1b[4m") || !strings.Contains(labelLines[1], "\x1b[4m") {
@@ -64,32 +74,30 @@ func TestRowPositionExtendedLabelsAndDualCost(t *testing.T) {
 
 func TestRowCostColorsAtPositiveZeroAndNegativeBases(t *testing.T) {
 	for _, test := range []struct {
-		name                    string
-		price, vwap, average    float64
-		vwapColor, averageColor string
+		name                 string
+		price, vwap, average float64
 	}{
-		{"mixed", 100, 90, 110, "32", "31"},
-		{"reverse mixed", 100, 110, 90, "31", "32"},
-		{"breakeven", 100, 100, 100, "", ""},
-		{"zero basis profit", 10, 0, 0, "role", "role"},
-		{"zero breakeven", 0, 0, 0, "", ""},
-		{"negative bases profit", 10, -5, -10, "32", "32"},
-		{"negative quote loss", -20, -5, -10, "31", "31"},
+		{"mixed", 100, 90, 110},
+		{"reverse mixed", 100, 110, 90},
+		{"breakeven", 100, 100, 100},
+		{"zero basis profit", 10, 0, 0},
+		{"zero breakeven", 0, 0, 0},
+		{"negative bases profit", 10, -5, -10},
+		{"negative quote loss", -20, -5, -10},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			asset := rowAsset()
 			asset.QuotePrice.Price = test.price
 			asset.Position.UnitCost, asset.Position.AvgCost = test.vwap, test.average
 			lines := strings.Split(textPositionExtended(asset, rowStyles(true)), "\n")
-			for i, color := range []string{test.vwapColor, test.averageColor} {
-				if color == "" {
-					if strings.Contains(lines[i], "↑") || strings.Contains(lines[i], "↓") {
-						t.Errorf("break-even cost has a glyph: %q", lines[i])
-					}
-				} else if color == "role" && !strings.Contains(ansi.Strip(lines[i]), "↑ 0.00") {
-					t.Errorf("cost %d must retain its up direction: %q", i, lines[i])
-				} else if color != "role" && !strings.Contains(lines[i], "\x1b["+color+"m") {
-					t.Errorf("cost %d expected color %s: %q", i, color, lines[i])
+			styles := rowStyles(true)
+			for i, cost := range []float64{test.vwap, test.average} {
+				want := expectedCostLine(asset, cost, styles)
+				if i == 1 {
+					want = ansi.NewStyle().Underline(true).Styled(want)
+				}
+				if lines[i] != want {
+					t.Errorf("cost %d got %q, want themed value %q", i, lines[i], want)
 				}
 			}
 		})
@@ -113,7 +121,7 @@ func TestRowUnavailableQuotesAndValuationPreserveKnownCosts(t *testing.T) {
 				t.Fatalf("missing valuation must be neutral N/A: %q", got)
 			}
 			costs := textPositionExtended(asset, styles)
-			if ansi.Strip(costs) != "90.00\n110.00\n10.00" || strings.Contains(costs, "\x1b[31m") || strings.Contains(costs, "\x1b[32m") {
+			if costs != styles.Text("90.00")+"\n"+ansi.NewStyle().Underline(true).Styled(styles.Text("110.00"))+"\n"+styles.Text("10.00") {
 				t.Fatalf("known costs must remain numeric and neutral: %q", costs)
 			}
 			quote := textQuote(asset, styles, lipgloss.NewStyle(), "100.00", "")
@@ -148,10 +156,10 @@ func TestRowPositionProfitPercentAndBreakeven(t *testing.T) {
 		basis, amount, percent float64
 		want                   string
 	}{
-		{"positive basis profit", 90, 100, 11.11, "\x1b[32m↑ 100.00 (11.11%)"},
-		{"zero basis", 0, 100, 999, "\x1b[32m↑ 100.00 (N/A)"},
-		{"negative basis", -90, 100, -11.11, "\x1b[32m↑ 100.00 (N/A)"},
-		{"loss", 90, -100, 11.11, "\x1b[31m↓ -100.00 (11.11%)"},
+		{"positive basis profit", 90, 100, 11.11, "↑ 100.00 (11.11%)"},
+		{"zero basis", 0, 100, 999, "↑ 100.00 (N/A)"},
+		{"negative basis", -90, 100, -11.11, "↑ 100.00 (N/A)"},
+		{"loss", 90, -100, 11.11, "↓ -100.00 (11.11%)"},
 		{"breakeven", 90, 0, 0, "0.00 (0.00%)"},
 		{"zero basis breakeven", 0, 0, 999, "0.00 (N/A)"},
 	} {
@@ -159,8 +167,9 @@ func TestRowPositionProfitPercentAndBreakeven(t *testing.T) {
 			asset := rowAsset()
 			asset.Position.UnitCost = test.basis
 			asset.Position.TotalChange = c.PositionChange{Amount: test.amount, Percent: test.percent}
-			view := textPosition(asset, rowStyles(true))
-			if !strings.HasPrefix(ansi.Strip(view), "1000.00 (25.00%)\n") || !strings.Contains(view, test.want) {
+			styles := rowStyles(true)
+			view := textPosition(asset, styles)
+			if !strings.HasPrefix(ansi.Strip(view), "1000.00 (25.00%)\n") || !strings.Contains(ansi.Strip(view), test.want) {
 				t.Fatalf("position display: %q; expected %q", view, test.want)
 			}
 		})
@@ -302,7 +311,7 @@ func TestRowANSIUTF8WidthsAndThreeLinePositionHeight(t *testing.T) {
 			asset := rowAsset()
 			asset.Symbol, asset.Name = "円💶e\u0301", "日本💶e\u0301長い名称日本語"
 			styles := rowStyles(true)
-			styles.TextBold = func(text string) string { return "\x1b[1m" + text + "\x1b[0m" }
+			styles.TextBold = func(text string) string { return lipgloss.NewStyle().Bold(true).Render(text) }
 			m := New(Config{Asset: asset, Styles: styles, ShowPositions: true})
 			m.Update(SetCellWidthsMsg{Width: width, CellWidths: CellWidthsContainer{WidthQuote: 20, WidthPosition: 25, WidthPositionExtended: 6, WidthPositionExtendedLabels: 9}})
 			view := m.View()
@@ -346,8 +355,9 @@ func TestRowExtendedLabelsNeverHiddenWithoutTheirValues(t *testing.T) {
 }
 
 func TestRenderCellsStyledWideCharactersAlignmentAndVisibility(t *testing.T) {
+	styled := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").Gain.Render("日本💶")
 	text := renderCells([]grid.Cell{
-		{Text: "\x1b[32m日本💶\x1b[0m\nx", Width: 5},
+		{Text: styled + "\nx", Width: 5},
 		{Text: "e\u0301\n12", Width: 3, Align: grid.Right},
 		{Text: "hidden", Width: 9, VisibleMinWidth: 20},
 	}, 10)

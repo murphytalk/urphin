@@ -8,23 +8,22 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
 	s "github.com/murphytalk/urphin/internal/summary"
+	"github.com/murphytalk/urphin/internal/theme"
+	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/fin"
 )
 
 func currencyStyles(colored bool) c.Styles {
 	plain := func(text string) string { return text }
-	styles := c.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain}
-	styles.TextPrice = func(sign float64, text string) string {
-		if !colored {
-			return text
-		}
-		if sign > 0 {
-			return "\x1b[32m" + text + "\x1b[0m"
-		}
-		return "\x1b[31m" + text + "\x1b[0m"
+	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
+	styles.TextBold, styles.TextLine, styles.Tag = plain, plain, plain
+	if !colored {
+		styles.TextPrice = func(_ float64, text string) string { return text }
 	}
 	return styles
 }
@@ -141,8 +140,8 @@ func TestCurrencySummaryUnavailableFlags(t *testing.T) {
 					t.Errorf("%q presence should be %t in %s", check.text, check.present, plain)
 				}
 			}
-			if strings.Contains(view, "\x1b[31mN/A") || strings.Contains(view, "\x1b[32mN/A") {
-				t.Fatal("unavailable data must be neutral")
+			if strings.Contains(view, "↑ N/A") || strings.Contains(view, "↓ N/A") {
+				t.Fatal("unavailable data must not receive a price direction")
 			}
 		})
 	}
@@ -203,29 +202,34 @@ func TestCurrencySummaryColorFollowsAmountNotPercentage(t *testing.T) {
 	for _, test := range []struct {
 		name            string
 		amount, percent float64
-		color           string
 	}{
-		{"profit with negative percent", 10, -5, "\x1b[32m↑ 10.00"},
-		{"loss with positive percent", -10, 5, "\x1b[31m↓ -10.00"},
-		{"breakeven", 0, 0, "0.00"},
+		{"profit with negative percent", 10, -5},
+		{"loss with positive percent", -10, 5},
+		{"breakeven", 0, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := currencyFixture()
 			input.DayChange = c.PositionChange{Amount: test.amount, Percent: test.percent}
 			input.VWAPChange, input.AvgCostChange = input.DayChange, input.DayChange
-			view := currencyModel(140, true, input).View()
+			styles := currencyStyles(true)
+			m := s.NewModel(styles)
+			m.Update(tea.WindowSizeMsg{Width: 140})
+			m.Update(s.SetCurrencySummariesMsg{Scope: "All portfolio", Summaries: []s.CurrencySummary{input}})
+			view := m.View()
 			if test.amount == 0 {
 				for _, line := range strings.Split(view, "\n") {
 					if strings.Contains(line, "Change:") || strings.Contains(line, "P&L:") {
-						if strings.Contains(line, "↑") || strings.Contains(line, "↓") || strings.Contains(line, "\x1b[31m") || strings.Contains(line, "\x1b[32m") {
+						if strings.Contains(line, "↑") || strings.Contains(line, "↓") {
 							t.Fatalf("zero change must be muted and have no arrow: %q", line)
 						}
 					}
 				}
 				return
 			}
-			if strings.Count(view, test.color) != 3 {
-				t.Fatalf("all three metrics must use amount color: %q", view)
+			text := u.ConvertFloatToString(test.amount, false) + " (" + u.ConvertFloatToString(test.percent, false) + "%)"
+			want := theme.FormatChange(styles, test.amount, test.percent, text)
+			if strings.Count(view, want) != 3 {
+				t.Fatalf("all three metrics must use amount direction and theme color: %q; want each %q", view, want)
 			}
 		})
 	}
@@ -261,8 +265,9 @@ func TestCurrencySummaryANSIAndUTF8SafeAtEveryWidth(t *testing.T) {
 	input := currencyFixture()
 	input.Currency = "円💶e\u0301"
 	styles := currencyStyles(true)
-	styles.TextBold = func(text string) string { return "\x1b[1m" + text + "\x1b[0m" }
-	styles.TextLabel = func(text string) string { return "\x1b[90m" + text + "\x1b[0m" }
+	resolved := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles.TextBold = func(text string) string { return lipgloss.NewStyle().Bold(true).Render(text) }
+	styles.TextLabel = resolved.TextLabel
 	for width := -1; width <= 140; width++ {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			m := s.NewModel(styles)
