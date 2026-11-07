@@ -21,7 +21,7 @@ func rowStyles(colored bool) theme.Styles {
 
 func rowStylesFor(colored bool, priceColors string) theme.Styles {
 	plain := func(text string) string { return text }
-	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, priceColors)
+	styles := theme.BuildStyles(theme.Default(), priceColors)
 	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
 	styles.TextBold, styles.TextLine, styles.Tag = plain, plain, plain
 	if !colored {
@@ -359,7 +359,7 @@ func TestRowExtendedLabelsNeverHiddenWithoutTheirValues(t *testing.T) {
 }
 
 func TestRenderCellsStyledWideCharactersAlignmentAndVisibility(t *testing.T) {
-	styled := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").Gain.Render("日本💶")
+	styled := theme.BuildStyles(theme.Default(), "").Gain.Render("日本💶")
 	text := renderCells([]grid.Cell{
 		{Text: styled + "\nx", Width: 5},
 		{Text: "e\u0301\n12", Width: 3, Align: grid.Right},

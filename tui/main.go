@@ -248,7 +248,7 @@ func run() int {
 		return 1
 	}
 	selectedTheme := resolveThemeSelector(ctx.Cfg.App.Theme, themeOverride, themeOverrideProvided)
-	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.ColorScheme, ctx.Cfg.App.PriceColors)
+	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.PriceColors)
 
 	marketData := mktdata.NewMktData()
 	err := marketData.Start(mktdata.MktDataConfig{

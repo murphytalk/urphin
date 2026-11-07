@@ -6,20 +6,10 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/lucasb-eyer/go-colorful"
 )
-
-type LegacyColors struct {
-	Text          string `yaml:"text"`
-	TextLight     string `yaml:"text-light"`
-	TextLabel     string `yaml:"text-label"`
-	TextLine      string `yaml:"text-line"`
-	TextTag       string `yaml:"text-tag"`
-	BackgroundTag string `yaml:"background-tag"`
-}
 
 type Styles struct {
 	Text, TextLight, TextLabel, TextBold, TextLine func(string) string
@@ -36,32 +26,12 @@ type Styles struct {
 	noColor                                        bool
 }
 
-func BuildStyles(theme Theme, legacy LegacyColors, priceColors string) Styles {
+func BuildStyles(theme Theme, priceColors string) Styles {
 	colors := make(map[Role]Color, len(theme.Colors))
 	for role, value := range theme.Colors {
 		colors[role] = value
 	}
-	legacyValues := []struct {
-		key  string
-		role Role
-		val  string
-	}{{"text", FG, legacy.Text}, {"text-light", Muted, legacy.TextLight}, {"text-label", Faint, legacy.TextLabel}, {"text-line", Border, legacy.TextLine}}
-	for _, override := range legacyValues {
-		if override.val == "" {
-			continue
-		}
-		value, err := parseColor(override.role, override.val)
-		if err != nil || !hexColor.MatchString(override.val) {
-			// Legacy configuration accepted hex only; an invalid override is ignored.
-			slog.Warn("Ignoring invalid legacy color", "key", override.key, "value", override.val)
-			continue
-		}
-		colors[override.role] = value
-	}
 	noColor := os.Getenv("NO_COLOR") != ""
-	if legacy.BackgroundTag != "" && !noColor {
-		slog.Warn("app.colors.background-tag is deprecated; use theme roles")
-	}
 	if priceColors != "" && priceColors != "green-up" && priceColors != "red-up" {
 		slog.Warn("Invalid app.price-colors; using green-up", "value", priceColors)
 		priceColors = "green-up"
@@ -100,16 +70,6 @@ func BuildStyles(theme Theme, legacy LegacyColors, priceColors string) Styles {
 		s.Selected = lipgloss.NewStyle().Background(lipgloss.Color(colors[SelectionBG].lipglossValue()))
 		s.Popup = lipgloss.NewStyle().Background(lipgloss.Color(colors[PopupBG].lipglossValue()))
 		s.cursorColor = lipgloss.Color(colors[Accent].lipglossValue())
-		if hexColor.MatchString(legacy.TextTag) {
-			s.Tag = render(lipgloss.NewStyle().Foreground(lipgloss.Color(strings.ToLower(legacy.TextTag))))
-		}
-		if hexColor.MatchString(legacy.BackgroundTag) {
-			foreground := colors[Muted].lipglossValue()
-			if hexColor.MatchString(legacy.TextTag) {
-				foreground = strings.ToLower(legacy.TextTag)
-			}
-			s.Tag = render(lipgloss.NewStyle().Foreground(lipgloss.Color(foreground)).Background(lipgloss.Color(strings.ToLower(legacy.BackgroundTag))))
-		}
 	}
 	for i := range s.Series {
 		s.Series[i] = colorStyle(Role("series_" + strconv.Itoa(i+1)))

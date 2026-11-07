@@ -157,8 +157,8 @@ palette:
 
 	It("swaps gain/loss and dimensions for red-up", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		greenUp := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "red-up")
+		greenUp := theme.BuildStyles(theme.Default(), "green-up")
+		styles := theme.BuildStyles(theme.Default(), "red-up")
 		Expect(styles.Gain.GetForeground()).To(Equal(greenUp.Loss.GetForeground()))
 		Expect(styles.Loss.GetForeground()).To(Equal(greenUp.Gain.GetForeground()))
 		Expect(ansi.Strip(theme.FormatChange(styles, 1, 1, "1.00"))).To(ContainSubstring("↑ 1.00"))
@@ -168,13 +168,13 @@ palette:
 		Expect(styles.TextPrice(-10, "x")).To(Equal(greenUp.TextPrice(10, "x")))
 		custom := theme.Default()
 		custom.Colors[theme.GainDim] = "#112233"
-		customStyles := theme.BuildStyles(custom, theme.LegacyColors{}, "red-up")
+		customStyles := theme.BuildStyles(custom, "red-up")
 		Expect(customStyles.TextPrice(-10, "x")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#112233")).Render("x")))
 	})
 
 	It("keeps gradient direction and clamps at ten percent", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
+		styles := theme.BuildStyles(theme.Default(), "green-up")
 		atOne := styles.TextPrice(1, "x")
 		atFive := styles.TextPrice(5, "x")
 		atTen := styles.TextPrice(10, "x")
@@ -196,34 +196,28 @@ palette:
 		Expect(atTwenty).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
 	})
 
-	It("derives dim colors from legacy muted, preserves indexed colors, and does not mutate themes", func() {
+	It("derives dim colors from theme muted, preserves indexed colors, and does not mutate themes", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		base := theme.Default()
 		originalGain, originalLoss := base.Colors[theme.Gain], base.Colors[theme.Loss]
-		green := theme.BuildStyles(base, theme.LegacyColors{}, "green-up")
-		red := theme.BuildStyles(base, theme.LegacyColors{}, "red-up")
+		green := theme.BuildStyles(base, "green-up")
+		red := theme.BuildStyles(base, "red-up")
 		Expect(base.Colors[theme.Gain]).To(Equal(originalGain))
 		Expect(base.Colors[theme.Loss]).To(Equal(originalLoss))
 		Expect(green.Gain.GetForeground()).NotTo(Equal(red.Gain.GetForeground()))
 
-		legacyMuted := theme.BuildStyles(base, theme.LegacyColors{TextLight: "#ffffff"}, "green-up")
-		gain, _ := colorful.Hex(string(originalGain))
-		muted, _ := colorful.Hex("#ffffff")
-		dim := gain.BlendHsv(muted, .5).Hex()
-		Expect(legacyMuted.TextPrice(10, "x")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
-
 		ansiPalette := theme.Load("ansi", "")
-		ansiStyles := theme.BuildStyles(ansiPalette, theme.LegacyColors{}, "green-up")
+		ansiStyles := theme.BuildStyles(ansiPalette, "green-up")
 		Expect(ansiStyles.TextPrice(1, "x")).To(Equal(ansiStyles.Gain.Render("x")))
 		Expect(ansiStyles.TextPrice(10, "x")).To(Equal(ansiStyles.Gain.Render("x")))
 		mixed := theme.Default()
 		mixed.Colors[theme.Gain] = theme.Color("ansi:2")
-		mixedStyles := theme.BuildStyles(mixed, theme.LegacyColors{}, "green-up")
+		mixedStyles := theme.BuildStyles(mixed, "green-up")
 		Expect(mixedStyles.TextPrice(10, "x")).To(Equal(mixedStyles.Gain.Render("x")))
 	})
 
 	It("adds direction glyphs and renders zero in muted without an arrow", func() {
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
+		styles := theme.BuildStyles(theme.Default(), "green-up")
 		for _, test := range []struct {
 			amount float64
 			glyph  string
@@ -252,11 +246,9 @@ palette:
 		}
 	})
 
-	It("honors legacy overrides and leaves backgrounds off ordinary styles", func() {
+	It("leaves backgrounds off ordinary styles", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{Text: "#ffffff"}, "")
-		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
-		Expect(styles.TextColor).NotTo(Equal(defaults.TextColor))
+		styles := theme.BuildStyles(theme.Default(), "")
 		for _, style := range []lipgloss.Style{styles.Accent, styles.Gain, styles.Loss, styles.Warning, styles.Error} {
 			Expect(style.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		}
@@ -267,35 +259,10 @@ palette:
 		}
 		Expect(styles.Tag("tag")).To(Equal(styles.TextLight("tag")))
 	})
-	It("applies every legacy foreground role override", func() {
-		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{
-			Text: "#010203", TextLight: "#111213", TextLabel: "#212223", TextLine: "#313233", TextTag: "#414243",
-		}, "")
-		Expect(styles.TextColor).To(Equal(lipgloss.Color("#010203")))
-		Expect(styles.MutedColor).To(Equal(lipgloss.Color("#111213")))
-		Expect(styles.FaintColor).To(Equal(lipgloss.Color("#212223")))
-		Expect(styles.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#414243")).Render("tag")))
-		Expect(styles.TextLine("line")).NotTo(Equal(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").TextLine("line")))
-	})
-	It("logs invalid and deprecated legacy colors and suppresses the deprecation under NO_COLOR", func() {
-		GinkgoT().Setenv("NO_COLOR", "")
-		var logs bytes.Buffer
-		previous := slog.Default()
-		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-		DeferCleanup(func() { slog.SetDefault(previous) })
-		_ = theme.BuildStyles(theme.Default(), theme.LegacyColors{Text: "green", BackgroundTag: "#123456"}, "")
-		Expect(logs.String()).To(ContainSubstring("Ignoring invalid legacy color"))
-		Expect(logs.String()).To(ContainSubstring("deprecated"))
-		logs.Reset()
-		GinkgoT().Setenv("NO_COLOR", "anything")
-		_ = theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#123456"}, "")
-		Expect(logs.String()).NotTo(ContainSubstring("deprecated"))
-	})
 	It("falls back to green-up and keeps colors enabled when NO_COLOR is empty or absent", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "unsupported")
-		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
+		styles := theme.BuildStyles(theme.Default(), "unsupported")
+		defaults := theme.BuildStyles(theme.Default(), "green-up")
 		Expect(styles.Gain.GetForeground()).To(Equal(defaults.Gain.GetForeground()))
 		Expect(styles.TextColor).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		old, present := os.LookupEnv("NO_COLOR")
@@ -307,18 +274,11 @@ palette:
 				_ = os.Unsetenv("NO_COLOR")
 			}
 		})
-		Expect(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").TextColor).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
-	})
-	It("keeps the legacy tag foreground when its background is overridden", func() {
-		GinkgoT().Setenv("NO_COLOR", "")
-		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#000000"}, "")
-		custom := theme.BuildStyles(theme.Default(), theme.LegacyColors{TextTag: "#ffffff", BackgroundTag: "#000000"}, "")
-		Expect(custom.Tag("tag")).NotTo(Equal(defaults.Tag("tag")))
-		Expect(defaults.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#bac2de")).Background(lipgloss.Color("#000000")).Render("tag")))
+		Expect(theme.BuildStyles(theme.Default(), "").TextColor).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 	})
 	It("uses only foreground and bold for the four price flash frames", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+		styles := theme.BuildStyles(theme.Default(), "")
 		for _, direction := range []int{1, -1} {
 			wantColor := styles.Gain.GetForeground()
 			if direction < 0 {
@@ -339,7 +299,7 @@ palette:
 	It("removes all theme colors when NO_COLOR is nonempty", func() {
 		for _, value := range []string{"1", "true", "anything", "0"} {
 			GinkgoT().Setenv("NO_COLOR", value)
-			styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+			styles := theme.BuildStyles(theme.Default(), "")
 			Expect(styles.Text("plain")).To(Equal("plain"))
 			Expect(styles.Selected.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
 			Expect(styles.Popup.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
@@ -350,8 +310,6 @@ palette:
 				Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
 			}
 			Expect(styles.CursorColor()).To(BeNil())
-			noColorTag := theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#123456"}, "")
-			Expect(noColorTag.Tag("tag")).To(Equal("tag"))
 		}
 	})
 })

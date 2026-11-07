@@ -21,7 +21,7 @@ import (
 
 func currencyStyles(colored bool) theme.Styles {
 	plain := func(text string) string { return text }
-	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	styles := theme.BuildStyles(theme.Default(), "")
 	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
 	styles.TextBold, styles.TextLine, styles.Tag = plain, plain, plain
 	if !colored {
@@ -278,7 +278,7 @@ func TestCurrencySummaryANSIAndUTF8SafeAtEveryWidth(t *testing.T) {
 	input := currencyFixture()
 	input.Currency = "円💶e\u0301"
 	styles := currencyStyles(true)
-	resolved := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	resolved := theme.BuildStyles(theme.Default(), "")
 	styles.TextBold = func(text string) string { return lipgloss.NewStyle().Bold(true).Render(text) }
 	styles.TextLabel = resolved.TextLabel
 	for width := -1; width <= 140; width++ {

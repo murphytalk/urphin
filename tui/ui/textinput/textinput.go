@@ -204,7 +204,7 @@ func New() Model {
 		Prompt:           "> ",
 		EchoCharacter:    '*',
 		CharLimit:        0,
-		styles:           DefaultStyles(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")),
+		styles:           DefaultStyles(theme.BuildStyles(theme.Default(), "")),
 		ShowSuggestions:  false,
 		AutoCase:         true,
 		useVirtualCursor: true,

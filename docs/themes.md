@@ -70,10 +70,7 @@ ending in `.yaml`/`.yml`, loads as a file path directly. Relative explicit paths
 are relative to the current working directory. With no selector, Urphin uses
 `catppuccin-mocha`.
 
-After loading, Urphin applies legacy `app.colors` values. `text`, `text-light`,
-`text-label`, and `text-line` override `fg`, `muted`, `faint`, and `border`;
-`text-tag` changes only tag text. `background-tag` remains supported as an explicit
-tag-only background and logs a deprecation warning. It is not part of a theme.
+All role colors come from the selected theme. `app.price-colors` only controls gain/loss direction.
 
 `NO_COLOR` disables color whenever it is nonempty. Direction arrows, bold and
 underlining remain. The root view, heading, footer, watchlist, summary and viewport

@@ -105,7 +105,7 @@ func TestValidationColouring(t *testing.T) {
 func TestValidationDefaultColours(t *testing.T) {
 	s := New().Styles()
 
-	colors := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+	colors := theme.BuildStyles(theme.Default(), "")
 	if s.Valid.GetForeground() != colors.TextColor {
 		t.Error("default valid colour should use fg")
 	}
@@ -122,7 +122,7 @@ func TestValidationCustomColours(t *testing.T) {
 	custom := theme.Default()
 	custom.Colors[theme.FG] = "#112233"
 	custom.Colors[theme.Error] = "#445566"
-	colors := theme.BuildStyles(custom, theme.LegacyColors{}, "")
+	colors := theme.BuildStyles(custom, "")
 	themeInputStyles := DefaultStyles(colors)
 	s.Valid = themeInputStyles.Valid
 	s.Invalid = themeInputStyles.Invalid

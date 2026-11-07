@@ -30,7 +30,7 @@ var _ = Describe("theme cursor colors", func() {
 		palette.Colors[theme.Faint] = "#334455"
 		palette.Colors[theme.Accent] = "#445566"
 		palette.Colors[theme.Error] = "#556677"
-		colors := theme.BuildStyles(palette, theme.LegacyColors{}, "")
+		colors := theme.BuildStyles(palette, "")
 		styles := DefaultStyles(colors)
 		for _, state := range []StyleState{styles.Focused, styles.Blurred} {
 			Expect(state.Placeholder.GetForeground()).To(Equal(colors.FaintColor))

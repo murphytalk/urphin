@@ -19,7 +19,7 @@ func TestUISuite(t *testing.T) {
 var _ = Describe("home screen theme roles", func() {
 	It("renders the heading with accent and the footer with muted text", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+		styles := theme.BuildStyles(theme.Default(), "")
 		app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
 		app.Settings.ShowSummary = false
 		app.Styles = styles
@@ -36,7 +36,7 @@ var _ = Describe("home screen theme roles", func() {
 		appWithTheme := func() *Model {
 			app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
 			app.Settings.ShowSummary = false
-			app.Styles = theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+			app.Styles = theme.BuildStyles(theme.Default(), "")
 			model, err := NewModel(app)
 			Expect(err).NotTo(HaveOccurred())
 			model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
