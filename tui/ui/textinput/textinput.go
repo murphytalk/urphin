@@ -871,6 +871,7 @@ func (m Model) completionView(offset int) string {
 	value := m.value
 	suggestion := m.matchedSuggestions[m.currentSuggestionIndex]
 	if len(value) < len(suggestion) {
+		// TODO: Clip completion preview to remaining field width to keep parent layouts stable.
 		return m.activeStyle().Suggestion.Inline(true).
 			Render(string(suggestion[len(value)+offset:]))
 	}
