@@ -135,6 +135,9 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	if !reflect.DeepEqual(m.lists, wantLists) || !reflect.DeepEqual(m.positions, positions) {
 		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.lists, m.positions)
 	}
+	if !m.follow {
+		t.Fatal("follow mode must be enabled by default")
+	}
 	if !slices.Equal(m.visibleSymbols(), []string{"B", "A"}) || m.listName() != "First" || b.closeCalls != 0 {
 		t.Fatal("initial selection or application/backend ownership changed")
 	}
@@ -382,10 +385,11 @@ func TestModelAllLetterKeysAreReservedIncludingViewportShortcuts(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.viewport.SetContent(strings.Repeat("scrollable\n", 100))
 	m.viewport.SetYOffset(20)
+	follow := m.follow
 	for _, letter := range "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		t.Run(string(letter), func(t *testing.T) {
 			before := m.View().Content
-			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.follow || m.currentSort != "user" || m.View().Content != before {
+			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.follow != follow || m.currentSort != "user" || m.View().Content != before {
 				t.Fatalf("letter %q changed UI state, scrolled, or quit", letter)
 			}
 		})
@@ -542,6 +546,7 @@ func TestModelQuoteEventsLatestWinsRejectUnknownAndRetainOffscreenCache(t *testi
 	m := uiTestModel(t, []databackend.Watchlist{{Name: "A", Tickers: []string{"A"}}, {Name: "B", Tickers: []string{"B"}}}, map[string]databackend.Position{
 		"A": {Shares: 1, VWAP: 1, AvgCost: 2, Ccy: "USD"}, "B": {Shares: 2, VWAP: 3, AvgCost: 4, Ccy: "EUR"},
 	})
+	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 140, Height: 20})
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 10, 9)})
 	beforeRow, beforeSummary := m.watchlist.View(), m.summary.View()

@@ -630,7 +630,6 @@ func TestSessionHeadlessBubbleTeaLifecycleQuoteOwnershipNavigationAndQuit(t *tes
 				t.Fatal("actual program did not process both concurrent startup commands")
 			}
 			sessionTestSend(t, program, uiTestKey(tea.KeyTab))
-			sessionTestSend(t, program, uiTestKey(tea.KeyF3))
 			sessionTestSend(t, program, uiTestKey(tea.KeyF2))
 			model.session.updates <- uiTestQuote("B", "EUR", 20, 19)
 			sessionTestBatch(t, sessionTestAwait(t, observed.events, "headless late B quote"))

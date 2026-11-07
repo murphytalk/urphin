@@ -65,6 +65,7 @@ func TestPortfolioWholeSummaryDeduplicatesAndSumsEachNativeCurrency(t *testing.T
 		"C":    {Shares: 1, VWAP: 30, AvgCost: 25, Ccy: "USD", TotalFee: 99},
 		"ZERO": {Shares: 0, VWAP: 999, AvgCost: 999, Ccy: "JPY"},
 	})
+	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 100, 90), uiTestQuote("B", "EUR", 20, 19), uiTestQuote("C", "USD", 40, 35)})
 	scope, totals := uiTestSummaries(m)
 	if scope != "Whole portfolio" || len(totals) != 2 || totals[0].Currency != "EUR" || totals[1].Currency != "USD" {
@@ -131,18 +132,16 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 	}, map[string]databackend.Position{
 		"A": {Shares: 1, Ccy: "USD"}, "B": {Shares: 2, Ccy: "EUR"}, "C": {Shares: 3, Ccy: "USD"},
 	})
+	if !m.follow {
+		t.Fatal("follow mode must be enabled by default")
+	}
 	feed := newSessionTestFeed()
 	m.session = newQuoteSession(feed, m.symbols)
 	t.Cleanup(func() { _ = m.session.Close() })
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 100, 90), uiTestQuote("B", "EUR", 20, 19), uiTestQuote("C", "USD", 30, 29)})
-	whole := m.summary.View()
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
-	if m.summary.View() != whole || m.follow {
-		t.Fatal("default whole-portfolio scope changed on navigation")
-	}
-	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
 	if scope, _ := uiTestSummaries(m); !m.follow || scope != "Watchlist: Second" {
-		t.Fatal("F3 did not follow selected watchlist")
+		t.Fatal("default follow scope did not move with navigation")
 	}
 	uiTestFloat(t, "follow USD", uiTestSummary(t, m, "USD").Value, 90)
 	uiTestFloat(t, "shared cached EUR", uiTestSummary(t, m, "EUR").Value, 40)
@@ -162,6 +161,9 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 		t.Fatal("empty follow scope retained previous currencies")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
+	if scope, _ := uiTestSummaries(m); m.follow || scope != "Whole portfolio" {
+		t.Fatal("F3 did not restore whole-portfolio scope")
+	}
 	uiTestFloat(t, "whole USD restored with latest quotes", uiTestSummary(t, m, "USD").Value, 200)
 	if calls := feed.snapshot(); len(calls.subscriptions) != 0 || len(calls.unsubscriptions) != 0 || calls.starts != 0 || calls.stops != 0 {
 		t.Fatal("follow/navigation toggles touched market-data lifecycle")

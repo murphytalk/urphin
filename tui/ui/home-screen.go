@@ -98,6 +98,7 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 		app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
+		follow:   true,
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
