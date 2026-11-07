@@ -16,8 +16,8 @@ my-theme:
   muted: '#bac2de' # Secondary text
   faint: '#a6adc8' # Dim labels
   accent: '#89b4fa' # Heading, prompt, and cursor
-  gain: '#23f311' # Up values and price flashes
-  loss: '#ec260c' # Down values and price flashes
+  gain: '#91c99a' # Optional gain gradient endpoint
+  loss: '#d89aaf' # Optional loss gradient endpoint
   warning: '#bd558e' # Warnings
   error: '#eb0808' # Errors and invalid input
   border: '#45475a' # Separators and borders
@@ -29,8 +29,8 @@ my-theme:
   series_4: '#cba6f7' # Chart series 4
   series_5: '#89b4fa' # Chart series 5
   series_6: '#b4befe' # Chart series 6
-  gain_dim: '#91c99a' # Optional gain gradient endpoint
-  loss_dim: '#d89aaf' # Optional loss gradient endpoint
+  gain_dim: '#23f311' # Up values and price flashes
+  loss_dim: '#ec260c' # Down values and price flashes
 ```
 
 Hex colors accept `#rgb` and `#rrggbb`; quote them as strings. ANSI themes may use

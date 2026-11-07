@@ -3,8 +3,8 @@ catppuccin-mocha:
   muted: '#bac2de'
   faint: '#a6adc8'
   accent: '#89b4fa'
-  gain: '#23f311'
-  loss: '#ec260c'
+  gain: '#91c99a'
+  loss: '#d89aaf'
   warning: '#bd558e'
   error: '#eb0808'
   border: '#45475a'
@@ -16,6 +16,8 @@ catppuccin-mocha:
   series_4: '#cba6f7'
   series_5: '#89b4fa'
   series_6: '#b4befe'
+  gain_dim: '#23f311'
+  loss_dim: '#ec260c'
 ansi:
   fg: 7
   muted: 8
