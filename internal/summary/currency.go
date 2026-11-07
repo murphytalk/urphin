@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 )
 
@@ -132,11 +133,6 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 		return m.styles.TextLabel("N/A")
 	}
 	text := u.ConvertFloatToString(change.Amount, false)
-	if change.Amount > 0 {
-		text = "↑ " + text
-	} else if change.Amount < 0 {
-		text = "↓ " + text
-	}
 	if percent {
 		if validBasis {
 			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
@@ -144,12 +140,7 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 			text += " (N/A)"
 		}
 	}
-	// Amount, not percentage, determines profit color for zero/negative cost bases.
-	sign := -1.0
-	if change.Amount > 0 {
-		sign = 1
-	}
-	return m.styles.TextPrice(sign, text)
+	return theme.FormatChange(m.styles, change.Amount, change.Percent, text)
 }
 
 func singleLine(text string) string {

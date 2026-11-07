@@ -227,9 +227,10 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 			changeWidth := lipgloss.Width("↓ " + format(asset.Position.TotalChange.Amount) + " (" + u.ConvertFloatToString(asset.Position.TotalChange.Percent, false) + "%)")
 			cellMaxWidths.PositionLength = max(cellMaxWidths.PositionLength, valueWidth)
 			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3, valueWidth+weightWidth, changeWidth, lipgloss.Width(format(asset.Position.TotalChange.Amount)+" (N/A)"))
-			for _, value := range []float64{asset.Position.Quantity, asset.Position.UnitCost, asset.Position.AvgCost} {
-				cellMaxWidths.WidthPositionExtended = max(cellMaxWidths.WidthPositionExtended, lipgloss.Width(format(value)))
-			}
+			cellMaxWidths.WidthPositionExtended = max(cellMaxWidths.WidthPositionExtended,
+				lipgloss.Width(format(asset.Position.Quantity)),
+				lipgloss.Width(format(asset.Position.UnitCost))+2,
+				lipgloss.Width(format(asset.Position.AvgCost))+2)
 		}
 		if asset.PositionUnavailable {
 			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3)

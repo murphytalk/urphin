@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	grid "github.com/achannarasappa/term-grid"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/fin"
 
@@ -110,13 +111,6 @@ func (m *Model) View() string {
 }
 
 func quoteChangeText(change float64, changePercent float64, styles c.Styles) string {
-	if change == 0.0 {
-		return styles.TextLabel(u.ConvertFloatToString(change, false) + " (" + u.ConvertFloatToString(changePercent, false) + "%)")
-	}
-
-	if change > 0.0 {
-		return styles.TextPrice(changePercent, "↑ "+u.ConvertFloatToString(change, false)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
-	}
-
-	return styles.TextPrice(changePercent, "↓ "+u.ConvertFloatToString(change, false)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
+	text := u.ConvertFloatToString(change, false) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
+	return theme.FormatChange(styles, change, changePercent, text)
 }

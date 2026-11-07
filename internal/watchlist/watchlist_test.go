@@ -46,8 +46,9 @@ func TestWatchlistMeasuresBothCostsQuantityAndLabels(t *testing.T) {
 			asset := &c.Asset{Position: test.position, Meta: c.Meta{IsVariablePrecision: test.variable}, QuoteUnavailable: true}
 			widths := getCellWidths([]*c.Asset{asset})
 			want := 0
-			for _, value := range []float64{test.position.Quantity, test.position.UnitCost, test.position.AvgCost} {
-				want = max(want, lipgloss.Width(u.ConvertFloatToString(value, test.variable)))
+			want = max(want, lipgloss.Width(u.ConvertFloatToString(test.position.Quantity, test.variable)))
+			for _, value := range []float64{test.position.UnitCost, test.position.AvgCost} {
+				want = max(want, lipgloss.Width(u.ConvertFloatToString(value, test.variable))+2)
 			}
 			if widths.WidthPositionExtended != want || widths.WidthPositionExtendedLabels != lipgloss.Width(row.PositionExtendedLabels) {
 				t.Fatalf("widths %+v; wanted value %d and measured labels", widths, want)

@@ -42,11 +42,11 @@ func TestRowPositionExtendedLabelsAndDualCost(t *testing.T) {
 	asset := rowAsset()
 	labels := textPositionExtendedLabels(asset, rowStyles(false))
 	costs := textPositionExtended(asset, rowStyles(true))
-	if ansi.Strip(labels) != "VWAP:\nAvg Cost:\nQty:" || ansi.Strip(costs) != "90.00\n110.00\n10.00" {
+	if ansi.Strip(labels) != "VWAP:\nAvg Cost:\nQty:" || ansi.Strip(costs) != "↑ 90.00\n↓ 110.00\n10.00" {
 		t.Fatalf("labels %q; costs %q", labels, costs)
 	}
 	costLines, labelLines := strings.Split(costs, "\n"), strings.Split(labels, "\n")
-	if !strings.Contains(costLines[0], "\x1b[32m90.00") || !strings.Contains(costLines[1], "\x1b[31m110.00") {
+	if !strings.Contains(costLines[0], "\x1b[32m↑ 90.00") || !strings.Contains(costLines[1], "\x1b[31m↓ 110.00") {
 		t.Fatalf("each cost needs its own profitability color: %q", costs)
 	}
 	if !strings.Contains(costLines[1], "\x1b[4m") || !strings.Contains(labelLines[1], "\x1b[4m") {
@@ -67,9 +67,9 @@ func TestRowCostColorsAtPositiveZeroAndNegativeBases(t *testing.T) {
 	}{
 		{"mixed", 100, 90, 110, "32", "31"},
 		{"reverse mixed", 100, 110, 90, "31", "32"},
-		{"breakeven", 100, 100, 100, "31", "31"},
+		{"breakeven", 100, 100, 100, "", ""},
 		{"zero basis profit", 10, 0, 0, "32", "32"},
-		{"zero breakeven", 0, 0, 0, "31", "31"},
+		{"zero breakeven", 0, 0, 0, "", ""},
 		{"negative bases profit", 10, -5, -10, "32", "32"},
 		{"negative quote loss", -20, -5, -10, "31", "31"},
 	} {
@@ -79,7 +79,11 @@ func TestRowCostColorsAtPositiveZeroAndNegativeBases(t *testing.T) {
 			asset.Position.UnitCost, asset.Position.AvgCost = test.vwap, test.average
 			lines := strings.Split(textPositionExtended(asset, rowStyles(true)), "\n")
 			for i, color := range []string{test.vwapColor, test.averageColor} {
-				if !strings.Contains(lines[i], "\x1b["+color+"m") {
+				if color == "" {
+					if strings.Contains(lines[i], "↑") || strings.Contains(lines[i], "↓") {
+						t.Errorf("break-even cost has a glyph: %q", lines[i])
+					}
+				} else if !strings.Contains(lines[i], "\x1b["+color+"m") {
 					t.Errorf("cost %d expected color %s: %q", i, color, lines[i])
 				}
 			}
@@ -143,8 +147,8 @@ func TestRowPositionProfitPercentAndBreakeven(t *testing.T) {
 		{"zero basis", 0, 100, 999, "\x1b[32m↑ 100.00 (N/A)"},
 		{"negative basis", -90, 100, -11.11, "\x1b[32m↑ 100.00 (N/A)"},
 		{"loss", 90, -100, 11.11, "\x1b[31m↓ -100.00 (11.11%)"},
-		{"breakeven", 90, 0, 0, "\x1b[31m0.00 (0.00%)"},
-		{"zero basis breakeven", 0, 0, 999, "\x1b[31m0.00 (N/A)"},
+		{"breakeven", 90, 0, 0, "0.00 (0.00%)"},
+		{"zero basis breakeven", 0, 0, 999, "0.00 (N/A)"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			asset := rowAsset()
@@ -327,7 +331,7 @@ func TestRowExtendedLabelsNeverHiddenWithoutTheirValues(t *testing.T) {
 		if strings.Contains(ansi.Strip(cell.Text), "Avg Cost:") {
 			labels = cell
 		}
-		if ansi.Strip(cell.Text) == "90.00\n110.00\n10.00" {
+		if ansi.Strip(cell.Text) == "↑ 90.00\n↓ 110.00\n10.00" {
 			costs = cell
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 
 	tea "charm.land/bubbletea/v2"
@@ -347,21 +348,12 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 	if asset.Position.TotalChange.Amount != 0.0 || asset.Position.Quantity != 0.0 {
 		change := asset.Position.TotalChange
 		text := u.ConvertFloatToString(change.Amount, asset.Meta.IsVariablePrecision)
-		if change.Amount > 0 {
-			text = "↑ " + text
-		} else if change.Amount < 0 {
-			text = "↓ " + text
-		}
 		if asset.Position.UnitCost*asset.Position.Quantity > 0 {
 			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
 		} else {
 			text += " (N/A)"
 		}
-		sign := -1.0
-		if change.Amount > 0 {
-			sign = 1
-		}
-		positionChange = styles.TextPrice(sign, text)
+		positionChange = theme.FormatChange(styles, change.Amount, change.Percent, text)
 	}
 
 	return positionValue +
@@ -431,11 +423,7 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 		if asset.QuoteUnavailable || asset.PositionUnavailable {
 			return styles.Text(text)
 		}
-		sign := -1.0
-		if asset.QuotePrice.Price > cost {
-			sign = 1
-		}
-		return styles.TextPrice(sign, text)
+		return theme.FormatChange(styles, asset.QuotePrice.Price-cost, math.Abs(asset.QuotePrice.Price-cost), text)
 	}
 	return costText(asset.Position.UnitCost) +
 		"\n" +
@@ -552,15 +540,8 @@ func textMarketState(asset *c.Asset, styles c.Styles) string {
 }
 
 func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles c.Styles) string {
-	if change == 0.0 {
-		return styles.TextPrice(changePercent, "  "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
-	}
-
-	if change > 0.0 {
-		return styles.TextPrice(changePercent, "↑ "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
-	}
-
-	return styles.TextPrice(changePercent, "↓ "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
+	text := u.ConvertFloatToString(change, isVariablePrecision) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
+	return theme.FormatChange(styles, change, changePercent, text)
 }
 
 func textSeparator(width int, styles c.Styles) string {

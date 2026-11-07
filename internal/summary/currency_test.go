@@ -207,13 +207,23 @@ func TestCurrencySummaryColorFollowsAmountNotPercentage(t *testing.T) {
 	}{
 		{"profit with negative percent", 10, -5, "\x1b[32m↑ 10.00"},
 		{"loss with positive percent", -10, 5, "\x1b[31m↓ -10.00"},
-		{"breakeven", 0, 0, "\x1b[31m0.00"},
+		{"breakeven", 0, 0, "0.00"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := currencyFixture()
 			input.DayChange = c.PositionChange{Amount: test.amount, Percent: test.percent}
 			input.VWAPChange, input.AvgCostChange = input.DayChange, input.DayChange
 			view := currencyModel(140, true, input).View()
+			if test.amount == 0 {
+				for _, line := range strings.Split(view, "\n") {
+					if strings.Contains(line, "Change:") || strings.Contains(line, "P&L:") {
+						if strings.Contains(line, "↑") || strings.Contains(line, "↓") || strings.Contains(line, "\x1b[31m") || strings.Contains(line, "\x1b[32m") {
+							t.Fatalf("zero change must be muted and have no arrow: %q", line)
+						}
+					}
+				}
+				return
+			}
 			if strings.Count(view, test.color) != 3 {
 				t.Fatalf("all three metrics must use amount color: %q", view)
 			}

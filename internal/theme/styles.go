@@ -179,10 +179,7 @@ func FormatChange(s Styles, amount, percent float64, text string) string {
 		}
 		return style.Render(glyph + text)
 	}
-	if percent*direction <= 0 {
-		percent = 0
-	}
-	return s.price(percent*direction, glyph+text)
+	return s.TextPrice(math.Abs(percent)*direction, glyph+text)
 }
 
 func (s Styles) Flash(direction, frame int) lipgloss.Style {
