@@ -1,6 +1,9 @@
 package theme_test
 
 import (
+	"bytes"
+	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +28,23 @@ var _ = Describe("theme loading and styles", func() {
 		Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("#abc")))
 		_, err = theme.Parse([]byte("name: bad\nfg: '#12xz'\n"), "bad.yaml")
 		Expect(err).To(MatchError(ContainSubstring("bad.yaml: role fg")))
+	})
+
+	It("validates ANSI boundaries, scalar types, names, duplicate keys, and unknown roles", func() {
+		for _, value := range []string{"0", "15"} {
+			parsed, err := theme.Parse([]byte("name: ansi\nfg: "+value+"\n"), "ansi.yaml")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("ansi:" + value)))
+		}
+		for _, input := range []string{
+			"name: bad\nfg: 16\n", "name: bad\nfg: -1\n", "name: bad\nfg: 1.5\n",
+			"name: bad\nfg: true\n", "name: bad\nfg: null\n", "name: bad\nfg: red\n",
+			"name: bad\nunknown: '#123456'\n", "fg: '#ffffff'\n", "name: ''\n",
+			"name: bad\nfg: '#ffffff'\nfg: '#000000'\n",
+		} {
+			_, err := theme.Parse([]byte(input), "invalid.yaml")
+			Expect(err).To(HaveOccurred(), "input: %s", input)
+		}
 	})
 
 	It("loads both embedded palettes and lists names", func() {
@@ -87,6 +107,25 @@ palette:
 		Expect(loaded.Colors[theme.Loss]).To(Equal(theme.Default().Colors[theme.Loss]))
 	})
 
+	It("prefers local named themes, accepts explicit paths, and falls back with diagnostics", func() {
+		dir := GinkgoT().TempDir()
+		themesDir := filepath.Join(dir, "themes")
+		Expect(os.Mkdir(themesDir, 0o700)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(themesDir, "catppuccin-mocha.yaml"), []byte("name: shadow\nfg: '#123456'\n"), 0o600)).To(Succeed())
+		explicit := filepath.Join(dir, "explicit.yml")
+		Expect(os.WriteFile(explicit, []byte("name: explicit\nfg: '#654321'\n"), 0o600)).To(Succeed())
+		cfg := filepath.Join(dir, "urphin.yaml")
+		Expect(theme.Load("catppuccin-mocha", cfg).Colors[theme.FG]).To(Equal(theme.Color("#123456")))
+		Expect(theme.Load(explicit, cfg).Colors[theme.FG]).To(Equal(theme.Color("#654321")))
+
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(previous) })
+		Expect(theme.Load("missing-theme", cfg).Colors).To(Equal(theme.Default().Colors))
+		Expect(logs.String()).To(ContainSubstring("Theme not found"))
+	})
+
 	It("swaps gain/loss and dimensions for red-up", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		greenUp := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
@@ -96,12 +135,19 @@ palette:
 		Expect(ansi.Strip(theme.FormatChange(styles, 1, 1, "1.00"))).To(ContainSubstring("↑ 1.00"))
 		Expect(ansi.Strip(theme.FormatChange(styles, -1, -1, "1.00"))).To(ContainSubstring("↓ 1.00"))
 		Expect(styles.TextPrice(5, "x")).NotTo(Equal(greenUp.TextPrice(5, "x")))
+		Expect(styles.TextPrice(10, "x")).To(Equal(greenUp.TextPrice(-10, "x")))
+		Expect(styles.TextPrice(-10, "x")).To(Equal(greenUp.TextPrice(10, "x")))
+		custom := theme.Default()
+		custom.Colors[theme.GainDim] = "#112233"
+		customStyles := theme.BuildStyles(custom, theme.LegacyColors{}, "red-up")
+		Expect(customStyles.TextPrice(-10, "x")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#112233")).Render("x")))
 	})
 
 	It("keeps gradient direction and clamps at ten percent", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
 		atOne := styles.TextPrice(1, "x")
+		atFive := styles.TextPrice(5, "x")
 		atTen := styles.TextPrice(10, "x")
 		atTwenty := styles.TextPrice(20, "x")
 		loss := styles.TextPrice(-10, "x")
@@ -112,7 +158,11 @@ palette:
 		muted, _ := colorful.Hex(string(theme.Default().Colors[theme.Muted]))
 		dim := gain.BlendHsv(muted, .5).Hex()
 		one := gain.BlendHsv(muted, .05).Hex()
+		dimColor, err := colorful.Hex(dim)
+		Expect(err).NotTo(HaveOccurred())
+		mid := gain.BlendHsv(dimColor, .5).Hex()
 		Expect(atOne).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(one)).Render("x")))
+		Expect(atFive).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(mid)).Render("x")))
 		Expect(atTen).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
 		Expect(atTwenty).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
 	})
@@ -130,6 +180,20 @@ palette:
 		Expect(zero).To(Equal(styles.TextLight("0.00")))
 		Expect(ansi.Strip(zero)).NotTo(ContainSubstring("↑"))
 		Expect(ansi.Strip(zero)).NotTo(ContainSubstring("↓"))
+		Expect(theme.FormatChange(styles, math.Copysign(0, -1), -5, "0.00")).To(Equal(zero))
+		for _, test := range []struct {
+			amount, percent float64
+			glyph           string
+		}{{1, -2, "↑"}, {-1, 2, "↓"}, {1, math.NaN(), "↑"}, {-1, math.Inf(1), "↓"}} {
+			out := ansi.Strip(theme.FormatChange(styles, test.amount, test.percent, "1.00"))
+			Expect(out).To(HavePrefix(test.glyph + " 1.00"))
+		}
+		for _, amount := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+			out := ansi.Strip(theme.FormatChange(styles, amount, 1, "ignored"))
+			Expect(out).To(Equal("N/A"))
+			Expect(out).NotTo(ContainSubstring("↑"))
+			Expect(out).NotTo(ContainSubstring("↓"))
+		}
 	})
 
 	It("honors legacy overrides and leaves backgrounds off ordinary styles", func() {
@@ -158,24 +222,41 @@ palette:
 		Expect(styles.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#414243")).Render("tag")))
 		Expect(styles.TextLine("line")).NotTo(Equal(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").TextLine("line")))
 	})
+	It("logs invalid and deprecated legacy colors and suppresses the deprecation under NO_COLOR", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(previous) })
+		_ = theme.BuildStyles(theme.Default(), theme.LegacyColors{Text: "green", BackgroundTag: "#123456"}, "")
+		Expect(logs.String()).To(ContainSubstring("Ignoring invalid legacy color"))
+		Expect(logs.String()).To(ContainSubstring("deprecated"))
+		logs.Reset()
+		GinkgoT().Setenv("NO_COLOR", "anything")
+		_ = theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#123456"}, "")
+		Expect(logs.String()).NotTo(ContainSubstring("deprecated"))
+	})
 	It("keeps the legacy tag foreground when its background is overridden", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#000000"}, "")
 		custom := theme.BuildStyles(theme.Default(), theme.LegacyColors{TextTag: "#ffffff", BackgroundTag: "#000000"}, "")
 		Expect(custom.Tag("tag")).NotTo(Equal(defaults.Tag("tag")))
+		Expect(defaults.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#bac2de")).Background(lipgloss.Color("#000000")).Render("tag")))
 	})
 	It("removes all theme colors when NO_COLOR is nonempty", func() {
-		GinkgoT().Setenv("NO_COLOR", "anything")
-		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
-		Expect(styles.Text("plain")).To(Equal("plain"))
-		Expect(styles.Selected.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
-		Expect(styles.Popup.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
-		for _, style := range []lipgloss.Style{styles.Accent, styles.Gain, styles.Loss, styles.Warning, styles.Error} {
-			Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		for _, value := range []string{"1", "true", "anything", "0"} {
+			GinkgoT().Setenv("NO_COLOR", value)
+			styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+			Expect(styles.Text("plain")).To(Equal("plain"))
+			Expect(styles.Selected.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+			Expect(styles.Popup.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+			for _, style := range []lipgloss.Style{styles.Accent, styles.Gain, styles.Loss, styles.Warning, styles.Error} {
+				Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+			}
+			for _, style := range styles.Series {
+				Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+			}
+			Expect(styles.CursorColor()).To(BeNil())
 		}
-		for _, style := range styles.Series {
-			Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
-		}
-		Expect(styles.CursorColor()).To(BeNil())
 	})
 })

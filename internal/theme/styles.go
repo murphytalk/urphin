@@ -58,23 +58,23 @@ func BuildStyles(theme Theme, legacy LegacyColors, priceColors string) Styles {
 		}
 		colors[override.role] = value
 	}
-	if legacy.BackgroundTag != "" {
+	noColor := os.Getenv("NO_COLOR") != ""
+	if legacy.BackgroundTag != "" && !noColor {
 		slog.Warn("app.colors.background-tag is deprecated; use theme roles")
 	}
-	noColor := os.Getenv("NO_COLOR") != ""
 	if priceColors != "" && priceColors != "green-up" && priceColors != "red-up" {
 		slog.Warn("Invalid app.price-colors; using green-up", "value", priceColors)
 		priceColors = "green-up"
-	}
-	if priceColors == "red-up" {
-		colors[Gain], colors[Loss] = colors[Loss], colors[Gain]
-		colors[GainDim], colors[LossDim] = colors[LossDim], colors[GainDim]
 	}
 	if _, ok := colors[GainDim]; !ok {
 		colors[GainDim] = blendToward(colors[Gain], colors[Muted])
 	}
 	if _, ok := colors[LossDim]; !ok {
 		colors[LossDim] = blendToward(colors[Loss], colors[Muted])
+	}
+	if priceColors == "red-up" {
+		colors[Gain], colors[Loss] = colors[Loss], colors[Gain]
+		colors[GainDim], colors[LossDim] = colors[LossDim], colors[GainDim]
 	}
 	colorStyle := func(role Role) lipgloss.Style {
 		if noColor {
