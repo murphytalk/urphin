@@ -20,15 +20,18 @@ type Model struct {
 	native     bool
 	scope      string
 	currencies []CurrencySummary
+	fxPairs    []string
+	fxRates    map[string]float64
 }
 
 type SetSummaryMsg fin.PositionSummary
 
 // NewModel returns a model with default values
-func NewModel(styles theme.Styles) *Model {
+func NewModel(styles theme.Styles, fxPairs []string) *Model {
 	return &Model{
-		width:  80,
-		styles: styles,
+		width:   80,
+		styles:  styles,
+		fxPairs: fxPairs,
 	}
 }
 

@@ -576,3 +576,38 @@ func TestLastPricesFromQuotesErrorsWhenRequestedQuoteIsMissing(t *testing.T) {
 		t.Errorf("lastPricesFromQuotes() = %v, want nil prices on error", got)
 	}
 }
+
+func TestFXSubscriptionDeliversCurrencyRateQuotes(t *testing.T) {
+	service := NewMktData()
+	if err := service.Start(MktDataConfig{
+		RandomMktData: true, CachePath: t.TempDir(), TargetCurrency: "USD",
+		FxPairs: []string{"EURUSD", "USDJPY"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := service.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	updates := make(chan c.AssetQuote, 10)
+	if err := service.Subscribe("fx-header", []string{"EURUSD", "USDJPY"}, updates); err != nil {
+		t.Fatal(err)
+	}
+	waiting := map[string]bool{"EURUSD": true, "USDJPY": true}
+	timeout := time.NewTimer(2 * time.Second)
+	defer timeout.Stop()
+	for len(waiting) > 0 {
+		select {
+		case quote := <-updates:
+			if quote.Class != c.AssetClassFx || quote.QuoteSource != c.QuoteSourceYahoo ||
+				quote.Currency.FromCurrencyCode+quote.Currency.ToCurrencyCode != quote.Symbol ||
+				quote.Currency.Rate <= 0 || quote.Currency.Rate != quote.QuotePrice.Price {
+				t.Fatalf("invalid FX quote: %+v", quote)
+			}
+			delete(waiting, quote.Symbol)
+		case <-timeout.C:
+			t.Fatalf("missing FX quotes: %v", waiting)
+		}
+	}
+}

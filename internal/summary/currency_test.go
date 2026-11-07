@@ -40,11 +40,43 @@ func currencyFixture() s.CurrencySummary {
 }
 
 func currencyModel(width int, colored bool, summaries ...s.CurrencySummary) *s.Model {
-	m := s.NewModel(currencyStyles(colored))
+	m := s.NewModel(currencyStyles(colored), nil)
 	m.Update(tea.WindowSizeMsg{Width: width})
 	m.Update(s.SetCurrencySummariesMsg{Scope: "All portfolio", Summaries: summaries})
 	return m
 }
+
+var _ = Describe("FX summary header", func() {
+	It("left-aligns scope and right-aligns configured pairs", func() {
+		const width = 80
+		left := "Summary: Watchlist: Core"
+		right := "FX: EURUSD N/A • USDJPY N/A"
+		m := s.NewModel(currencyStyles(false), []string{"EURUSD", "USDJPY"})
+		m.Update(tea.WindowSizeMsg{Width: width})
+		m.Update(s.SetCurrencySummariesMsg{Scope: "Watchlist: Core"})
+		line := ansi.Strip(strings.Split(m.View(), "\n")[0])
+		want := left + strings.Repeat(" ", width-ansi.StringWidth(left)-ansi.StringWidth(right)) + right
+		Expect(line).To(Equal(want))
+	})
+})
+
+var _ = Describe("FX summary rates", func() {
+	It("renders copied FX rates and fits narrow headings", func() {
+		m := s.NewModel(currencyStyles(false), []string{"EURUSD", "USDJPY"})
+		rates := map[string]float64{"EURUSD": 1.0856, "USDJPY": 160}
+		m.Update(s.SetCurrencySummariesMsg{Scope: "Main", FXRates: rates})
+		rates["EURUSD"] = 999
+		m.Update(tea.WindowSizeMsg{Width: 60})
+		line := strings.Split(ansi.Strip(m.View()), "\n")[0]
+		Expect(line).To(HaveSuffix("EURUSD 1.0856 • USDJPY 160.00"))
+		Expect(ansi.StringWidth(line)).To(Equal(60))
+		for width := 1; width < 60; width++ {
+			m.Update(tea.WindowSizeMsg{Width: width})
+			line := strings.Split(ansi.Strip(m.View()), "\n")[0]
+			Expect(ansi.StringWidth(line)).To(BeNumerically("<=", width))
+		}
+	})
+})
 
 var _ = Describe("currency change direction", func() {
 	It("renders zero changes in muted without direction arrows", func() {
@@ -265,7 +297,7 @@ func TestCurrencySummaryColorFollowsAmountNotPercentage(t *testing.T) {
 			input.DayChange = c.PositionChange{Amount: test.amount, Percent: test.percent}
 			input.VWAPChange, input.AvgCostChange = input.DayChange, input.DayChange
 			styles := currencyStyles(true)
-			m := s.NewModel(styles)
+			m := s.NewModel(styles, nil)
 			m.Update(tea.WindowSizeMsg{Width: 140})
 			m.Update(s.SetCurrencySummariesMsg{Scope: "All portfolio", Summaries: []s.CurrencySummary{input}})
 			view := m.View()
@@ -323,7 +355,7 @@ func TestCurrencySummaryANSIAndUTF8SafeAtEveryWidth(t *testing.T) {
 	styles.TextLabel = resolved.TextLabel
 	for width := -1; width <= 140; width++ {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			m := s.NewModel(styles)
+			m := s.NewModel(styles, nil)
 			m.Update(tea.WindowSizeMsg{Width: width})
 			m.Update(s.SetCurrencySummariesMsg{Scope: "日本💶e\u0301\nportfolio", Summaries: []s.CurrencySummary{input}})
 			view := m.View()
@@ -364,7 +396,7 @@ func TestCurrencySummaryEmptyUnknownAndLegacySwitch(t *testing.T) {
 	}
 	legacy := s.SetSummaryMsg(fin.PositionSummary{Value: 100, Cost: 90, TotalChange: c.PositionChange{Amount: 10, Percent: 11}})
 	m.Update(legacy)
-	want := s.NewModel(currencyStyles(false))
+	want := s.NewModel(currencyStyles(false), nil)
 	want.Update(tea.WindowSizeMsg{Width: 120})
 	want.Update(legacy)
 	if m.View() != want.View() || m.Height() != 2 {

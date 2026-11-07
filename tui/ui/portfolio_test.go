@@ -413,3 +413,36 @@ func TestPortfolioNonfiniteBackendCostsMustMarkProfitUnavailable(t *testing.T) {
 		}
 	}
 }
+
+func TestPortfolioSummaryHeaderReceivesFXRates(t *testing.T) {
+	app := uiTestApp(&uiTestBackend{})
+	app.Cfg = &c.Config{App: c.AppCfg{FxPairs: []string{" eurusd ", "USDJPY", "EURGBP", "bad", "EURUSD"}}}
+	m, err := NewModel(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
+	if got := m.subscriptionSymbols(); !slices.Equal(got, []string{"EURUSD", "USDJPY"}) {
+		t.Fatalf("FX subscriptions = %v", got)
+	}
+	check := func(want string) {
+		t.Helper()
+		heading := strings.Split(ansi.Strip(m.summary.View()), "\n")[0]
+		if !strings.HasSuffix(heading, want) || ansi.StringWidth(heading) != 100 {
+			t.Fatalf("heading = %q, want right-aligned %q", heading, want)
+		}
+	}
+	check("EURUSD N/A • USDJPY N/A")
+	uiTestUpdate(t, m, QuoteBatchMsg{
+		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.0856}},
+		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "JPY", ToCurrencyCode: "USD", Rate: 0.00625}},
+	})
+	check("EURUSD 1.0856 • USDJPY 160.00")
+	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
+	check("EURUSD 1.0856 • USDJPY 160.00")
+	uiTestUpdate(t, m, QuoteBatchMsg{
+		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD"}, QuotePrice: c.QuotePrice{Price: 1.09}},
+		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: math.NaN()}},
+	})
+	check("EURUSD 1.0900 • USDJPY N/A")
+}

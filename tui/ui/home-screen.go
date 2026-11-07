@@ -99,7 +99,7 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
 		follow:   true,
-		viewport: viewport.New(), summary: summary.NewModel(app.Styles),
+		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
 			ExtraInfoExchange: app.Settings.ExtraInfoExchange, ExtraInfoFundamentals: app.Settings.ExtraInfoFundamentals,

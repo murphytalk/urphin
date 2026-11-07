@@ -2,6 +2,7 @@ package summary
 
 import (
 	"cmp"
+	"maps"
 	"slices"
 	"strings"
 
@@ -27,6 +28,7 @@ type CurrencySummary struct {
 type SetCurrencySummariesMsg struct {
 	Scope     string
 	Summaries []CurrencySummary
+	FXRates   map[string]float64
 }
 
 func (m *Model) setCurrencies(msg SetCurrencySummariesMsg) {
@@ -34,6 +36,7 @@ func (m *Model) setCurrencies(msg SetCurrencySummariesMsg) {
 	m.native = true
 	m.scope = msg.Scope
 	m.currencies = slices.Clone(msg.Summaries)
+	m.fxRates = maps.Clone(msg.FXRates)
 	slices.SortStableFunc(m.currencies, func(a, b CurrencySummary) int {
 		return cmp.Compare(a.Currency, b.Currency)
 	})
@@ -61,7 +64,22 @@ func (m *Model) currencyView() string {
 	if scope == "" {
 		scope = "Portfolio"
 	}
-	lines := []string{ansi.Truncate(m.styles.TextBold("Summary: "+scope), m.width, "")}
+	heading := ansi.Truncate(m.styles.TextBold("Summary: "+scope), m.width, "")
+	if len(m.fxPairs) > 0 {
+		pairTexts := make([]string, 0, len(m.fxPairs))
+		for _, pair := range m.fxPairs {
+			rate := "N/A"
+			if value := m.fxRates[pair]; value > 0 {
+				rate = u.ConvertFloatToString(value, true)
+			}
+			pairTexts = append(pairTexts, pair+" "+rate)
+		}
+		pairs := m.styles.TextLabel("FX: ") + m.styles.TextLight(strings.Join(pairTexts, " • "))
+		pairs = ansi.Truncate(pairs, m.width, "…")
+		heading = ansi.Truncate(heading, max(0, m.width-ansi.StringWidth(pairs)-1), "…")
+		heading += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(heading)-ansi.StringWidth(pairs))) + pairs
+	}
+	lines := []string{heading}
 	for _, currency := range m.currencies {
 		lines = append(lines, m.currencyLines(currency)...)
 	}

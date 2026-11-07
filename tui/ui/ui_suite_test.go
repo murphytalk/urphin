@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	databackend "github.com/murphytalk/urphin/data/backend"
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -30,6 +31,17 @@ var _ = Describe("home screen theme roles", func() {
 		heading := styles.Accent.Render("WL: Main") + styles.TextLight(" · Sort: user")
 		Expect(view).To(ContainSubstring(heading))
 		Expect(view).To(ContainSubstring(model.footer()))
+	})
+
+	It("shows configured FX pairs at the right of the summary header", func() {
+		app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
+		app.Cfg = &c.Config{App: c.AppCfg{FxPairs: []string{"EURUSD", "USDJPY"}}}
+		model, err := NewModel(app)
+		Expect(err).NotTo(HaveOccurred())
+		model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
+		line := strings.Split(model.View().Content, "\n")[0]
+		Expect(line).To(HavePrefix("Summary: Watchlist: Main"))
+		Expect(line).To(HaveSuffix("FX: EURUSD N/A • USDJPY N/A"))
 	})
 
 	It("keeps the home view transparent and honors NO_COLOR", func() {

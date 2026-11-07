@@ -32,7 +32,7 @@ var _ = Describe("Summary", func() {
 
 	When("the change is positive", func() {
 		It("should render a summary with up arrow", func() {
-			m := NewModel(stylesFixture)
+			m := NewModel(stylesFixture, nil)
 			m, _ = m.Update(tea.WindowSizeMsg{Width: 120})
 			m, _ = m.Update(SetSummaryMsg(fin.PositionSummary{
 				Value: 10000,
@@ -55,7 +55,7 @@ var _ = Describe("Summary", func() {
 
 	When("the change is negative", func() {
 		It("should render a summary with down arrow", func() {
-			m := NewModel(stylesFixture)
+			m := NewModel(stylesFixture, nil)
 			m, _ = m.Update(tea.WindowSizeMsg{Width: 120})
 			m, _ = m.Update(SetSummaryMsg(fin.PositionSummary{
 				Value: 1000,
@@ -78,7 +78,7 @@ var _ = Describe("Summary", func() {
 
 	When("no quotes are set", func() {
 		It("should render an empty summary", func() {
-			m := NewModel(stylesFixture)
+			m := NewModel(stylesFixture, nil)
 			Expect(removeFormatting(m.View())).To(Equal(strings.Join([]string{
 				"Day Change: 0.00 (0.00%) • Change: 0.00 (0.00%)  • Value: 0.00  • Cost: 0.00 ",
 				"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -88,7 +88,7 @@ var _ = Describe("Summary", func() {
 
 	When("the window width is less than the minimum", func() {
 		It("should render an empty summary", func() {
-			m := NewModel(stylesFixture)
+			m := NewModel(stylesFixture, nil)
 			m, _ = m.Update(tea.WindowSizeMsg{Width: 10})
 			Expect(m.View()).To(Equal(""))
 		})
