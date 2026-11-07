@@ -60,6 +60,18 @@ var _ = Describe("theme loading and styles", func() {
 		Expect(ansi.Strip(theme.FormatChange(styles, -1, -1, "1.00"))).To(ContainSubstring("↓ 1.00"))
 	})
 
+	It("keeps gradient direction and clamps at ten percent", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
+		atOne := styles.TextPrice(1, "x")
+		atTen := styles.TextPrice(10, "x")
+		atTwenty := styles.TextPrice(20, "x")
+		loss := styles.TextPrice(-10, "x")
+		Expect(atOne).NotTo(Equal(atTen))
+		Expect(atTen).To(Equal(atTwenty))
+		Expect(loss).NotTo(Equal(atTen))
+	})
+
 	It("adds direction glyphs and renders zero in muted without an arrow", func() {
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
 		for _, test := range []struct {
@@ -78,7 +90,13 @@ var _ = Describe("theme loading and styles", func() {
 		Expect(styles.Text("x")).To(ContainSubstring("x"))
 		Expect(styles.Selected.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		Expect(styles.Popup.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
-		Expect(styles.Selected.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
-		Expect(styles.Popup.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
+	})
+	It("removes all theme colors when NO_COLOR is nonempty", func() {
+		GinkgoT().Setenv("NO_COLOR", "anything")
+		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+		Expect(styles.Text("plain")).To(Equal("plain"))
+		Expect(styles.Selected.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		Expect(styles.Popup.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		Expect(styles.CursorColor()).To(BeNil())
 	})
 })

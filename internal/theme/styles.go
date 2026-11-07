@@ -29,6 +29,8 @@ type Styles struct {
 	Selected, Popup                                lipgloss.Style
 	Series                                         [6]lipgloss.Style
 	cursorColor                                    color.Color
+	TextColor, MutedColor, FaintColor              color.Color
+	AccentColor, ErrorColor                        color.Color
 	gain, loss, gainDim, lossDim                   Color
 	textColor                                      Color
 	noColor                                        bool
@@ -87,6 +89,12 @@ func BuildStyles(theme Theme, legacy LegacyColors, priceColors string) Styles {
 		Warning: colorStyle(Warning), Error: colorStyle(Error), Tag: render(colorStyle(Muted)),
 		Selected: lipgloss.NewStyle(), Popup: lipgloss.NewStyle(),
 		gain: colors[Gain], loss: colors[Loss], gainDim: colors[GainDim], lossDim: colors[LossDim], textColor: colors[FG], noColor: noColor,
+	}
+	if noColor {
+		s.TextColor, s.MutedColor, s.FaintColor, s.AccentColor, s.ErrorColor = lipgloss.NoColor{}, lipgloss.NoColor{}, lipgloss.NoColor{}, lipgloss.NoColor{}, lipgloss.NoColor{}
+	} else {
+		s.TextColor, s.MutedColor, s.FaintColor = lipgloss.Color(colors[FG].lipglossValue()), lipgloss.Color(colors[Muted].lipglossValue()), lipgloss.Color(colors[Faint].lipglossValue())
+		s.AccentColor, s.ErrorColor = lipgloss.Color(colors[Accent].lipglossValue()), lipgloss.Color(colors[Error].lipglossValue())
 	}
 	if !noColor {
 		s.Selected = lipgloss.NewStyle().Background(lipgloss.Color(colors[SelectionBG].lipglossValue()))

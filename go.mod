@@ -16,7 +16,6 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/muesli/reflow v0.2.1-0.20201126184510-3bcb929042f2
-	github.com/muesli/termenv v0.16.0
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/rivo/uniseg v0.4.7
