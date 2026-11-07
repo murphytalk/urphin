@@ -318,16 +318,23 @@ func importBase16Theme(source, themesDir string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = file.Write(output); err != nil {
-		file.Close()
-		os.Remove(path)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		os.Remove(path)
+	if err := writeThemeFile(path, file, output); err != nil {
 		return err
 	}
 	fmt.Println(path)
+	return nil
+}
+
+func writeThemeFile(path string, file io.WriteCloser, output []byte) error {
+	if _, err := file.Write(output); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
 	return nil
 }
 

@@ -61,6 +61,17 @@ func base16TestYAML() string {
 		"base0C: 'cccccc'\nbase0D: 'dddddd'\nbase0E: 'eeeeee'\nbase0F: 'ffffff'\n"
 }
 
+type failedThemeFile struct {
+	writeErr, closeErr error
+	closed             bool
+}
+
+func (f *failedThemeFile) Write([]byte) (int, error) { return 0, f.writeErr }
+func (f *failedThemeFile) Close() error {
+	f.closed = true
+	return f.closeErr
+}
+
 var _ = Describe("theme import command", func() {
 	It("writes a validated Base16 theme without overwriting an existing file", func() {
 		dir := GinkgoT().TempDir()
@@ -147,5 +158,23 @@ var _ = Describe("theme utility flags", func() {
 		contents, err := os.ReadFile(target)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(string(contents)).To(Equal("keep"))
+	})
+
+	It("removes incomplete output after write or close errors", func() {
+		for _, test := range []struct {
+			name               string
+			writeErr, closeErr error
+		}{
+			{"write", os.ErrInvalid, nil},
+			{"close", nil, os.ErrInvalid},
+		} {
+			path := filepath.Join(GinkgoT().TempDir(), test.name+".yaml")
+			Expect(os.WriteFile(path, []byte("incomplete"), 0o600)).To(Succeed())
+			file := &failedThemeFile{writeErr: test.writeErr, closeErr: test.closeErr}
+			Expect(writeThemeFile(path, file, []byte("theme"))).To(MatchError(os.ErrInvalid))
+			Expect(file.closed).To(BeTrue())
+			_, err := os.Stat(path)
+			Expect(os.IsNotExist(err)).To(BeTrue())
+		}
 	})
 })
