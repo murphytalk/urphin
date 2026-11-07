@@ -167,12 +167,14 @@ func (m *Model) updateSummary() {
 		s.DayChange.Percent = percentage(s.DayChange.Amount, previous[currency])
 		currencies = append(currencies, *s)
 	}
-	fxRates := make(map[string]float64, len(m.fxPairs))
+	fxRates := make(map[string]c.QuotePrice, len(m.fxPairs))
 	for _, pair := range m.fxPairs {
 		from, to, ok := c.ParseCurrencyPair(pair)
 		if ok {
 			if rate, available := m.fxRate(from, to); available {
-				fxRates[pair] = rate
+				quote := m.quotes[pair].QuotePrice
+				quote.Price = rate
+				fxRates[pair] = quote
 			}
 		}
 	}

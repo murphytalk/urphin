@@ -15,7 +15,8 @@ const (
 	// cacheKeyCurrencyRate namespaces a single from -> to currency rate so
 	// overlapping currencies are shared across instances regardless of the full
 	// set requested.
-	cacheKeyCurrencyRate = "yahoo:currency-rate:"
+	// v2 refetches old entries that lack previous close.
+	cacheKeyCurrencyRate = "yahoo:currency-rate:v2:"
 	// ttlCurrencyRates is kept short since exchange rates drift continuously.
 	ttlCurrencyRates = time.Hour
 )

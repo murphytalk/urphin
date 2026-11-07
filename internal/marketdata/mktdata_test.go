@@ -1,6 +1,7 @@
 package mktdata
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -11,6 +12,31 @@ import (
 
 	c "github.com/murphytalk/urphin/internal"
 )
+
+func TestFXQuotesInvertPreviousCloseWithRate(t *testing.T) {
+	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
+	service.fxQuotes = make(map[string]c.AssetQuote)
+	updates := make(chan c.AssetQuote, 2)
+	subscribeQuotes(t, service, "fx", updates, "EURUSD", "USDJPY")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rates := make(chan c.CurrencyRates, 1)
+	rates <- c.CurrencyRates{
+		"EUR": {FromCurrency: "EUR", ToCurrency: "USD", Rate: 1.1, PricePrevClose: 1},
+		"JPY": {FromCurrency: "JPY", ToCurrency: "USD", Rate: 0.005, PricePrevClose: 0.004},
+	}
+	go service.consumeCurrencyRateUpdates(ctx, rates, []string{"EURUSD", "USDJPY"})
+	for _, want := range []c.QuotePrice{{Price: 1.1, PricePrevClose: 1}, {Price: 200, PricePrevClose: 250}} {
+		select {
+		case quote := <-updates:
+			if quote.QuotePrice != want {
+				t.Fatalf("FX quote = %+v, want %+v", quote.QuotePrice, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("missing FX quote")
+		}
+	}
+}
 
 func TestYahooAPIConfigUsesFinanceSessionRootAndConsentHost(t *testing.T) {
 	config := yahooAPIConfig(nil, true)

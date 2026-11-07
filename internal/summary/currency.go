@@ -3,6 +3,7 @@ package summary
 import (
 	"cmp"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 
@@ -28,7 +29,7 @@ type CurrencySummary struct {
 type SetCurrencySummariesMsg struct {
 	Scope     string
 	Summaries []CurrencySummary
-	FXRates   map[string]float64
+	FXRates   map[string]c.QuotePrice
 }
 
 func (m *Model) setCurrencies(msg SetCurrencySummariesMsg) {
@@ -68,13 +69,9 @@ func (m *Model) currencyView() string {
 	if len(m.fxPairs) > 0 {
 		pairTexts := make([]string, 0, len(m.fxPairs))
 		for _, pair := range m.fxPairs {
-			rate := "N/A"
-			if value := m.fxRates[pair]; value > 0 {
-				rate = u.ConvertFloatToString(value, true)
-			}
-			pairTexts = append(pairTexts, pair+" "+rate)
+			pairTexts = append(pairTexts, m.styles.TextBold(pair)+" "+m.fxRateText(m.fxRates[pair]))
 		}
-		pairs := m.styles.TextLabel("FX: ") + m.styles.TextLight(strings.Join(pairTexts, " • "))
+		pairs := m.styles.TextLabel("FX: ") + strings.Join(pairTexts, m.styles.TextLabel(" • "))
 		pairs = ansi.Truncate(pairs, m.width, "…")
 		heading = ansi.Truncate(heading, max(0, m.width-ansi.StringWidth(pairs)-1), "…")
 		heading += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(heading)-ansi.StringWidth(pairs))) + pairs
@@ -89,6 +86,19 @@ func (m *Model) currencyView() string {
 
 type currencyLineParts struct {
 	prefix, amount, changePrefix, change string
+}
+
+func (m *Model) fxRateText(quote c.QuotePrice) string {
+	if quote.Price <= 0 || math.IsNaN(quote.Price) || math.IsInf(quote.Price, 0) {
+		return m.styles.TextLabel("N/A")
+	}
+	text := u.ConvertFloatToString(quote.Price, true)
+	change := quote.Price - quote.PricePrevClose
+	percent := change / quote.PricePrevClose * 100
+	if quote.PricePrevClose <= 0 || math.IsNaN(percent) || math.IsInf(percent, 0) {
+		return m.styles.TextLight(text + " (N/A)")
+	}
+	return theme.FormatChange(m.styles, change, percent, text+" ("+changePercentText(percent)+"%)")
 }
 
 func (m *Model) currencyLines(s CurrencySummary) []string {
@@ -210,15 +220,7 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 	text := u.ConvertFloatToStringWithThousandsSeparator(change.Amount, false)
 	if percent {
 		if validBasis {
-			percentText := u.ConvertFloatToString(change.Percent, false)
-			if change.Percent > -10 && change.Percent < 10 {
-				if strings.HasPrefix(percentText, "-") {
-					percentText = "-0" + percentText[1:]
-				} else {
-					percentText = "0" + percentText
-				}
-			}
-			text += " (" + percentText + "%)"
+			text += " (" + changePercentText(change.Percent) + "%)"
 		} else {
 			text += " (N/A)"
 		}
@@ -228,4 +230,15 @@ func (m *Model) currencyChange(change c.PositionChange, unavailable, validBasis,
 
 func singleLine(text string) string {
 	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(text)
+}
+
+func changePercentText(percent float64) string {
+	text := u.ConvertFloatToString(percent, false)
+	if percent > -10 && percent < 10 {
+		if strings.HasPrefix(text, "-") {
+			return "-0" + text[1:]
+		}
+		return "0" + text
+	}
+	return text
 }

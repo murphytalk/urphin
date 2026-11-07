@@ -437,12 +437,17 @@ func TestPortfolioSummaryHeaderReceivesFXRates(t *testing.T) {
 		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.0856}},
 		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "JPY", ToCurrencyCode: "USD", Rate: 0.00625}},
 	})
-	check("EURUSD 1.0856 • USDJPY 160.00")
+	check("EURUSD 1.0856 (N/A) • USDJPY 160.00 (N/A)")
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
-	check("EURUSD 1.0856 • USDJPY 160.00")
+	check("EURUSD 1.0856 (N/A) • USDJPY 160.00 (N/A)")
 	uiTestUpdate(t, m, QuoteBatchMsg{
 		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD"}, QuotePrice: c.QuotePrice{Price: 1.09}},
 		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: math.NaN()}},
 	})
-	check("EURUSD 1.0900 • USDJPY N/A")
+	check("EURUSD 1.0900 (N/A) • USDJPY N/A")
+	uiTestUpdate(t, m, QuoteBatchMsg{
+		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.1}, QuotePrice: c.QuotePrice{Price: 1.1, PricePrevClose: 1}},
+		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: 160}, QuotePrice: c.QuotePrice{Price: 160, PricePrevClose: 200}},
+	})
+	check("EURUSD ↑ 1.1000 (10.00%) • USDJPY ↓ 160.00 (-20.00%)")
 }

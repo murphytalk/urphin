@@ -211,7 +211,7 @@ func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) 
 	}
 
 	// Get quotes for currency pairs
-	result, err := u.getQuotes(currencyPairSymbols, []string{"currency", "regularMarketPrice"})
+	result, err := u.getQuotes(currencyPairSymbols, []string{"currency", "regularMarketPrice", "regularMarketPreviousClose"})
 	if err != nil {
 		return c.CurrencyRates{}, fmt.Errorf("failed to get currency rates: %w", err)
 	}
@@ -224,17 +224,19 @@ func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) 
 	for _, quote := range result.QuoteResponse.Quotes {
 		fromCurrency := strings.TrimSuffix(strings.TrimSuffix(quote.Symbol, "=X"), toCurrency)
 		currencyRates[fromCurrency] = c.CurrencyRate{
-			FromCurrency: fromCurrency,
-			ToCurrency:   toCurrency,
-			Rate:         quote.RegularMarketPrice.Raw,
+			FromCurrency:   fromCurrency,
+			ToCurrency:     toCurrency,
+			Rate:           quote.RegularMarketPrice.Raw,
+			PricePrevClose: quote.RegularMarketPreviousClose.Raw,
 		}
 
 		// If the currency has a minor form (e.g. GBP -> GBp), add a rate for it scaled by its minor unit.
 		if ok, minorCurrencyCode, minorUnit := MinorUnitForCurrencyCode(fromCurrency); ok {
 			currencyRates[minorCurrencyCode] = c.CurrencyRate{
-				FromCurrency: minorCurrencyCode,
-				ToCurrency:   toCurrency,
-				Rate:         quote.RegularMarketPrice.Raw * math.Pow(10, -minorUnit),
+				FromCurrency:   minorCurrencyCode,
+				ToCurrency:     toCurrency,
+				Rate:           quote.RegularMarketPrice.Raw * math.Pow(10, -minorUnit),
+				PricePrevClose: quote.RegularMarketPreviousClose.Raw * math.Pow(10, -minorUnit),
 			}
 		}
 	}

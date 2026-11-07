@@ -2,6 +2,7 @@ package summary_test
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,6 +19,41 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
+
+func TestFXHeaderUsesTickerStyleAndDayChangeTheme(t *testing.T) {
+	styles := currencyStyles(true)
+	styles.TextBold = func(text string) string { return "<ticker>" + text + "</ticker>" }
+	for _, test := range []struct {
+		name         string
+		price, close float64
+		text         string
+	}{
+		{"gain", 1.02, 1, "1.0200 (02.00%)"},
+		{"loss", 0.98, 1, "0.9800 (-02.00%)"},
+		{"flat", 1, 1, "1.0000 (00.00%)"},
+		{"missing close", 1, 0, "1.0000 (N/A)"},
+		{"invalid close", 1, math.NaN(), "1.0000 (N/A)"},
+		{"missing rate", 0, 1, "N/A"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := s.NewModel(styles, []string{"EURUSD"})
+			m.Update(tea.WindowSizeMsg{Width: 140})
+			m.Update(s.SetCurrencySummariesMsg{FXRates: map[string]c.QuotePrice{
+				"EURUSD": {Price: test.price, PricePrevClose: test.close},
+			}})
+			want := styles.TextLight(test.text)
+			if test.price == 0 {
+				want = styles.TextLabel(test.text)
+			} else if test.close > 0 {
+				change := test.price - test.close
+				want = theme.FormatChange(styles, change, change/test.close*100, test.text)
+			}
+			if !strings.Contains(m.View(), styles.TextBold("EURUSD")+" "+want) {
+				t.Fatalf("FX header does not use ticker style and Day Change color: %q", m.View())
+			}
+		})
+	}
+}
 
 func currencyStyles(colored bool) theme.Styles {
 	plain := func(text string) string { return text }
@@ -63,12 +99,12 @@ var _ = Describe("FX summary header", func() {
 var _ = Describe("FX summary rates", func() {
 	It("renders copied FX rates and fits narrow headings", func() {
 		m := s.NewModel(currencyStyles(false), []string{"EURUSD", "USDJPY"})
-		rates := map[string]float64{"EURUSD": 1.0856, "USDJPY": 160}
+		rates := map[string]c.QuotePrice{"EURUSD": {Price: 1.0856}, "USDJPY": {Price: 160}}
 		m.Update(s.SetCurrencySummariesMsg{Scope: "Main", FXRates: rates})
-		rates["EURUSD"] = 999
+		rates["EURUSD"] = c.QuotePrice{Price: 999}
 		m.Update(tea.WindowSizeMsg{Width: 60})
 		line := strings.Split(ansi.Strip(m.View()), "\n")[0]
-		Expect(line).To(HaveSuffix("EURUSD 1.0856 • USDJPY 160.00"))
+		Expect(line).To(HaveSuffix("EURUSD 1.0856 (N/A) • USDJPY 160.00 (N/A)"))
 		Expect(ansi.StringWidth(line)).To(Equal(60))
 		for width := 1; width < 60; width++ {
 			m.Update(tea.WindowSizeMsg{Width: width})

@@ -598,12 +598,19 @@ func (m *mktDataImpl) consumeCurrencyRateUpdates(ctx context.Context, updates <-
 				matched := false
 				for _, rate := range rates {
 					value := rate.Rate
+					previous := rate.PricePrevClose
 					switch {
 					case rate.FromCurrency == from && rate.ToCurrency == to:
 					case rate.FromCurrency == to && rate.ToCurrency == from && rate.Rate > 0:
 						value = 1 / rate.Rate
+						if previous > 0 {
+							previous = 1 / previous
+						}
 					default:
 						continue
+					}
+					if previous <= 0 || math.IsNaN(previous) || math.IsInf(previous, 0) {
+						previous = 0
 					}
 					if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 						continue
@@ -611,7 +618,7 @@ func (m *mktDataImpl) consumeCurrencyRateUpdates(ctx context.Context, updates <-
 					quote := c.AssetQuote{
 						Symbol: from + to, Class: c.AssetClassFx,
 						Currency:   c.Currency{FromCurrencyCode: from, ToCurrencyCode: to, Rate: value},
-						QuotePrice: c.QuotePrice{Price: value}, QuoteSource: c.QuoteSourceYahoo,
+						QuotePrice: c.QuotePrice{Price: value, PricePrevClose: previous}, QuoteSource: c.QuoteSourceYahoo,
 					}
 					m.mu.Lock()
 					m.fxQuotes[quote.Symbol] = quote

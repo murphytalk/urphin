@@ -69,9 +69,10 @@ type Config struct {
 type CurrencyRates map[string]CurrencyRate
 
 type CurrencyRate struct {
-	FromCurrency string
-	ToCurrency   string
-	Rate         float64
+	FromCurrency   string
+	ToCurrency     string
+	Rate           float64
+	PricePrevClose float64
 }
 
 type Currency struct {

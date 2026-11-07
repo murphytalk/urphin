@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	grid "github.com/achannarasappa/term-grid"
+	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/fin"
@@ -21,7 +22,7 @@ type Model struct {
 	scope      string
 	currencies []CurrencySummary
 	fxPairs    []string
-	fxRates    map[string]float64
+	fxRates    map[string]c.QuotePrice
 }
 
 type SetSummaryMsg fin.PositionSummary
