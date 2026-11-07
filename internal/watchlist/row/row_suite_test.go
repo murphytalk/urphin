@@ -31,4 +31,13 @@ var _ = Describe("themed cost changes", func() {
 		got := textPositionExtended(asset, rowStyles(true))
 		Expect(ansi.Strip(strings.Split(got, "\n")[0])).To(Equal("90.00"))
 	})
+
+	It("renders a zero position change without a direction glyph", func() {
+		asset := rowAsset()
+		asset.Position.TotalChange.Amount = 0
+		got := ansi.Strip(textPosition(asset, rowStyles(true)))
+		Expect(got).To(ContainSubstring("0.00 (11.11%)"))
+		Expect(got).NotTo(ContainSubstring("↑"))
+		Expect(got).NotTo(ContainSubstring("↓"))
+	})
 })

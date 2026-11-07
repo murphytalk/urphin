@@ -26,6 +26,10 @@ var _ = Describe("theme loading and styles", func() {
 		parsed, err := theme.Parse([]byte("name: short\nfg: '#AbC'\n"), "short.yaml")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("#abc")))
+		parsed, err = theme.Parse([]byte("name: long\nfg: '#AbCdEf'\ngain_dim: '#ABCDEF'\n"), "long.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(parsed.Colors[theme.FG]).To(Equal(theme.Color("#abcdef")))
+		Expect(parsed.Colors[theme.GainDim]).To(Equal(theme.Color("#abcdef")))
 		_, err = theme.Parse([]byte("name: bad\nfg: '#12xz'\n"), "bad.yaml")
 		Expect(err).To(MatchError(ContainSubstring("bad.yaml: role fg")))
 	})
@@ -39,7 +43,7 @@ var _ = Describe("theme loading and styles", func() {
 		for _, input := range []string{
 			"name: bad\nfg: 16\n", "name: bad\nfg: -1\n", "name: bad\nfg: 1.5\n",
 			"name: bad\nfg: true\n", "name: bad\nfg: null\n", "name: bad\nfg: red\n",
-			"name: bad\nunknown: '#123456'\n", "fg: '#ffffff'\n", "name: ''\n",
+			"name: bad\nunknown: '#123456'\n", "fg: '#ffffff'\n", "name: ''\n", "name: 1\n",
 			"name: bad\nfg: '#ffffff'\nfg: '#000000'\n",
 		} {
 			_, err := theme.Parse([]byte(input), "invalid.yaml")
@@ -51,9 +55,12 @@ var _ = Describe("theme loading and styles", func() {
 		Expect(theme.Default().Validate()).To(Succeed())
 		ansiTheme := theme.Load("ansi", "")
 		Expect(ansiTheme.Colors[theme.FG]).To(Equal(theme.Color("ansi:7")))
-		names, err := theme.Names(GinkgoT().TempDir())
+		dir := GinkgoT().TempDir()
+		Expect(os.Mkdir(filepath.Join(dir, "themes"), 0o700)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(dir, "themes", "z-custom.yaml"), nil, 0o600)).To(Succeed())
+		names, err := theme.Names(filepath.Join(dir, "themes"))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(names).To(ContainElements("ansi", "catppuccin-mocha"))
+		Expect(names).To(Equal([]string{"ansi", "catppuccin-mocha", "z-custom"}))
 	})
 
 	It("imports the Base16 role mapping and ignores background", func() {
@@ -84,6 +91,7 @@ palette:
 		Expect(imported.Colors[theme.Error]).To(Equal(theme.Color("#f38ba8")))
 		Expect(imported.Colors["series_6"]).To(Equal(theme.Color("#f2cdcd")))
 		Expect(imported.Colors[theme.SelectionBG]).To(Equal(theme.Color("#313244")))
+		Expect(imported.Colors).NotTo(HaveKey(theme.Role("base00")))
 		Expect(imported.Colors[theme.Border]).To(Equal(theme.Color("#45475a")))
 		Expect(imported.Colors[theme.Gain]).To(Equal(theme.Color("#a6e3a1")))
 		Expect(imported.Colors[theme.Muted]).To(Equal(theme.Color("#585b70")))
@@ -96,15 +104,30 @@ palette:
 		Expect(imported.Colors["series_3"]).To(Equal(theme.Color("#94e2d5")))
 		Expect(imported.Colors["series_4"]).To(Equal(theme.Color("#fab387")))
 		Expect(imported.Colors["series_5"]).To(Equal(theme.Color("#f9e2af")))
+		flat := []byte("scheme: Flat\nbase00: '000000'\nbase01: '111111'\nbase02: '222222'\nbase03: '333333'\nbase04: '444444'\nbase05: '555555'\nbase06: '666666'\nbase07: '777777'\nbase08: '888888'\nbase09: '999999'\nbase0A: 'aaaaaa'\nbase0B: 'bbbbbb'\nbase0C: 'cccccc'\nbase0D: 'dddddd'\nbase0E: 'eeeeee'\nbase0F: 'ffffff'\n")
+		legacy, err := (theme.Base16{}).Import(flat)
+		Expect(err).NotTo(HaveOccurred())
+		serialized, err := theme.Serialize(legacy)
+		Expect(err).NotTo(HaveOccurred())
+		roundTrip, err := theme.Parse(serialized, "round-trip.yaml")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(roundTrip.Colors).To(Equal(legacy.Colors))
+		_, err = (theme.Base16{}).Import([]byte("scheme: incomplete\nbase05: 'ffffff'\n"))
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("fills missing roles from the embedded default", func() {
 		dir := GinkgoT().TempDir()
 		Expect(os.Mkdir(filepath.Join(dir, "themes"), 0o700)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(dir, "themes", "partial.yaml"), []byte("name: partial\nfg: '#123456'\n"), 0o600)).To(Succeed())
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		DeferCleanup(func() { slog.SetDefault(previous) })
 		loaded := theme.Load("partial", filepath.Join(dir, "config.yaml"))
 		Expect(loaded.Colors[theme.FG]).To(Equal(theme.Color("#123456")))
 		Expect(loaded.Colors[theme.Loss]).To(Equal(theme.Default().Colors[theme.Loss]))
+		Expect(logs.String()).To(ContainSubstring("Theme roles missing"))
 	})
 
 	It("prefers local named themes, accepts explicit paths, and falls back with diagnostics", func() {
@@ -117,13 +140,16 @@ palette:
 		cfg := filepath.Join(dir, "urphin.yaml")
 		Expect(theme.Load("catppuccin-mocha", cfg).Colors[theme.FG]).To(Equal(theme.Color("#123456")))
 		Expect(theme.Load(explicit, cfg).Colors[theme.FG]).To(Equal(theme.Color("#654321")))
+		Expect(os.WriteFile(filepath.Join(themesDir, "broken.yaml"), []byte("name: broken\nunknown: '#ffffff'\n"), 0o600)).To(Succeed())
 
 		var logs bytes.Buffer
 		previous := slog.Default()
 		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
 		DeferCleanup(func() { slog.SetDefault(previous) })
 		Expect(theme.Load("missing-theme", cfg).Colors).To(Equal(theme.Default().Colors))
+		Expect(theme.Load("broken", cfg).Colors).To(Equal(theme.Default().Colors))
 		Expect(logs.String()).To(ContainSubstring("Theme not found"))
+		Expect(logs.String()).To(ContainSubstring("Theme invalid"))
 	})
 
 	It("swaps gain/loss and dimensions for red-up", func() {
@@ -184,10 +210,11 @@ palette:
 		for _, test := range []struct {
 			amount, percent float64
 			glyph           string
-		}{{1, -2, "↑"}, {-1, 2, "↓"}, {1, math.NaN(), "↑"}, {-1, math.Inf(1), "↓"}} {
+		}{{1, -2, "↑"}, {-1, 2, "↓"}, {1, 0, "↑"}, {-1, math.NaN(), "↓"}, {1, math.Inf(1), "↑"}} {
 			out := ansi.Strip(theme.FormatChange(styles, test.amount, test.percent, "1.00"))
 			Expect(out).To(HavePrefix(test.glyph + " 1.00"))
 		}
+		Expect(ansi.Strip(theme.FormatChange(styles, 1, 0, "2.00 (N/A)"))).To(Equal("↑ 2.00 (N/A)"))
 		for _, amount := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 			out := ansi.Strip(theme.FormatChange(styles, amount, 1, "ignored"))
 			Expect(out).To(Equal("N/A"))
@@ -235,6 +262,23 @@ palette:
 		GinkgoT().Setenv("NO_COLOR", "anything")
 		_ = theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#123456"}, "")
 		Expect(logs.String()).NotTo(ContainSubstring("deprecated"))
+	})
+	It("falls back to green-up and keeps colors enabled when NO_COLOR is empty or absent", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "unsupported")
+		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
+		Expect(styles.Gain.GetForeground()).To(Equal(defaults.Gain.GetForeground()))
+		Expect(styles.TextColor).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		old, present := os.LookupEnv("NO_COLOR")
+		Expect(os.Unsetenv("NO_COLOR")).To(Succeed())
+		DeferCleanup(func() {
+			if present {
+				_ = os.Setenv("NO_COLOR", old)
+			} else {
+				_ = os.Unsetenv("NO_COLOR")
+			}
+		})
+		Expect(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").TextColor).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 	})
 	It("keeps the legacy tag foreground when its background is overridden", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
