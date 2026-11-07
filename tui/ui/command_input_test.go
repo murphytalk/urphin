@@ -11,6 +11,7 @@ import (
 
 	databackend "github.com/murphytalk/urphin/data/backend"
 	"github.com/murphytalk/urphin/internal/theme"
+	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
@@ -119,5 +120,16 @@ func TestCommandErrorColorsPromptWithActiveTheme(t *testing.T) {
 	want := m.app.Styles.ErrorColor
 	if got := m.commandInput.Styles().Focused.Prompt.GetForeground(); got != want {
 		t.Fatalf("error prompt color = %v, want %v", got, want)
+	}
+}
+
+func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
+	_, err := validateCommand("TX AAPL @")
+	var parseErr *commands.ParseError
+	if !errors.As(err, &parseErr) {
+		t.Fatal("diagnostic must preserve original ParseError")
+	}
+	if !strings.Contains(err.Error(), "Error at character 9:") {
+		t.Fatalf("unexpected diagnostic: %v", err)
 	}
 }

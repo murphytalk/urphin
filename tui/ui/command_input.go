@@ -9,6 +9,14 @@ import (
 	"unicode"
 )
 
+type commandDiagnosticError struct {
+	message string
+	cause   error
+}
+
+func (e *commandDiagnosticError) Error() string { return e.message }
+func (e *commandDiagnosticError) Unwrap() error { return e.cause }
+
 func validateCommand(raw string) (textinput.Validation, error) {
 	if strings.TrimSpace(raw) == "" {
 		return textinput.Validation{}, nil
@@ -41,7 +49,10 @@ func validateCommand(raw string) (textinput.Validation, error) {
 		if len(parseErr.Expected) > 0 {
 			message += " (expected " + strings.Join(parseErr.Expected, ", ") + ")"
 		}
-		return valid, fmt.Errorf("Error at character %d: %s", position+1, message)
+		return valid, &commandDiagnosticError{
+			message: fmt.Sprintf("Error at character %d: %s", position+1, message),
+			cause:   err,
+		}
 	}
 	return textinput.Validation{Status: textinput.StatusValid, Valid: raw}, nil
 }
