@@ -58,7 +58,8 @@ flowchart LR
 | `QuoteBatchMsg` | Update global cache, derive selected assets and scoped totals, schedule the next receive. |
 | `subscriptionMsg` | Report startup completion; log exhausted errors without quitting. |
 | `row.FrameMsg` | Forward to watchlist/rows, refresh viewport, return animation commands; no portfolio or feed update. |
-| `tea.KeyPressMsg` | Navigate, sort, toggle summary scope, scroll or quit. |
+| `tea.KeyPressMsg` | Navigate, sort, toggle summary scope, scroll, edit syntax-check input or quit. |
+| Child input messages | Validate edits and update virtual cursor; parser errors stay UI-owned. |
 
 ## 3. Lifecycle and safe shutdown
 
@@ -115,7 +116,7 @@ Horizontal layout remains component-owned:
 - Base rows are two lines; visible VWAP/Avg Cost/Qty cells can make them three. Exchange tags and separators each add a line. The watchlist renders all rows; the viewport clips and scrolls them. Native summary lines narrow by dropping percentages, shortening labels, then safe truncation.
 - Rows are retained **by symbol**, not screen index, across sorting/replacement. A changed known price can flash its changed suffix via 50 ms `row.FrameMsg` commands. The watchlist dispatches frames and only the matching row ID advances. Missing-to-known quotes do not flash; unchanged-price valuation updates retain pending frames. Quote delivery needs no animation timer to become visible.
 
-The footer is terse, one line, never wraps, and drops trailing help to fit while prioritizing exit (`F10/^C Exit`). All letter keys are reserved for future command input, **including Bubbles viewport defaults**; half-page letter bindings are disabled.
+The footer keeps exit help on the left and a syntax-only command input on the right when width allows. Input is checked live by the command parser; errors appear on one diagnostic row above the footer. EOF errors can show a fully valid typed prefix with an error prompt. Enter does not execute or clear input. The diagnostic row reduces viewport height. Letter keys edit input; half-page viewport letter bindings remain disabled.
 
 | Key | Action |
 |---|---|
@@ -125,7 +126,11 @@ The footer is terse, one line, never wraps, and drops trailing help to fit while
 | F3 | Toggle whole-portfolio / follow-watchlist summary scope. |
 | F10 / Ctrl+C | Cancel session waits and quit. |
 | Up / Down, Page Up / Page Down | Scroll viewport. |
-| Home / End | Jump to top / bottom. |
+| Home / End | Edit command input. |
+| Ctrl+Home / Ctrl+End | Jump watchlist to top / bottom. |
+| Left / Right, editing shortcuts, printable text | Edit syntax-check input. |
+| Enter | Keep input; no command execution in this slice. |
+| Escape | Clear input and diagnostic. |
 
 Sort and scope changes are session-local; they do not persist settings. Rendering settings (`ShowSummary`, `ShowPositions`, exchange/fundamental extras, separators, styles) are honored. FX rates arrive through `QuoteBatchMsg` and refresh base values in the summary; pair symbols do not render as watchlist rows.
 

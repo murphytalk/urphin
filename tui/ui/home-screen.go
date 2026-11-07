@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
@@ -19,6 +20,7 @@ import (
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/setup"
+	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
 // Model owns portfolio state; only the UI event loop mutates it.
@@ -40,6 +42,8 @@ type Model struct {
 	watchlist     *watchlist.Model
 	summary       *summary.Model
 	session       *quoteSession
+	commandInput  textinput.Model
+	commandErr    error
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -123,6 +127,18 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 	m.viewport.KeyMap.HalfPageUp.SetEnabled(false)
 	m.viewport.KeyMap.HalfPageDown.SetEnabled(false)
 	m.viewport.FillHeight = true
+	m.commandInput = textinput.New()
+	m.commandInput.SetStyles(textinput.DefaultStyles(app.Styles))
+	m.commandInput.Placeholder = "Syntax check"
+	m.commandInput.AutoCase = false
+	m.commandInput.KeyMap.AcceptSuggestion.SetEnabled(false)
+	m.commandInput.KeyMap.NextSuggestion.SetEnabled(false)
+	m.commandInput.KeyMap.PrevSuggestion.SetEnabled(false)
+	m.commandInput.SetValidator(func(raw string) textinput.Validation {
+		v, err := validateCommand(raw)
+		m.commandErr = err
+		return v
+	})
 	m.setWatchlist()
 	m.updateSummary()
 	return m, nil
@@ -145,10 +161,11 @@ func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
 
 // Init starts the quote receiver and startup subscription producer concurrently.
 func (m *Model) Init() tea.Cmd {
+	cursor := m.commandInput.Focus()
 	if m.session == nil || len(m.session.symbols) == 0 {
-		return nil
+		return cursor
 	}
-	return tea.Batch(m.session.receive(), m.session.subscribe())
+	return tea.Batch(cursor, m.session.receive(), m.session.subscribe())
 }
 
 // Update consumes terminal events and quote-receiver batches; child renderers receive derived state.
@@ -158,7 +175,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height, m.ready = max(0, msg.Width), max(0, msg.Height), true
 		m.watchlist, _ = m.watchlist.Update(msg)
 		m.summary, _ = m.summary.Update(msg)
+		wasVisible := m.commandVisible()
 		m.resize()
+		if wasVisible != m.commandVisible() {
+			if m.commandVisible() {
+				return m, m.commandInput.Focus()
+			}
+			m.commandInput.Blur()
+		}
 	case QuoteBatchMsg:
 		visible := make(map[string]struct{})
 		for _, symbol := range m.visibleSymbols() {
@@ -239,7 +263,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.watchlist, cmd = m.watchlist.Update(watchlist.ChangeSortMsg(m.currentSort))
 			m.refreshContent()
 			return m, cmd
+		case "enter":
+			return m, nil
+		case "esc":
+			m.commandInput.Reset()
+			m.commandInput.Err = nil
+			m.commandErr = nil
+			m.resize()
+			return m, nil
+		case "up", "down", "pgup", "pgdown", "ctrl+home", "ctrl+end":
+			if msg.Keystroke() == "ctrl+home" {
+				m.viewport.GotoTop()
+			} else if msg.Keystroke() == "ctrl+end" {
+				m.viewport.GotoBottom()
+			} else {
+				var cmd tea.Cmd
+				m.viewport, cmd = m.viewport.Update(msg)
+				return m, cmd
+			}
+			return m, nil
 		default:
+			if m.commandVisible() {
+				oldErr := m.displayedCommandError() != nil
+				var cmd tea.Cmd
+				m.commandInput, cmd = m.commandInput.Update(msg)
+				if oldErr != (m.displayedCommandError() != nil) {
+					m.resize()
+				}
+				return m, cmd
+			}
 			if msg.Key().Code == tea.KeyHome {
 				m.viewport.GotoTop()
 			} else if msg.Key().Code == tea.KeyEnd {
@@ -250,6 +302,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+	}
+	if _, isKey := msg.(tea.KeyPressMsg); !isKey && m.commandVisible() {
+		oldErr := m.displayedCommandError() != nil
+		var cmd tea.Cmd
+		m.commandInput, cmd = m.commandInput.Update(msg)
+		if oldErr != (m.displayedCommandError() != nil) {
+			m.resize()
+		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -307,7 +368,7 @@ func (m *Model) resize() {
 		header = m.summary.Height()
 	}
 	m.viewport.SetWidth(m.width)
-	m.viewport.SetHeight(max(0, m.height-header-2)) // Watchlist heading and footer each own one line.
+	m.viewport.SetHeight(max(0, m.height-header-2-boolInt(m.displayedCommandError() != nil)))
 	m.refreshContent()
 }
 
@@ -333,10 +394,15 @@ func (m *Model) View() tea.View {
 		header = m.summary.Height()
 	}
 	footer := m.footer()
-	if m.width < 80 || m.height < header+4 {
+	diagnostic := m.commandDiagnostic()
+	extra := boolInt(diagnostic != "")
+	if m.width < 80 || m.height < header+4+extra {
 		lines := make([]string, m.height)
 		if m.height > 1 {
 			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4)), m.width, "")
+		}
+		if extra > 0 && m.height > 1 {
+			lines[len(lines)-2] = ansi.Truncate(diagnostic, m.width, "…")
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
@@ -347,7 +413,11 @@ func (m *Model) View() tea.View {
 		lines = append(lines, m.summary.View())
 	}
 	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
-	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View(), footer)
+	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View())
+	if extra > 0 {
+		lines = append(lines, ansi.Truncate(diagnostic, m.width, "…"))
+	}
+	lines = append(lines, footer)
 	view.SetContent(strings.Join(lines, "\n"))
 	return view
 }
@@ -368,5 +438,38 @@ func (m *Model) footer() string {
 	if text == "" {
 		text = ansi.Truncate("F10 Exit", m.width, "")
 	}
+	if m.commandVisible() {
+		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
+		m.commandInput.SetWidth(max(1, region-3))
+		right := m.commandInput.View()
+		leftBudget := max(0, m.width-region-1)
+		text = ansi.Truncate(text, leftBudget, "")
+		return text + strings.Repeat(" ", max(1, m.width-ansi.StringWidth(text)-ansi.StringWidth(right))) + right
+	}
 	return m.app.Styles.TextLight(text)
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func (m *Model) displayedCommandError() error {
+	if m.commandErr != nil {
+		return m.commandErr
+	}
+	return m.commandInput.Err
+}
+
+func (m *Model) commandDiagnostic() string {
+	if err := m.displayedCommandError(); err != nil {
+		return lipgloss.NewStyle().Foreground(m.app.Styles.ErrorColor).Render(err.Error())
+	}
+	return ""
+}
+
+func (m *Model) commandVisible() bool {
+	return m.ready && m.width >= 80 && m.height > 0
 }

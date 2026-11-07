@@ -75,6 +75,7 @@ func uiTestModel(t *testing.T, lists []databackend.Watchlist, positions map[stri
 	if err != nil {
 		t.Fatalf("NewModel: %v", err)
 	}
+	m.Init()
 	return m
 }
 
@@ -189,7 +190,7 @@ func TestNewModelEmptyListsAndEmptyWatchlists(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, tc.lists, nil)
-			if len(m.symbols) != 0 || len(m.visibleSymbols()) != 0 || m.listName() != tc.label || m.Init() != nil {
+			if len(m.symbols) != 0 || len(m.visibleSymbols()) != 0 || m.listName() != tc.label {
 				t.Fatal("empty portfolio state is not inert")
 			}
 			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
@@ -240,13 +241,13 @@ func TestModelInitCommandsRequireSessionAndSymbols(t *testing.T) {
 					t.Cleanup(func() { _ = m.session.Close() })
 				}
 				cmd := m.Init()
-				if (cmd != nil) != (hasSession && hasSymbols) {
+				if cmd == nil {
 					t.Fatalf("Init command present: %t", cmd != nil)
 				}
-				if cmd != nil {
+				if hasSession && hasSymbols {
 					batch, ok := cmd().(tea.BatchMsg)
-					if !ok || len(batch) != 2 || batch[0] == nil || batch[1] == nil {
-						t.Fatal("Init must schedule exactly receiver and startup producer")
+					if !ok || len(batch) != 3 {
+						t.Fatal("Init must start cursor, receiver, and subscription")
 					}
 				}
 				if len(feed.snapshot().subscriptions) != 0 {
@@ -406,7 +407,12 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: tickers}, {Tickers: slices.Clone(tickers)}}, nil)
 			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
 			before := m.viewport.View()
-			uiTestUpdate(t, m, uiTestKey(code))
+			uiTestUpdate(t, m, uiTestKey(code, func() tea.KeyMod {
+				if code == tea.KeyEnd {
+					return tea.ModCtrl
+				}
+				return 0
+			}()))
 			if m.viewport.YOffset() <= 0 || m.viewport.View() == before {
 				t.Fatal("navigation did not scroll the actual rendered watchlist")
 			}
@@ -414,7 +420,7 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 			if !m.viewport.AtTop() || m.viewport.View() != before {
 				t.Fatal("watchlist switching must reset viewport to the top")
 			}
-			uiTestUpdate(t, m, uiTestKey(tea.KeyEnd))
+			uiTestUpdate(t, m, uiTestKey(tea.KeyEnd, tea.ModCtrl))
 			bottom := m.viewport.YOffset()
 			uiTestUpdate(t, m, uiTestKey(tea.KeyUp))
 			if m.viewport.YOffset() >= bottom {
@@ -424,7 +430,7 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 			if m.viewport.YOffset() >= bottom-1 {
 				t.Fatal("page up did not scroll")
 			}
-			uiTestUpdate(t, m, uiTestKey(tea.KeyHome))
+			uiTestUpdate(t, m, uiTestKey(tea.KeyHome, tea.ModCtrl))
 			if !m.viewport.AtTop() {
 				t.Fatal("home did not reset viewport")
 			}
