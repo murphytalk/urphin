@@ -33,6 +33,8 @@ var (
 	logPath             string
 	mktDataFeedOverride string
 	themeOverride       string
+	listThemes          bool
+	importTheme         string
 	ctx                 setup.AppCtx
 	logs                io.Closer // set once logging is configured, closed before exit
 )
@@ -115,6 +117,8 @@ func init() {
 
 	flag.StringVar(&cfgPath, "config", cfgPathDefault, "config file")
 	flag.StringVar(&themeOverride, "theme", "", "theme name or file")
+	flag.BoolVar(&listThemes, "list-themes", false, "list available themes")
+	flag.StringVar(&importTheme, "import-theme", "", "import a Base16 YAML theme")
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
 	flag.StringVar(&mktDataFeedOverride, "m", "", "override one-shot market-data feed (yahoo or alpaca)")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
@@ -126,11 +130,37 @@ func init() {
 
 func run() int {
 	commandProvided := false
+	utilityProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "C" {
 			commandProvided = true
 		}
+		if f.Name == "list-themes" || f.Name == "import-theme" {
+			utilityProvided = true
+		}
 	})
+	if listThemes && importTheme != "" || utilityProvided && commandProvided {
+		fmt.Fprintln(os.Stderr, "theme utility flags cannot be combined")
+		return 2
+	}
+	if listThemes {
+		names, err := theme.Names(filepath.Join(filepath.Dir(cfgPath), "themes"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		for _, name := range names {
+			fmt.Println(name)
+		}
+		return 0
+	}
+	if importTheme != "" {
+		if err := importBase16Theme(importTheme, filepath.Join(filepath.Dir(cfgPath), "themes")); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
 
 	var cfgErr error
 	cfgErr = loadCfg()
@@ -243,6 +273,50 @@ func run() int {
 	}
 
 	return 0
+}
+
+func importBase16Theme(source, themesDir string) error {
+	stem := filepath.Base(source)
+	stem = strings.TrimSuffix(stem, filepath.Ext(stem))
+	if stem == "" {
+		return fmt.Errorf("theme source has an empty filename")
+	}
+	for _, r := range stem {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return fmt.Errorf("unsafe theme filename %q", stem)
+		}
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	imported, err := (theme.Base16{}).Import(data)
+	if err != nil {
+		return err
+	}
+	output, err := theme.Serialize(imported)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(themesDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(themesDir, stem+".yaml")
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err = file.Write(output); err != nil {
+		file.Close()
+		os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		os.Remove(path)
+		return err
+	}
+	fmt.Println(path)
+	return nil
 }
 
 func startUI(mktData mktdata.MktData) error {
