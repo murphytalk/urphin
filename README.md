@@ -65,4 +65,6 @@ See [the command registry](./tui/commands/registry/registry.go),
 
 ## Credits
 
-- The Yahoo Finance and CoinBase market data implementation under `internal/` are basically copied from [ticker](https://github.com/achannarasappa/ticker) - as well as the live market data display.
+- [ticker](https://github.com/achannarasappa/ticker)
+  - The Yahoo Finance and CoinBase market data implementation, with changes to wire with my own market data framework.
+  - Watch list layout and display is also inspired by ticker, but the color theme is completedly rewritten and much more sophisticated, see [themes doc](docs/themes.md) for details.
