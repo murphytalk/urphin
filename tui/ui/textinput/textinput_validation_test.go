@@ -115,6 +115,7 @@ func TestValidationDefaultColours(t *testing.T) {
 }
 
 func TestValidationCustomColours(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	m := newValidated(fixed(Validation{Status: StatusPartialInvalid, Valid: "ab"}), "abcd")
 
 	s := m.Styles()
@@ -122,8 +123,9 @@ func TestValidationCustomColours(t *testing.T) {
 	custom.Colors[theme.FG] = "#112233"
 	custom.Colors[theme.Error] = "#445566"
 	colors := theme.BuildStyles(custom, theme.LegacyColors{}, "")
-	s.Valid = lipgloss.NewStyle().Foreground(colors.TextColor)
-	s.Invalid = lipgloss.NewStyle().Foreground(colors.ErrorColor)
+	themeInputStyles := DefaultStyles(colors)
+	s.Valid = themeInputStyles.Valid
+	s.Invalid = themeInputStyles.Invalid
 	m.SetStyles(s)
 
 	view := m.View()
