@@ -8,7 +8,8 @@ import (
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
+	"github.com/murphytalk/urphin/internal/theme"
+	u "github.com/murphytalk/urphin/internal/util"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -52,7 +53,7 @@ type Config struct {
 	ShowPositions         bool
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
-	Styles                c.Styles
+	Styles                theme.Styles
 	Asset                 *c.Asset
 }
 
@@ -88,6 +89,7 @@ func New(config Config) *Model {
 		id:                   id,
 		width:                80,
 		config:               config,
+		priceStyle:           config.Styles.Flash(0, 3),
 		priceNoChangeSegment: u.ConvertFloatToString(config.Asset.QuotePrice.Price, config.Asset.Meta.IsVariablePrecision),
 		priceChangeSegment:   "",
 	}
@@ -119,7 +121,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		if !m.config.Asset.QuoteUnavailable && !msg.QuoteUnavailable &&
 			m.config.Asset.Symbol == msg.Symbol && m.config.Asset.QuotePrice.Price != msg.QuotePrice.Price {
 			// Reset color and frame on number change
-			m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
+			m.priceStyle = m.config.Styles.Flash(m.priceChangeDirection, 3)
 			m.frame = 0
 
 			oldPrice := u.ConvertFloatToString(m.config.Asset.QuotePrice.Price, m.config.Asset.Meta.IsVariablePrecision)
@@ -162,7 +164,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		m.priceChangeSegment = ""
 		m.priceChangeDirection = 0
 		m.frame = 0
-		m.priceStyle = lipgloss.NewStyle()
+		m.priceStyle = m.config.Styles.Flash(0, 3)
 
 		return m, nil
 
@@ -172,35 +174,8 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.frame < 4 && m.priceChangeDirection > 0 {
-			switch m.frame {
-			case 0:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("154")).Background(lipgloss.Color("22"))
-			case 1:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("154")).Background(lipgloss.Color("22"))
-			case 2:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("157")).Background(lipgloss.Color("232"))
-			case 3:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
-			}
-
-			m.frame++
-
-			return m, frameCmd(m.id)
-		}
-
-		if m.frame < 4 && m.priceChangeDirection < 0 {
-			switch m.frame {
-			case 0:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("52"))
-			case 1:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Background(lipgloss.Color("52"))
-			case 2:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("210")).Background(lipgloss.Color("232"))
-			case 3:
-				m.priceStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Background(lipgloss.Color(""))
-			}
-
+		if m.frame < 4 && m.priceChangeDirection != 0 {
+			m.priceStyle = m.config.Styles.Flash(m.priceChangeDirection, m.frame)
 			m.frame++
 
 			return m, frameCmd(m.id)
@@ -337,14 +312,14 @@ func (m *Model) buildCells() []grid.Cell {
 
 }
 
-func textName(asset *c.Asset, styles c.Styles) string {
+func textName(asset *c.Asset, styles theme.Styles) string {
 
 	return styles.TextBold(asset.Symbol) +
 		"\n" +
 		styles.TextLabel(ansi.Truncate(asset.Name, WidthName, ""))
 }
 
-func textQuote(asset *c.Asset, styles c.Styles, priceStyle lipgloss.Style, priceNoChangeSegment string, priceChangeSegment string) string {
+func textQuote(asset *c.Asset, styles theme.Styles, priceStyle lipgloss.Style, priceNoChangeSegment string, priceChangeSegment string) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -356,7 +331,7 @@ func textQuote(asset *c.Asset, styles c.Styles, priceStyle lipgloss.Style, price
 		quoteChangeText(asset.QuotePrice.Change, asset.QuotePrice.ChangePercent, asset.Meta.IsVariablePrecision, styles)
 }
 
-func textPosition(asset *c.Asset, styles c.Styles) string {
+func textPosition(asset *c.Asset, styles theme.Styles) string {
 	if asset.PositionUnavailable || (asset.QuoteUnavailable && asset.Position != (c.Position{})) {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -374,21 +349,12 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 	if asset.Position.TotalChange.Amount != 0.0 || asset.Position.Quantity != 0.0 {
 		change := asset.Position.TotalChange
 		text := u.ConvertFloatToString(change.Amount, asset.Meta.IsVariablePrecision)
-		if change.Amount > 0 {
-			text = "↑ " + text
-		} else if change.Amount < 0 {
-			text = "↓ " + text
-		}
 		if asset.Position.UnitCost*asset.Position.Quantity > 0 {
 			text += " (" + u.ConvertFloatToString(change.Percent, false) + "%)"
 		} else {
 			text += " (N/A)"
 		}
-		sign := -1.0
-		if change.Amount > 0 {
-			sign = 1
-		}
-		positionChange = styles.TextPrice(sign, text)
+		positionChange = theme.FormatChange(styles, change.Amount, change.Percent, text)
 	}
 
 	return positionValue +
@@ -396,7 +362,7 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 		positionChange
 }
 
-func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
+func textQuoteExtended(asset *c.Asset, styles theme.Styles) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -422,7 +388,7 @@ func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textQuoteExtendedLabels(asset *c.Asset, styles c.Styles) string {
+func textQuoteExtendedLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures && asset.QuoteFutures.IndexPrice == 0.0 {
 		return ""
@@ -444,7 +410,7 @@ func textQuoteExtendedLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel("Open:")
 }
 
-func textPositionExtended(asset *c.Asset, styles c.Styles) string {
+func textPositionExtended(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
@@ -458,11 +424,12 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 		if asset.QuoteUnavailable || asset.PositionUnavailable {
 			return styles.Text(text)
 		}
-		sign := -1.0
-		if asset.QuotePrice.Price > cost {
-			sign = 1
+		change := asset.QuotePrice.Price - cost
+		percent := 0.0
+		if cost != 0 {
+			percent = 100 * change / math.Abs(cost)
 		}
-		return styles.TextPrice(sign, text)
+		return theme.FormatChange(styles, change, percent, text)
 	}
 	return costText(asset.Position.UnitCost) +
 		"\n" +
@@ -472,7 +439,7 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
+func textPositionExtendedLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
@@ -486,7 +453,7 @@ func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel(labels[2])
 }
 
-func textQuoteRange(asset *c.Asset, styles c.Styles) string {
+func textQuoteRange(asset *c.Asset, styles theme.Styles) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -519,7 +486,7 @@ func textQuoteRange(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textQuoteRangeLabels(asset *c.Asset, styles c.Styles) string {
+func textQuoteRangeLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures {
 
@@ -553,7 +520,7 @@ func textVolumeMarketCap(asset *c.Asset) string {
 		"\n" +
 		u.ConvertFloatToString(asset.QuoteExtended.Volume, true)
 }
-func textVolumeMarketCapLabels(asset *c.Asset, styles c.Styles) string {
+func textVolumeMarketCapLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures {
 		return styles.TextLabel("Open Interest:") +
@@ -566,7 +533,7 @@ func textVolumeMarketCapLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel("Volume:")
 }
 
-func textMarketState(asset *c.Asset, styles c.Styles) string {
+func textMarketState(asset *c.Asset, styles theme.Styles) string {
 	if asset.Exchange.IsRegularTradingSession {
 		return styles.TextLabel(" ●  ")
 	}
@@ -578,23 +545,16 @@ func textMarketState(asset *c.Asset, styles c.Styles) string {
 	return ""
 }
 
-func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles c.Styles) string {
-	if change == 0.0 {
-		return styles.TextPrice(changePercent, "  "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
-	}
-
-	if change > 0.0 {
-		return styles.TextPrice(changePercent, "↑ "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
-	}
-
-	return styles.TextPrice(changePercent, "↓ "+u.ConvertFloatToString(change, isVariablePrecision)+" ("+u.ConvertFloatToString(changePercent, false)+"%)")
+func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles theme.Styles) string {
+	text := u.ConvertFloatToString(change, isVariablePrecision) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
+	return theme.FormatChange(styles, change, changePercent, text)
 }
 
-func textSeparator(width int, styles c.Styles) string {
+func textSeparator(width int, styles theme.Styles) string {
 	return styles.TextLine(strings.Repeat("─", width))
 }
 
-func textTags(asset *c.Asset, styles c.Styles) string {
+func textTags(asset *c.Asset, styles theme.Styles) string {
 
 	currencyText := asset.Currency.FromCurrencyCode
 
@@ -618,7 +578,7 @@ func exchangeDelayText(delay float64, delayText string) string {
 	return "Delayed " + strconv.FormatFloat(delay, 'f', 0, 64) + "min"
 }
 
-func formatTag(text string, style c.Styles) string {
+func formatTag(text string, style theme.Styles) string {
 	return style.Tag(" " + text + " ")
 }
 

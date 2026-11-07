@@ -9,13 +9,14 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
+	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
 )
 
-func watchlistStyles() c.Styles {
+func watchlistStyles() theme.Styles {
 	plain := func(text string) string { return text }
-	return c.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain,
+	return theme.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain,
 		TextPrice: func(_ float64, text string) string { return text }}
 }
 
@@ -46,8 +47,9 @@ func TestWatchlistMeasuresBothCostsQuantityAndLabels(t *testing.T) {
 			asset := &c.Asset{Position: test.position, Meta: c.Meta{IsVariablePrecision: test.variable}, QuoteUnavailable: true}
 			widths := getCellWidths([]*c.Asset{asset})
 			want := 0
-			for _, value := range []float64{test.position.Quantity, test.position.UnitCost, test.position.AvgCost} {
-				want = max(want, lipgloss.Width(u.ConvertFloatToString(value, test.variable)))
+			want = max(want, lipgloss.Width(u.ConvertFloatToString(test.position.Quantity, test.variable)))
+			for _, value := range []float64{test.position.UnitCost, test.position.AvgCost} {
+				want = max(want, lipgloss.Width(u.ConvertFloatToString(value, test.variable))+2)
 			}
 			if widths.WidthPositionExtended != want || widths.WidthPositionExtendedLabels != lipgloss.Width(row.PositionExtendedLabels) {
 				t.Fatalf("widths %+v; wanted value %d and measured labels", widths, want)

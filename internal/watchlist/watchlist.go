@@ -7,9 +7,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
+	u "github.com/murphytalk/urphin/internal/util"
 	row "github.com/murphytalk/urphin/internal/watchlist/row"
 	s "github.com/murphytalk/urphin/internal/watchlist/sorter"
-	u "github.com/murphytalk/urphin/internal/watchlist/util"
 )
 
 // Config represents the configuration for the watchlist component
@@ -19,7 +20,7 @@ type Config struct {
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
 	Sort                  string
-	Styles                c.Styles
+	Styles                theme.Styles
 }
 
 // Model for watchlist section
@@ -227,9 +228,10 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 			changeWidth := lipgloss.Width("↓ " + format(asset.Position.TotalChange.Amount) + " (" + u.ConvertFloatToString(asset.Position.TotalChange.Percent, false) + "%)")
 			cellMaxWidths.PositionLength = max(cellMaxWidths.PositionLength, valueWidth)
 			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3, valueWidth+weightWidth, changeWidth, lipgloss.Width(format(asset.Position.TotalChange.Amount)+" (N/A)"))
-			for _, value := range []float64{asset.Position.Quantity, asset.Position.UnitCost, asset.Position.AvgCost} {
-				cellMaxWidths.WidthPositionExtended = max(cellMaxWidths.WidthPositionExtended, lipgloss.Width(format(value)))
-			}
+			cellMaxWidths.WidthPositionExtended = max(cellMaxWidths.WidthPositionExtended,
+				lipgloss.Width(format(asset.Position.Quantity)),
+				lipgloss.Width(format(asset.Position.UnitCost))+2,
+				lipgloss.Width(format(asset.Position.AvgCost))+2)
 		}
 		if asset.PositionUnavailable {
 			cellMaxWidths.WidthPosition = max(cellMaxWidths.WidthPosition, 3)

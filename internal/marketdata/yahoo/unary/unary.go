@@ -247,7 +247,6 @@ func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error
 		return randomResponse(symbols), nil
 	}
 
-
 	// Reuse a session shared by other instances when one is cached, so the first
 	// request is authenticated and the session handshake can be skipped.
 	if u.crumb == "" && len(u.cookies) == 0 {

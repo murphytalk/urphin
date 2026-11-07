@@ -14,6 +14,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
 	rw "github.com/mattn/go-runewidth"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
 	"github.com/rivo/uniseg"
 )
@@ -203,7 +204,7 @@ func New() Model {
 		Prompt:           "> ",
 		EchoCharacter:    '*',
 		CharLimit:        0,
-		styles:           DefaultDarkStyles(),
+		styles:           DefaultStyles(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")),
 		ShowSuggestions:  false,
 		AutoCase:         true,
 		useVirtualCursor: true,
@@ -1106,7 +1107,10 @@ func (m *Model) updateVirtualCursorStyle() {
 		return
 	}
 
-	m.virtualCursor.Style = lipgloss.NewStyle().Foreground(m.styles.Cursor.Color)
+	m.virtualCursor.Style = lipgloss.NewStyle()
+	if m.styles.Cursor.Color != nil {
+		m.virtualCursor.Style = m.virtualCursor.Style.Foreground(m.styles.Cursor.Color)
+	}
 
 	// By default, the blink speed of the cursor is set to a default
 	// internally.

@@ -49,6 +49,9 @@ warnings and is not meant to be edited or reformatted.
 
 ## Extension
 
+See [theme configuration and import](./docs/themes.md) for color roles, theme
+selection, ANSI support and Base16 importing.
+
 The optional `extension/` submodule adds commands and data backends. It lives in a
 separate private repository, so public checkouts build the public version. With access to
 the submodule, build the extension version using `make extension`.

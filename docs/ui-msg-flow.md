@@ -99,7 +99,7 @@ Availability is explicit, not a misleading zero:
 
 The summary renderer alphabetizes currencies and displays a scope heading, then **three lines per currency**: Value/Day Change, VWAP Cost/P&L, Avg Cost/P&L, followed by one shared separator. At positive width its height is $3N+2$. With no positions there are zero groups: the actual output is still the heading and separator (**two lines**), not an extra “No positions” line. The layout reserves **zero summary height when `ShowSummary` is false**.
 
-Position rows expose per-share **VWAP**, **Avg Cost**, and **Qty**. Average-cost label/value are underlined. Each cost is independently green when the usable quote price is strictly above that basis, red otherwise (including break-even), and neutral when quote/valuation is unavailable; finite zero/negative costs remain numeric. Summary P&L color follows the absolute amount, not an unavailable percentage.
+Position rows expose per-share **VWAP**, **Avg Cost**, and **Qty**. Average-cost label/value are underlined. Each cost includes an up/down glyph based on quote price minus that basis, is muted at break-even, and is neutral when quote/valuation is unavailable; finite zero/negative costs remain numeric. Summary P&L color follows the amount direction, independent of percentage sign.
 
 The existing `SetSummaryMsg` and legacy two-line renderer remain supported in [internal/summary/summary.go](../internal/summary/summary.go). Sending `SetCurrencySummariesMsg` selects the native renderer; sending `SetSummaryMsg` switches back. The current home screen uses the native messages.
 

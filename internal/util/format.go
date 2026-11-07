@@ -4,7 +4,7 @@ import (
 	"math"
 	"strconv"
 
-	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 )
 
 func getPrecision(f float64) int {
@@ -64,7 +64,7 @@ func ConvertFloatToString(f float64, isVariablePrecision bool) string {
 }
 
 // ValueText formats a float as a styled string
-func ValueText(value float64, styles c.Styles) string {
+func ValueText(value float64, styles theme.Styles) string {
 	if value <= 0.0 {
 		return ""
 	}

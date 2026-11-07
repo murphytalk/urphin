@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/setup"
 )
@@ -53,9 +54,9 @@ func (b *uiTestBackend) Close() error {
 	return nil
 }
 
-func uiTestStyles() c.Styles {
+func uiTestStyles() theme.Styles {
 	plain := func(text string) string { return text }
-	return c.Styles{
+	return theme.Styles{
 		Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain,
 		TextPrice: func(_ float64, text string) string { return text },
 	}
