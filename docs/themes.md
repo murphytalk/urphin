@@ -37,18 +37,29 @@ integer indices from 0 through 15 instead. The `ansi` theme uses the terminal's
 own palette. Indexed gain/loss roles do not use an RGB gradient because Urphin
 cannot know how a terminal owner customized those palette entries.
 
-Roles:
+Roles and Base16 mapping:
 
-| Roles | Use |
-|---|---|
-| `fg`, `muted`, `faint` | Main text, secondary text, and dim labels |
-| `accent` | Heading, prompt and cursor |
-| `gain`, `loss` | Up/down values and price flashes |
-| `gain_dim`, `loss_dim` | Optional gradient endpoints for larger changes |
-| `warning`, `error` | Warnings and invalid input; independent of price direction |
-| `border` | Separators and borders |
-| `selection_bg`, `popup_bg` | Backgrounds reserved for selected content and popups |
-| `series_1` … `series_6` | Chart series |
+| Role | Use | Base16 source |
+|---|---|---|
+| `fg` | Main text | `base05` |
+| `muted` | Secondary text | `base04` |
+| `faint` | Dim labels | `base03` |
+| `accent` | Heading, prompt and cursor | `base0D` |
+| `gain` | Up values and price flashes | `base0B` |
+| `loss` | Down values and price flashes | `base08` |
+| `warning` | Warnings | `base0A` |
+| `error` | Invalid input | `base08` |
+| `border` | Separators and borders | `base03` |
+| `selection_bg` | Selected content background | `base02` |
+| `popup_bg` | Popup background | `base01` |
+| `gain_dim` | Optional gain gradient endpoint | Derived from `gain` blended toward `muted` |
+| `loss_dim` | Optional loss gradient endpoint | Derived from `loss` blended toward `muted` |
+| `series_1` | Chart series 1 | `base0D` |
+| `series_2` | Chart series 2 | `base0E` |
+| `series_3` | Chart series 3 | `base0C` |
+| `series_4` | Chart series 4 | `base09` |
+| `series_5` | Chart series 5 | `base0A` |
+| `series_6` | Chart series 6 | `base0F` |
 
 Missing required roles use the embedded Mocha value and are logged. Invalid colors
 name the source and role; a requested theme that cannot load falls back to Mocha,
@@ -92,12 +103,11 @@ it to the config's `themes/` directory. It refuses to overwrite an existing file
 the source filename (without extension) becomes the selectable name. It does not
 change the config or automatically select the imported theme.
 
-The Base16 mapping is `base05→fg`, `base04→muted`, `base03→faint,border`,
-`base0D→accent,series_1`, `base0B→gain`, `base08→loss,error`, `base0A→warning,series_5`,
-`base02→selection_bg`, `base01→popup_bg`, then `base0E`, `base0C`, `base09`,
-`base0A`, `base0F` map to `series_2` through `series_6`. `base00` is ignored to
-preserve terminal transparency. This mapping deliberately gives Base16 loss and
-error the same color; bundled Mocha keeps them distinct.
+The importer requires six-digit Base16 values for every source key listed in the
+table. `base00`, `base06`, and `base07` are ignored; in particular, ignoring
+`base00` preserves terminal transparency. Base16 maps `base08` to both `loss` and
+`error`, so imported themes may show those roles in the same color. Bundled Mocha
+keeps them distinct.
 
 Catppuccin values come from the official palette. Urphin uses gh-dash text and
 status roles and bottom's series palette as references, adapted to keep error
