@@ -243,6 +243,26 @@ palette:
 		Expect(custom.Tag("tag")).NotTo(Equal(defaults.Tag("tag")))
 		Expect(defaults.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#bac2de")).Background(lipgloss.Color("#000000")).Render("tag")))
 	})
+	It("uses only foreground and bold for the four price flash frames", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+		for _, direction := range []int{1, -1} {
+			wantColor := styles.Gain.GetForeground()
+			if direction < 0 {
+				wantColor = styles.Loss.GetForeground()
+			}
+			for frame := 0; frame <= 3; frame++ {
+				flash := styles.Flash(direction, frame)
+				want := wantColor
+				if frame == 3 {
+					want = styles.TextColor
+				}
+				Expect(flash.GetForeground()).To(Equal(want))
+				Expect(flash.GetBold()).To(Equal(frame < 2))
+				Expect(flash.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+			}
+		}
+	})
 	It("removes all theme colors when NO_COLOR is nonempty", func() {
 		for _, value := range []string{"1", "true", "anything", "0"} {
 			GinkgoT().Setenv("NO_COLOR", value)
@@ -257,6 +277,8 @@ palette:
 				Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
 			}
 			Expect(styles.CursorColor()).To(BeNil())
+			noColorTag := theme.BuildStyles(theme.Default(), theme.LegacyColors{BackgroundTag: "#123456"}, "")
+			Expect(noColorTag.Tag("tag")).To(Equal("tag"))
 		}
 	})
 })
