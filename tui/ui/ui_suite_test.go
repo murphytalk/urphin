@@ -58,7 +58,10 @@ var _ = Describe("home screen theme roles", func() {
 		view := appWithTheme().View().Content
 		Expect(view).NotTo(ContainSubstring("\x1b[48;"))
 		GinkgoT().Setenv("NO_COLOR", "1")
-		view = appWithTheme().View().Content
+		noColorModel := appWithTheme()
+		noColorView := noColorModel.View()
+		view = noColorView.Content
 		Expect(strings.Contains(view, "\x1b[")).To(BeFalse())
+		Expect(noColorView.Cursor).NotTo(BeNil())
 	})
 })

@@ -129,6 +129,9 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 	m.viewport.FillHeight = true
 	m.commandInput = textinput.New()
 	m.commandInput.SetStyles(textinput.DefaultStyles(app.Styles))
+	if _, noColor := app.Styles.ErrorColor.(lipgloss.NoColor); noColor {
+		m.commandInput.SetVirtualCursor(false)
+	}
 	m.commandInput.Placeholder = "Syntax check"
 	m.commandInput.AutoCase = false
 	m.commandInput.KeyMap.AcceptSuggestion.SetEnabled(false)
@@ -175,12 +178,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height, m.ready = max(0, msg.Width), max(0, msg.Height), true
 		m.watchlist, _ = m.watchlist.Update(msg)
 		m.summary, _ = m.summary.Update(msg)
-		wasVisible := m.commandVisible()
 		m.resize()
-		if wasVisible != m.commandVisible() {
-			if m.commandVisible() {
-				return m, m.commandInput.Focus()
-			}
+		if m.commandVisible() && !m.commandInput.Focused() {
+			return m, m.commandInput.Focus()
+		}
+		if !m.commandVisible() && m.commandInput.Focused() {
 			m.commandInput.Blur()
 		}
 	case QuoteBatchMsg:
@@ -413,6 +415,7 @@ func (m *Model) View() tea.View {
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
+		m.setCommandCursor(&view)
 		return view
 	}
 	lines := make([]string, 0, 4)
@@ -426,7 +429,22 @@ func (m *Model) View() tea.View {
 	}
 	lines = append(lines, footer)
 	view.SetContent(strings.Join(lines, "\n"))
+	m.setCommandCursor(&view)
 	return view
+}
+
+func (m *Model) setCommandCursor(view *tea.View) {
+	if !m.commandVisible() || m.commandInput.VirtualCursor() {
+		return
+	}
+	cursor := m.commandInput.Cursor()
+	if cursor == nil {
+		return
+	}
+	region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
+	cursor.Position.X += m.width - region
+	cursor.Position.Y = m.height - 1
+	view.Cursor = cursor
 }
 
 func (m *Model) footer() string {

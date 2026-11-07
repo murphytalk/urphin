@@ -65,30 +65,38 @@ func TestCommandFooterWidthsAndEditing(t *testing.T) {
 func TestCommandDiagnosticHeightFallback(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	m.commandErr = errors.New("syntax error")
-	for _, height := range []int{0, 1, 2, 3, 6, 7, 8} {
-		uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: height})
-		content := m.View().Content
-		if height == 0 {
-			if content != "" {
-				t.Fatalf("height 0 rendered %q", content)
+	for _, showSummary := range []bool{false, true} {
+		m.app.Settings.ShowSummary = showSummary
+		header := 0
+		if showSummary {
+			header = m.summary.Height()
+		}
+		threshold := header + 5
+		for _, height := range []int{0, 1, 2, 3, threshold - 1, threshold, threshold + 1} {
+			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: height})
+			content := m.View().Content
+			if height == 0 {
+				if content != "" {
+					t.Fatalf("height 0 rendered %q", content)
+				}
+				continue
 			}
-			continue
-		}
-		lines := strings.Split(content, "\n")
-		if len(lines) != height {
-			t.Fatalf("height %d rendered %d lines", height, len(lines))
-		}
-		if !strings.HasSuffix(lines[len(lines)-1], m.footer()) {
-			t.Fatalf("height %d lost bottom footer", height)
-		}
-		if height == 1 && strings.Contains(content, "syntax error") {
-			t.Fatal("height 1 should prioritize footer")
-		}
-		if height >= 2 && height < 7 && !strings.Contains(lines[len(lines)-2], "syntax error") {
-			t.Fatalf("height %d lost diagnostic above footer", height)
-		}
-		if height >= 7 && !strings.Contains(content, "syntax error") {
-			t.Fatalf("height %d lost diagnostic in normal layout", height)
+			lines := strings.Split(content, "\n")
+			if len(lines) != height {
+				t.Fatalf("summary=%t height=%d rendered %d lines", showSummary, height, len(lines))
+			}
+			if !strings.HasSuffix(lines[len(lines)-1], m.footer()) {
+				t.Fatalf("height %d lost bottom footer", height)
+			}
+			if height == 1 && strings.Contains(content, "syntax error") {
+				t.Fatal("height 1 should prioritize footer")
+			}
+			if height >= 2 && height < threshold && !strings.Contains(lines[len(lines)-2], "syntax error") {
+				t.Fatalf("height %d lost diagnostic above footer", height)
+			}
+			if height >= threshold && !strings.Contains(content, "syntax error") {
+				t.Fatalf("height %d lost diagnostic in normal layout", height)
+			}
 		}
 	}
 }
@@ -131,5 +139,61 @@ func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Error at character 9:") {
 		t.Fatalf("unexpected diagnostic: %v", err)
+	}
+}
+
+func TestValidateCommandParserEdgeCases(t *testing.T) {
+	for _, raw := range []string{"NOPE", "MKT", "MKT USD", "TX AAPL extra", "MKT EUR AAPL"} {
+		validation, err := validateCommand(raw)
+		if err == nil || validation.Status == textinput.StatusValid || validation.Status == textinput.StatusNone {
+			t.Errorf("%q accepted unexpectedly: %#v, %v", raw, validation, err)
+		}
+	}
+}
+
+func TestCommandInputFocusTracksVisibility(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	if !m.commandInput.Focused() {
+		t.Fatal("Init did not focus command input")
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 79, Height: 12})
+	if m.commandInput.Focused() {
+		t.Fatal("narrow hidden input retained focus")
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	if !m.commandInput.Focused() {
+		t.Fatal("visible input did not regain focus")
+	}
+}
+
+func TestCommandDiagnosticHonorsNoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	m := uiTestModel(t, nil, nil)
+	m.app.Styles = theme.BuildStyles(theme.Default(), "")
+	m.commandInput.SetStyles(textinput.DefaultStyles(m.app.Styles))
+	m.commandInput.SetValue("NOPE")
+	m.syncCommandPromptStyle()
+	if got := m.commandDiagnostic(); strings.Contains(got, "\\x1b[") || ansi.Strip(got) != got {
+		t.Fatalf("diagnostic contains color with NO_COLOR: %q", got)
+	}
+}
+
+func TestCommandEditingKeysAndPasteStayWithInput(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	uiTestUpdate(t, m, tea.PasteMsg{Content: "tx\naapl\t"})
+	if got := m.commandInput.Value(); got != "tx aapl " {
+		t.Fatalf("sanitized paste = %q", got)
+	}
+	before := m.viewport.YOffset()
+	position := m.commandInput.Position()
+	uiTestUpdate(t, m, uiTestKey(tea.KeyLeft))
+	if m.commandInput.Position() != position-1 || m.viewport.YOffset() != before {
+		t.Fatal("left moved viewport or failed to edit input")
+	}
+	m.follow = true
+	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
+	if m.follow || m.commandInput.Value() != "tx aapl " {
+		t.Fatal("F3 failed or changed input")
 	}
 }
