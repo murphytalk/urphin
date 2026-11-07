@@ -83,6 +83,8 @@ func (f *sessionTestFeed) Unsubscribe(id string) error {
 	return f.unsubErr
 }
 
+func (f *sessionTestFeed) RegisterMktDataFeed(_ c.QuoteSource, _ mktdata.MktDataFeed) {}
+
 func (f *sessionTestFeed) snapshot() sessionTestCalls {
 	f.mu.Lock()
 	defer f.mu.Unlock()
