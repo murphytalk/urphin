@@ -36,13 +36,33 @@ var _ = Describe("theme loading and styles", func() {
 	})
 
 	It("imports the Base16 role mapping and ignores background", func() {
-		data := []byte("system: base16\nname: known\npalette:\n  base00: '000000'\n  base01: '111111'\n  base02: '222222'\n  base03: '333333'\n  base04: '444444'\n  base05: '555555'\n  base06: '666666'\n  base07: '777777'\n  base08: '888888'\n  base09: '999999'\n  base0A: 'aaaaaa'\n  base0B: 'bbbbbb'\n  base0C: 'cccccc'\n  base0D: 'dddddd'\n  base0E: 'eeeeee'\n  base0F: 'ffffff'\n")
+		data := []byte(`system: base16
+name: Catppuccin Mocha
+palette:
+  base00: '1e1e2e'
+  base01: '181825'
+  base02: '313244'
+  base03: '45475a'
+  base04: '585b70'
+  base05: 'cdd6f4'
+  base06: 'f5e0dc'
+  base07: 'b4befe'
+  base08: 'f38ba8'
+  base09: 'fab387'
+  base0A: 'f9e2af'
+  base0B: 'a6e3a1'
+  base0C: '94e2d5'
+  base0D: '89b4fa'
+  base0E: 'cba6f7'
+  base0F: 'f2cdcd'
+`)
 		imported, err := (theme.Base16{}).Import(data)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(imported.Colors[theme.FG]).To(Equal(theme.Color("#555555")))
+		Expect(imported.Colors[theme.FG]).To(Equal(theme.Color("#cdd6f4")))
 		Expect(imported.Colors[theme.Loss]).To(Equal(imported.Colors[theme.Error]))
-		Expect(imported.Colors["series_6"]).To(Equal(theme.Color("#ffffff")))
-		Expect(imported.Colors[theme.SelectionBG]).To(Equal(theme.Color("#222222")))
+		Expect(imported.Colors["series_6"]).To(Equal(theme.Color("#f2cdcd")))
+		Expect(imported.Colors[theme.SelectionBG]).To(Equal(theme.Color("#313244")))
+		Expect(imported.Colors[theme.Gain]).To(Equal(theme.Color("#a6e3a1")))
 	})
 
 	It("fills missing roles from the embedded default", func() {
@@ -55,9 +75,12 @@ var _ = Describe("theme loading and styles", func() {
 	})
 
 	It("swaps gain/loss and dimensions for red-up", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		greenUp := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "red-up")
 		Expect(ansi.Strip(theme.FormatChange(styles, 1, 1, "1.00"))).To(ContainSubstring("↑ 1.00"))
 		Expect(ansi.Strip(theme.FormatChange(styles, -1, -1, "1.00"))).To(ContainSubstring("↓ 1.00"))
+		Expect(styles.TextPrice(5, "x")).NotTo(Equal(greenUp.TextPrice(5, "x")))
 	})
 
 	It("keeps gradient direction and clamps at ten percent", func() {
@@ -87,7 +110,8 @@ var _ = Describe("theme loading and styles", func() {
 	It("honors legacy overrides and leaves backgrounds off ordinary styles", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{Text: "#ffffff"}, "")
-		Expect(styles.Text("x")).To(ContainSubstring("x"))
+		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
+		Expect(styles.TextColor).NotTo(Equal(defaults.TextColor))
 		Expect(styles.Selected.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		Expect(styles.Popup.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 	})

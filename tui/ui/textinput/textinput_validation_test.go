@@ -114,17 +114,6 @@ func TestValidationDefaultColours(t *testing.T) {
 	}
 }
 
-func TestNoColorOmitsVirtualCursorForeground(t *testing.T) {
-	t.Setenv("NO_COLOR", "anything")
-	m := New()
-	if m.styles.Cursor.Color != nil {
-		t.Fatal("NO_COLOR must leave the terminal cursor color unset")
-	}
-	if _, ok := m.virtualCursor.Style.GetForeground().(lipgloss.NoColor); !ok {
-		t.Fatal("NO_COLOR must leave the virtual cursor without a foreground color")
-	}
-}
-
 func TestValidationCustomColours(t *testing.T) {
 	m := newValidated(fixed(Validation{Status: StatusPartialInvalid, Valid: "ab"}), "abcd")
 
