@@ -5,6 +5,7 @@ import (
 
 	c "github.com/murphytalk/urphin/internal"
 	. "github.com/murphytalk/urphin/internal/summary"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/shared/fin"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,7 +20,7 @@ func removeFormatting(text string) string {
 
 var _ = Describe("Summary", func() {
 
-	stylesFixture := c.Styles{
+	stylesFixture := theme.Styles{
 		Text:      func(v string) string { return v },
 		TextLight: func(v string) string { return v },
 		TextLabel: func(v string) string { return v },

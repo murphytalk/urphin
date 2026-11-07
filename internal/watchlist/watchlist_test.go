@@ -9,13 +9,14 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 )
 
-func watchlistStyles() c.Styles {
+func watchlistStyles() theme.Styles {
 	plain := func(text string) string { return text }
-	return c.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain,
+	return theme.Styles{Text: plain, TextLight: plain, TextLabel: plain, TextBold: plain, TextLine: plain, Tag: plain,
 		TextPrice: func(_ float64, text string) string { return text }}
 }
 

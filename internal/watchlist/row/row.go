@@ -53,7 +53,7 @@ type Config struct {
 	ShowPositions         bool
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
-	Styles                c.Styles
+	Styles                theme.Styles
 	Asset                 *c.Asset
 }
 
@@ -312,14 +312,14 @@ func (m *Model) buildCells() []grid.Cell {
 
 }
 
-func textName(asset *c.Asset, styles c.Styles) string {
+func textName(asset *c.Asset, styles theme.Styles) string {
 
 	return styles.TextBold(asset.Symbol) +
 		"\n" +
 		styles.TextLabel(ansi.Truncate(asset.Name, WidthName, ""))
 }
 
-func textQuote(asset *c.Asset, styles c.Styles, priceStyle lipgloss.Style, priceNoChangeSegment string, priceChangeSegment string) string {
+func textQuote(asset *c.Asset, styles theme.Styles, priceStyle lipgloss.Style, priceNoChangeSegment string, priceChangeSegment string) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -331,7 +331,7 @@ func textQuote(asset *c.Asset, styles c.Styles, priceStyle lipgloss.Style, price
 		quoteChangeText(asset.QuotePrice.Change, asset.QuotePrice.ChangePercent, asset.Meta.IsVariablePrecision, styles)
 }
 
-func textPosition(asset *c.Asset, styles c.Styles) string {
+func textPosition(asset *c.Asset, styles theme.Styles) string {
 	if asset.PositionUnavailable || (asset.QuoteUnavailable && asset.Position != (c.Position{})) {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -362,7 +362,7 @@ func textPosition(asset *c.Asset, styles c.Styles) string {
 		positionChange
 }
 
-func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
+func textQuoteExtended(asset *c.Asset, styles theme.Styles) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -388,7 +388,7 @@ func textQuoteExtended(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textQuoteExtendedLabels(asset *c.Asset, styles c.Styles) string {
+func textQuoteExtendedLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures && asset.QuoteFutures.IndexPrice == 0.0 {
 		return ""
@@ -410,7 +410,7 @@ func textQuoteExtendedLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel("Open:")
 }
 
-func textPositionExtended(asset *c.Asset, styles c.Styles) string {
+func textPositionExtended(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
@@ -439,7 +439,7 @@ func textPositionExtended(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
+func textPositionExtendedLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
@@ -453,7 +453,7 @@ func textPositionExtendedLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel(labels[2])
 }
 
-func textQuoteRange(asset *c.Asset, styles c.Styles) string {
+func textQuoteRange(asset *c.Asset, styles theme.Styles) string {
 	if asset.QuoteUnavailable {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -486,7 +486,7 @@ func textQuoteRange(asset *c.Asset, styles c.Styles) string {
 
 }
 
-func textQuoteRangeLabels(asset *c.Asset, styles c.Styles) string {
+func textQuoteRangeLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures {
 
@@ -520,7 +520,7 @@ func textVolumeMarketCap(asset *c.Asset) string {
 		"\n" +
 		u.ConvertFloatToString(asset.QuoteExtended.Volume, true)
 }
-func textVolumeMarketCapLabels(asset *c.Asset, styles c.Styles) string {
+func textVolumeMarketCapLabels(asset *c.Asset, styles theme.Styles) string {
 
 	if asset.Class == c.AssetClassFutures {
 		return styles.TextLabel("Open Interest:") +
@@ -533,7 +533,7 @@ func textVolumeMarketCapLabels(asset *c.Asset, styles c.Styles) string {
 		styles.TextLabel("Volume:")
 }
 
-func textMarketState(asset *c.Asset, styles c.Styles) string {
+func textMarketState(asset *c.Asset, styles theme.Styles) string {
 	if asset.Exchange.IsRegularTradingSession {
 		return styles.TextLabel(" ●  ")
 	}
@@ -545,16 +545,16 @@ func textMarketState(asset *c.Asset, styles c.Styles) string {
 	return ""
 }
 
-func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles c.Styles) string {
+func quoteChangeText(change float64, changePercent float64, isVariablePrecision bool, styles theme.Styles) string {
 	text := u.ConvertFloatToString(change, isVariablePrecision) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
 	return theme.FormatChange(styles, change, changePercent, text)
 }
 
-func textSeparator(width int, styles c.Styles) string {
+func textSeparator(width int, styles theme.Styles) string {
 	return styles.TextLine(strings.Repeat("─", width))
 }
 
-func textTags(asset *c.Asset, styles c.Styles) string {
+func textTags(asset *c.Asset, styles theme.Styles) string {
 
 	currencyText := asset.Currency.FromCurrencyCode
 
@@ -578,7 +578,7 @@ func exchangeDelayText(delay float64, delayText string) string {
 	return "Delayed " + strconv.FormatFloat(delay, 'f', 0, 64) + "min"
 }
 
-func formatTag(text string, style c.Styles) string {
+func formatTag(text string, style theme.Styles) string {
 	return style.Tag(" " + text + " ")
 }
 

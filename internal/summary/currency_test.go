@@ -15,9 +15,11 @@ import (
 	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/fin"
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 )
 
-func currencyStyles(colored bool) c.Styles {
+func currencyStyles(colored bool) theme.Styles {
 	plain := func(text string) string { return text }
 	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
 	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
@@ -43,6 +45,17 @@ func currencyModel(width int, colored bool, summaries ...s.CurrencySummary) *s.M
 	m.Update(s.SetCurrencySummariesMsg{Scope: "All portfolio", Summaries: summaries})
 	return m
 }
+
+var _ = Describe("currency change direction", func() {
+	It("renders zero changes in muted without direction arrows", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		input := s.CurrencySummary{Currency: "USD", Value: 100, VWAPCost: 100, AvgCost: 100}
+		plain := ansi.Strip(currencyModel(140, true, input).View())
+		Expect(plain).To(ContainSubstring("Day Change: 0.00 (0.00%)"))
+		Expect(plain).NotTo(ContainSubstring("↑"))
+		Expect(plain).NotTo(ContainSubstring("↓"))
+	})
+})
 
 func TestCurrencySummaryNativeTextOrderingAndHeight(t *testing.T) {
 	usd := currencyFixture()

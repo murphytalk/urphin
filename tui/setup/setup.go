@@ -10,13 +10,14 @@ import (
 	"github.com/goccy/go-yaml"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 )
 
 type AppCtx struct {
 	Cfg      *c.Config               // loaded from --config, app only reads it
 	Settings *c.Settings             // loaded from settings.yaml, app updates it with lastest settings
 	Debug    bool                    // set by --debug-log, app only reads it
-	Styles   c.Styles                // derived from Cfg.App.ColorScheme, app only populates it once
+	Styles   theme.Styles            // resolved once during application startup
 	Db       databackend.DataBackend // initialized in setup, used by app
 }
 

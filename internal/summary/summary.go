@@ -5,7 +5,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	grid "github.com/achannarasappa/term-grid"
-	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	"github.com/murphytalk/urphin/shared/fin"
@@ -17,7 +16,7 @@ import (
 type Model struct {
 	width      int
 	summary    fin.PositionSummary
-	styles     c.Styles
+	styles     theme.Styles
 	native     bool
 	scope      string
 	currencies []CurrencySummary
@@ -26,7 +25,7 @@ type Model struct {
 type SetSummaryMsg fin.PositionSummary
 
 // NewModel returns a model with default values
-func NewModel(styles c.Styles) *Model {
+func NewModel(styles theme.Styles) *Model {
 	return &Model{
 		width:  80,
 		styles: styles,
@@ -110,7 +109,7 @@ func (m *Model) View() string {
 
 }
 
-func quoteChangeText(change float64, changePercent float64, styles c.Styles) string {
+func quoteChangeText(change float64, changePercent float64, styles theme.Styles) string {
 	text := u.ConvertFloatToString(change, false) + " (" + u.ConvertFloatToString(changePercent, false) + "%)"
 	return theme.FormatChange(styles, change, changePercent, text)
 }

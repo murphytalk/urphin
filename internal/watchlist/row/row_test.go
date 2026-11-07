@@ -15,7 +15,7 @@ import (
 	u "github.com/murphytalk/urphin/internal/util"
 )
 
-func rowStyles(colored bool) c.Styles {
+func rowStyles(colored bool) theme.Styles {
 	plain := func(text string) string { return text }
 	styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
 	styles.Text, styles.TextLight, styles.TextLabel = plain, plain, plain
@@ -26,7 +26,7 @@ func rowStyles(colored bool) c.Styles {
 	return styles
 }
 
-func expectedCostLine(asset *c.Asset, cost float64, styles c.Styles) string {
+func expectedCostLine(asset *c.Asset, cost float64, styles theme.Styles) string {
 	text := u.ConvertFloatToString(cost, asset.Meta.IsVariablePrecision)
 	if asset.QuoteUnavailable || asset.PositionUnavailable {
 		return styles.Text(text)

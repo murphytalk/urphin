@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	u "github.com/murphytalk/urphin/internal/util"
 	row "github.com/murphytalk/urphin/internal/watchlist/row"
 	s "github.com/murphytalk/urphin/internal/watchlist/sorter"
@@ -19,7 +20,7 @@ type Config struct {
 	ExtraInfoExchange     bool
 	ExtraInfoFundamentals bool
 	Sort                  string
-	Styles                c.Styles
+	Styles                theme.Styles
 }
 
 // Model for watchlist section

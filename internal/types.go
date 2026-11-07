@@ -246,5 +246,3 @@ type Asset struct {
 	QuoteUnavailable    bool
 	PositionUnavailable bool
 }
-
-type Styles = theme.Styles
