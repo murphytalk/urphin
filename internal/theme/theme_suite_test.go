@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/lucasb-eyer/go-colorful"
 	"github.com/murphytalk/urphin/internal/theme"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -60,9 +61,21 @@ palette:
 		Expect(err).NotTo(HaveOccurred())
 		Expect(imported.Colors[theme.FG]).To(Equal(theme.Color("#cdd6f4")))
 		Expect(imported.Colors[theme.Loss]).To(Equal(imported.Colors[theme.Error]))
+		Expect(imported.Colors[theme.Error]).To(Equal(theme.Color("#f38ba8")))
 		Expect(imported.Colors["series_6"]).To(Equal(theme.Color("#f2cdcd")))
 		Expect(imported.Colors[theme.SelectionBG]).To(Equal(theme.Color("#313244")))
+		Expect(imported.Colors[theme.Border]).To(Equal(theme.Color("#45475a")))
 		Expect(imported.Colors[theme.Gain]).To(Equal(theme.Color("#a6e3a1")))
+		Expect(imported.Colors[theme.Muted]).To(Equal(theme.Color("#585b70")))
+		Expect(imported.Colors[theme.Faint]).To(Equal(theme.Color("#45475a")))
+		Expect(imported.Colors[theme.Accent]).To(Equal(theme.Color("#89b4fa")))
+		Expect(imported.Colors[theme.Warning]).To(Equal(theme.Color("#f9e2af")))
+		Expect(imported.Colors[theme.PopupBG]).To(Equal(theme.Color("#181825")))
+		Expect(imported.Colors["series_1"]).To(Equal(theme.Color("#89b4fa")))
+		Expect(imported.Colors["series_2"]).To(Equal(theme.Color("#cba6f7")))
+		Expect(imported.Colors["series_3"]).To(Equal(theme.Color("#94e2d5")))
+		Expect(imported.Colors["series_4"]).To(Equal(theme.Color("#fab387")))
+		Expect(imported.Colors["series_5"]).To(Equal(theme.Color("#f9e2af")))
 	})
 
 	It("fills missing roles from the embedded default", func() {
@@ -78,6 +91,8 @@ palette:
 		GinkgoT().Setenv("NO_COLOR", "")
 		greenUp := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "green-up")
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "red-up")
+		Expect(styles.Gain.GetForeground()).To(Equal(greenUp.Loss.GetForeground()))
+		Expect(styles.Loss.GetForeground()).To(Equal(greenUp.Gain.GetForeground()))
 		Expect(ansi.Strip(theme.FormatChange(styles, 1, 1, "1.00"))).To(ContainSubstring("↑ 1.00"))
 		Expect(ansi.Strip(theme.FormatChange(styles, -1, -1, "1.00"))).To(ContainSubstring("↓ 1.00"))
 		Expect(styles.TextPrice(5, "x")).NotTo(Equal(greenUp.TextPrice(5, "x")))
@@ -93,6 +108,13 @@ palette:
 		Expect(atOne).NotTo(Equal(atTen))
 		Expect(atTen).To(Equal(atTwenty))
 		Expect(loss).NotTo(Equal(atTen))
+		gain, _ := colorful.Hex(string(theme.Default().Colors[theme.Gain]))
+		muted, _ := colorful.Hex(string(theme.Default().Colors[theme.Muted]))
+		dim := gain.BlendHsv(muted, .5).Hex()
+		one := gain.BlendHsv(muted, .05).Hex()
+		Expect(atOne).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(one)).Render("x")))
+		Expect(atTen).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
+		Expect(atTwenty).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(dim)).Render("x")))
 	})
 
 	It("adds direction glyphs and renders zero in muted without an arrow", func() {
@@ -104,7 +126,10 @@ palette:
 			out := ansi.Strip(theme.FormatChange(styles, test.amount, 2, "0.00"))
 			Expect(out).To(ContainSubstring(test.glyph))
 		}
-		Expect(ansi.Strip(theme.FormatChange(styles, 0, 2, "0.00"))).NotTo(ContainSubstring("↑"))
+		zero := theme.FormatChange(styles, 0, 2, "0.00")
+		Expect(zero).To(Equal(styles.TextLight("0.00")))
+		Expect(ansi.Strip(zero)).NotTo(ContainSubstring("↑"))
+		Expect(ansi.Strip(zero)).NotTo(ContainSubstring("↓"))
 	})
 
 	It("honors legacy overrides and leaves backgrounds off ordinary styles", func() {
@@ -112,8 +137,26 @@ palette:
 		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{Text: "#ffffff"}, "")
 		defaults := theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "")
 		Expect(styles.TextColor).NotTo(Equal(defaults.TextColor))
+		for _, style := range []lipgloss.Style{styles.Accent, styles.Gain, styles.Loss, styles.Warning, styles.Error} {
+			Expect(style.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		}
 		Expect(styles.Selected.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		Expect(styles.Popup.GetBackground()).NotTo(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		for _, style := range styles.Series {
+			Expect(style.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		}
+		Expect(styles.Tag("tag")).To(Equal(styles.TextLight("tag")))
+	})
+	It("applies every legacy foreground role override", func() {
+		GinkgoT().Setenv("NO_COLOR", "")
+		styles := theme.BuildStyles(theme.Default(), theme.LegacyColors{
+			Text: "#010203", TextLight: "#111213", TextLabel: "#212223", TextLine: "#313233", TextTag: "#414243",
+		}, "")
+		Expect(styles.TextColor).To(Equal(lipgloss.Color("#010203")))
+		Expect(styles.MutedColor).To(Equal(lipgloss.Color("#111213")))
+		Expect(styles.FaintColor).To(Equal(lipgloss.Color("#212223")))
+		Expect(styles.Tag("tag")).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color("#414243")).Render("tag")))
+		Expect(styles.TextLine("line")).NotTo(Equal(theme.BuildStyles(theme.Default(), theme.LegacyColors{}, "").TextLine("line")))
 	})
 	It("keeps the legacy tag foreground when its background is overridden", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
@@ -127,6 +170,12 @@ palette:
 		Expect(styles.Text("plain")).To(Equal("plain"))
 		Expect(styles.Selected.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
 		Expect(styles.Popup.GetBackground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		for _, style := range []lipgloss.Style{styles.Accent, styles.Gain, styles.Loss, styles.Warning, styles.Error} {
+			Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		}
+		for _, style := range styles.Series {
+			Expect(style.GetForeground()).To(BeAssignableToTypeOf(lipgloss.NoColor{}))
+		}
 		Expect(styles.CursorColor()).To(BeNil())
 	})
 })
