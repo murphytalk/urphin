@@ -187,11 +187,10 @@ palette:
 		Expect(atTen).To(Equal(atTwenty))
 		Expect(loss).NotTo(Equal(atTen))
 		gain, _ := colorful.Hex(string(theme.Default().Colors[theme.Gain]))
-		muted, _ := colorful.Hex(string(theme.Default().Colors[theme.Muted]))
-		dim := gain.BlendHsv(muted, .5).Hex()
-		one := gain.BlendHsv(muted, .05).Hex()
+		dim := string(theme.Default().Colors[theme.GainDim])
 		dimColor, err := colorful.Hex(dim)
 		Expect(err).NotTo(HaveOccurred())
+		one := gain.BlendHsv(dimColor, .1).Hex()
 		mid := gain.BlendHsv(dimColor, .5).Hex()
 		Expect(atOne).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(one)).Render("x")))
 		Expect(atFive).To(Equal(lipgloss.NewStyle().Foreground(lipgloss.Color(mid)).Render("x")))
@@ -202,12 +201,26 @@ palette:
 	It("derives dim colors from theme muted, preserves indexed colors, and does not mutate themes", func() {
 		GinkgoT().Setenv("NO_COLOR", "")
 		base := theme.Default()
+		delete(base.Colors, theme.GainDim)
+		delete(base.Colors, theme.LossDim)
 		originalGain, originalLoss := base.Colors[theme.Gain], base.Colors[theme.Loss]
 		green := theme.BuildStyles(base, "green-up")
 		red := theme.BuildStyles(base, "red-up")
 		Expect(base.Colors[theme.Gain]).To(Equal(originalGain))
 		Expect(base.Colors[theme.Loss]).To(Equal(originalLoss))
 		Expect(green.Gain.GetForeground()).NotTo(Equal(red.Gain.GetForeground()))
+		muted, err := colorful.Hex(string(base.Colors[theme.Muted]))
+		Expect(err).NotTo(HaveOccurred())
+		for _, percent := range []float64{10, -10} {
+			role := theme.Gain
+			if percent < 0 {
+				role = theme.Loss
+			}
+			start, err := colorful.Hex(string(base.Colors[role]))
+			Expect(err).NotTo(HaveOccurred())
+			want := lipgloss.NewStyle().Foreground(lipgloss.Color(start.BlendHsv(muted, .5).Hex())).Render("x")
+			Expect(green.TextPrice(percent, "x")).To(Equal(want))
+		}
 
 		ansiPalette := theme.Load("ansi", "")
 		ansiStyles := theme.BuildStyles(ansiPalette, "green-up")
