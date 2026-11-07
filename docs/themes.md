@@ -4,6 +4,8 @@ Urphin uses Lip Gloss styles and leaves the terminal background in control. The
 default theme is the embedded Catppuccin Mocha palette. Select another theme with
 `app.theme` or `-theme`; use `-list-themes` to see bundled and local names.
 
+Themes from [tinted-theming](https://github.com/tinted-theming/schemes) can be imported.
+
 ## Native YAML format
 
 Each theme is a root key in YAML. Put one theme in `<name>.yaml` under the `themes/` directory beside the config file. The embedded `default.yaml` contains all bundled themes:
