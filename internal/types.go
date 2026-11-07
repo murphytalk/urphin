@@ -121,13 +121,12 @@ const (
 	AssetClassCryptocurrency
 )
 
-type QuoteSource int
+type QuoteSource string
 
 const (
-	QuoteSourceYahoo QuoteSource = iota
-	QuoteSourceCoinbase
-	QuoteSourceAlpaca
-	QuoteSourceExtended
+	QuoteSourceYahoo    QuoteSource = "yahoo"
+	QuoteSourceCoinbase QuoteSource = "coinbase"
+	QuoteSourceAlpaca   QuoteSource = "alpaca"
 )
 
 type ExchangeState int

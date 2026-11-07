@@ -226,7 +226,7 @@ func TestRouteQuoteFanoutPreservesClassesAndUsesSymbolFallback(t *testing.T) {
 			for _, quote := range []c.AssetQuote{{}, {Symbol: "OTHER", Meta: c.Meta{SymbolInSourceAPI: "SPY"}}, {Meta: c.Meta{SymbolInSourceAPI: "OTHER"}}} {
 				service.routeQuote(source, quote)
 			}
-			service.routeQuote(c.QuoteSourceExtended, c.AssetQuote{Symbol: "SPY"})
+			service.routeQuote(c.QuoteSourceCoinbase, c.AssetQuote{Symbol: "SPY"})
 			wantNoQuote(t, first)
 			wantNoQuote(t, second)
 		})
