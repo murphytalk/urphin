@@ -86,7 +86,7 @@ var _ = Describe("FX summary header", func() {
 	It("left-aligns scope and right-aligns configured pairs", func() {
 		const width = 80
 		left := "Summary: Watchlist: Core"
-		right := "FX: EURUSD N/A • USDJPY N/A"
+		right := "EURUSD N/A • USDJPY N/A"
 		m := s.NewModel(currencyStyles(false), []string{"EURUSD", "USDJPY"})
 		m.Update(tea.WindowSizeMsg{Width: width})
 		m.Update(s.SetCurrencySummariesMsg{Scope: "Watchlist: Core"})

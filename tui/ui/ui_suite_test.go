@@ -41,7 +41,7 @@ var _ = Describe("home screen theme roles", func() {
 		model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
 		line := strings.Split(model.View().Content, "\n")[0]
 		Expect(line).To(HavePrefix("Summary: Watchlist: Main"))
-		Expect(line).To(HaveSuffix("FX: EURUSD N/A • USDJPY N/A"))
+		Expect(line).To(HaveSuffix("EURUSD N/A • USDJPY N/A"))
 	})
 
 	It("keeps the home view transparent and honors NO_COLOR", func() {

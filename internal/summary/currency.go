@@ -71,7 +71,7 @@ func (m *Model) currencyView() string {
 		for _, pair := range m.fxPairs {
 			pairTexts = append(pairTexts, m.styles.TextBold(pair)+" "+m.fxRateText(m.fxRates[pair]))
 		}
-		pairs := m.styles.TextLabel("FX: ") + strings.Join(pairTexts, m.styles.TextLabel(" • "))
+		pairs := strings.Join(pairTexts, m.styles.TextLabel(" • "))
 		pairs = ansi.Truncate(pairs, m.width, "…")
 		heading = ansi.Truncate(heading, max(0, m.width-ansi.StringWidth(pairs)-1), "…")
 		heading += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(heading)-ansi.StringWidth(pairs))) + pairs
