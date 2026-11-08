@@ -462,6 +462,7 @@ func (m *Model) View() tea.View {
 	}
 	footer := m.footer()
 	diagnostic := m.commandDiagnostic()
+	diagnosticLine := m.commandDiagnosticLine(diagnostic)
 	extra := boolInt(diagnostic != "")
 	if m.width < 80 || m.height < header+4+extra {
 		lines := make([]string, m.height)
@@ -469,7 +470,7 @@ func (m *Model) View() tea.View {
 			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4+extra)), m.width, "")
 		}
 		if extra > 0 && m.height > 1 {
-			lines[len(lines)-2] = ansi.Truncate(diagnostic, m.width, "…")
+			lines[len(lines)-2] = diagnosticLine
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
@@ -483,7 +484,7 @@ func (m *Model) View() tea.View {
 	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
 	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View())
 	if extra > 0 {
-		lines = append(lines, ansi.Truncate(diagnostic, m.width, "…"))
+		lines = append(lines, diagnosticLine)
 	}
 	lines = append(lines, footer)
 	view.SetContent(strings.Join(lines, "\n"))
@@ -562,6 +563,14 @@ func (m *Model) commandDiagnostic() string {
 		return m.app.Styles.Accent.Render(sanitizeCommandDiagnostic("Usage: " + m.commandHint))
 	}
 	return ""
+}
+
+func (m *Model) commandDiagnosticLine(diagnostic string) string {
+	line := ansi.Truncate(diagnostic, m.width, "…")
+	if m.displayedCommandError() == nil && m.commandHint != "" {
+		line = strings.Repeat(" ", max(0, m.width-ansi.StringWidth(line))) + line
+	}
+	return line
 }
 
 func sanitizeCommandDiagnostic(message string) string {
