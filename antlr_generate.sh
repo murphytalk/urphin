@@ -26,6 +26,23 @@ require_antlr() {
   exit 1
 }
 
+generate_usage() {
+  local parser=$1 lexer=$2 pkg=$3 out=$4 classpath version
+  version=$("$ANTLR" 2>&1 || true)
+  [[ "$version" =~ Version\ 4\.13\. ]] || {
+    echo "antlr_generate.sh: ANTLR tool must be 4.13.x; got: ${version%%$'\n'*}" >&2; exit 1; }
+  if [ -n "${ANTLR_TOOL_CLASSPATH:-}" ]; then
+    classpath=$ANTLR_TOOL_CLASSPATH
+  elif command -v java-config >/dev/null 2>&1; then
+    classpath=$(java-config --with-dependencies --classpath=antlr-4)
+  else
+    echo "antlr_generate.sh: set ANTLR_TOOL_CLASSPATH to the complete ANTLR 4.13.x tool classpath" >&2
+    exit 1
+  fi
+  java --class-path "$classpath" "$ROOT/tools/antlr/GenerateCommandUsage.java" \
+    "$BASE_DIR" "$out" "$parser" "$lexer" "$pkg"
+}
+
 gen_public() {
   require_antlr
   echo "==> public grammar"
@@ -34,6 +51,7 @@ gen_public() {
   mkdir -p "$BASE_DIR/generated"
   "$ANTLR" "${COMMON[@]}" -package pubparser -lib "$BASE_DIR" -o "$BASE_DIR/generated" \
     "$BASE_DIR/PublicLexer.g4" "$BASE_DIR/PublicParser.g4"
+  generate_usage "$BASE_DIR/PublicParser.g4" "$BASE_DIR/PublicLexer.g4" pubparser "$BASE_DIR/generated"
   # Obscure before generating; if the state flipped back, the output is poisoned.
   grep -q "'B1'" "$BASE_DIR/BaseLexer.g4" || {
     echo "gen_public: BaseLexer.g4 is not in code state" >&2; exit 1; }

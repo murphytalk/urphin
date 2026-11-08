@@ -2,9 +2,9 @@
 
 The home-screen footer has a right-aligned command field when terminal width is at least 80 columns. `home-screen.go` owns input, key routing, history, layout and execution; `command_input.go` adapts parser results to text coloring and diagnostics.
 
-Live input checks syntax only. Command names auto-case to uppercase; argument case stays as typed. Enter saves nonempty input to `~/.urphin/history.log`, parses again, and calls `commands.RunCmd`. Returned errors appear above the footer; command output remains outside this UI flow. Tab accepts the best history candidate when present, otherwise it switches watchlists.
+Live input checks syntax and shows grammar-derived usage for a fully valid command. Errors take priority. Command names auto-case to uppercase; argument case stays as typed. Enter saves nonempty input to `~/.urphin/history.log`, parses again, and calls `commands.RunCmd`. Returned errors appear above the footer; command output remains outside this UI flow. Tab accepts the best history candidate when present, otherwise it switches watchlists. Usage is clipped to one row and is generated for public commands during ANTLR generation.
 
-Tests live in `command_input_test.go`, `home_screen_test.go` and `textinput_validation_test.go`. Public and extension builds, `make check`, tagged tests and vet passed during implementation. After the cursor rollback, focused public and extension UI/textinput tests passed.
+Tests live in `command_input_test.go`, `home_screen_test.go` and `textinput_validation_test.go`. Public parser generation creates usage metadata; extension builds currently return no usage hints.
 
 ## Pending
 

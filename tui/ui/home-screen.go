@@ -50,6 +50,7 @@ type Model struct {
 	session        *quoteSession
 	commandInput   textinput.Model
 	commandErr     error
+	commandHint    string
 	commandHistory textinput.TextHistory
 }
 
@@ -149,8 +150,9 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	m.commandInput.KeyMap.NextSuggestion.SetEnabled(false)
 	m.commandInput.KeyMap.PrevSuggestion.SetEnabled(false)
 	m.commandInput.SetValidator(func(raw string) textinput.Validation {
-		v, err := validateCommand(raw)
+		v, hint, err := validateCommand(raw)
 		m.commandErr = err
+		m.commandHint = hint
 		return v
 	})
 	m.setWatchlist()
@@ -250,10 +252,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case commandResultMsg:
-		oldErr := m.displayedCommandError() != nil
+		oldDiagnostic := m.hasCommandDiagnostic()
 		m.commandErr = msg.err
 		m.syncCommandPromptStyle()
-		if oldErr != (m.displayedCommandError() != nil) {
+		if oldDiagnostic != m.hasCommandDiagnostic() {
 			m.resize()
 		}
 	case subscriptionMsg:
@@ -276,9 +278,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			if m.commandInput.CurrentSuggestion() != "" {
+				oldDiagnostic := m.hasCommandDiagnostic()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
 				m.refreshCommandSuggestions()
+				m.syncCommandPromptStyle()
+				if oldDiagnostic != m.hasCommandDiagnostic() {
+					m.resize()
+				}
 				return m, cmd
 			}
 			return m, m.changeWatchlist(1)
@@ -319,6 +326,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
 			m.commandErr = nil
+			m.commandHint = ""
 			m.syncCommandPromptStyle()
 			m.resize()
 			return m, nil
@@ -335,12 +343,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if m.commandVisible() {
-				oldErr := m.displayedCommandError() != nil
+				oldDiagnostic := m.hasCommandDiagnostic()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
 				m.refreshCommandSuggestions()
 				m.syncCommandPromptStyle()
-				if oldErr != (m.displayedCommandError() != nil) {
+				if oldDiagnostic != m.hasCommandDiagnostic() {
 					m.resize()
 				}
 				return m, cmd
@@ -357,12 +365,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if _, isKey := msg.(tea.KeyPressMsg); !isKey && m.commandVisible() {
-		oldErr := m.displayedCommandError() != nil
+		oldDiagnostic := m.hasCommandDiagnostic()
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
 		m.refreshCommandSuggestions()
 		m.syncCommandPromptStyle()
-		if oldErr != (m.displayedCommandError() != nil) {
+		if oldDiagnostic != m.hasCommandDiagnostic() {
 			m.resize()
 		}
 		return m, cmd
@@ -427,7 +435,7 @@ func (m *Model) resize() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		m.commandInput.SetWidth(max(1, region-3))
 	}
-	m.viewport.SetHeight(max(0, m.height-header-2-boolInt(m.displayedCommandError() != nil)))
+	m.viewport.SetHeight(max(0, m.height-header-2-boolInt(m.hasCommandDiagnostic())))
 	m.refreshContent()
 }
 
@@ -542,13 +550,23 @@ func (m *Model) displayedCommandError() error {
 	return m.commandInput.Err
 }
 
+func (m *Model) hasCommandDiagnostic() bool {
+	return m.displayedCommandError() != nil || m.commandHint != ""
+}
+
 func (m *Model) commandDiagnostic() string {
 	if err := m.displayedCommandError(); err != nil {
-		message := ansi.Strip(err.Error())
-		runes := runeutil.NewSanitizer(runeutil.ReplaceNewlines(" "), runeutil.ReplaceTabs(" ")).Sanitize([]rune(message))
-		return lipgloss.NewStyle().Foreground(m.app.Styles.ErrorColor).Render(string(runes))
+		return m.app.Styles.Error.Render(sanitizeCommandDiagnostic(err.Error()))
+	}
+	if m.commandHint != "" {
+		return m.app.Styles.Accent.Render(sanitizeCommandDiagnostic("Usage: " + m.commandHint))
 	}
 	return ""
+}
+
+func sanitizeCommandDiagnostic(message string) string {
+	runes := runeutil.NewSanitizer(runeutil.ReplaceNewlines(" "), runeutil.ReplaceTabs(" ")).Sanitize([]rune(ansi.Strip(message)))
+	return string(runes)
 }
 
 func (m *Model) commandVisible() bool {

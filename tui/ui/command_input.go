@@ -17,17 +17,17 @@ type commandDiagnosticError struct {
 func (e *commandDiagnosticError) Error() string { return e.message }
 func (e *commandDiagnosticError) Unwrap() error { return e.cause }
 
-func validateCommand(raw string) (textinput.Validation, error) {
+func validateCommand(raw string) (textinput.Validation, string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return textinput.Validation{}, nil
+		return textinput.Validation{}, "", nil
 	}
-	_, _, err := commands.Parse(raw)
+	name, _, err := commands.Parse(raw)
 	if err == nil {
-		return textinput.Validation{Status: textinput.StatusValid, Valid: canonicalCommand(raw)}, nil
+		return textinput.Validation{Status: textinput.StatusValid, Valid: canonicalCommand(raw)}, commands.Usage(name), nil
 	}
 	var parseErr *commands.ParseError
 	if !errors.As(err, &parseErr) {
-		return textinput.Validation{Status: textinput.StatusInvalid}, err
+		return textinput.Validation{Status: textinput.StatusInvalid}, "", err
 	}
 	runes := []rune(raw)
 	start := 0
@@ -36,7 +36,7 @@ func validateCommand(raw string) (textinput.Validation, error) {
 	}
 	trimmed := []rune(strings.TrimSpace(raw))
 	if parseErr.Line != 1 || parseErr.Col < 0 {
-		return textinput.Validation{Status: textinput.StatusInvalid}, err
+		return textinput.Validation{Status: textinput.StatusInvalid}, "", err
 	}
 	col := min(parseErr.Col, len(trimmed))
 	position := start + col
@@ -52,7 +52,7 @@ func validateCommand(raw string) (textinput.Validation, error) {
 	if len(parseErr.Expected) > 0 {
 		message += " (expected " + strings.Join(parseErr.Expected, ", ") + ")"
 	}
-	return valid, &commandDiagnosticError{
+	return valid, "", &commandDiagnosticError{
 		message: fmt.Sprintf("Error at character %d: %s", position+1, message),
 		cause:   err,
 	}

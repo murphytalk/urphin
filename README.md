@@ -28,6 +28,14 @@ v4.13.1 in `go.mod`).
 Install it per the official guide: <https://github.com/antlr/antlr4/blob/master/doc/getting-started.md>
 You need an `antlr4` command (4.13.x) on `PATH` and a JDK.
 
+Public parser generation also reads the ANTLR grammar AST to create command usage
+hints. When `java-config` is unavailable, set `ANTLR_TOOL_CLASSPATH` to a complete
+ANTLR 4.13.x tool classpath, including its dependencies:
+
+```sh
+ANTLR_TOOL_CLASSPATH=/path/to/antlr-tool-classpath make public
+```
+
 To use a different launcher, set `ANTLR` to a single executable — the script quotes it,
 so wrap a multi-word command in a script:
 
