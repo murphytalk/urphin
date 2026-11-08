@@ -1,6 +1,7 @@
 package databackend
 
 import (
+	"context"
 	"strconv"
 	"time"
 
@@ -107,10 +108,10 @@ type BackendType = string
 type BackendName = string
 
 type DataBackend interface {
-	GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
-	GetAssetsWithPositions(broker *string, assetClasses []c.AssetClass) ([]string, error)
-	CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error)
+	GetEquityTx(ctx context.Context, ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error)
+	GetAssetsWithPositions(ctx context.Context, broker *string, assetClasses []c.AssetClass) ([]string, error)
+	CalculatePositionAndVWAP(ctx context.Context, broker *string, symbol string) (PositionWithAssetRatio, error)
 	// GetWatchList returns watchlists ordered by name and tickers ordered by ticker.
-	GetWatchList(name *string) ([]Watchlist, error)
-	Close() error
+	GetWatchList(ctx context.Context, name *string) ([]Watchlist, error)
+	Close(ctx context.Context) error
 }

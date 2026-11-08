@@ -21,8 +21,8 @@ func (t *TxCmd) Name() string {
 	return "TX"
 }
 
-func (t *TxCmd) run(_ context.Context, db databackend.DataBackend, args txArgs) ([]databackend.Tx, error) {
-	txs, err := db.GetEquityTx(args.ccy, args.ticker, args.broker, nil, []c.AssetClass{c.AssetClassStock, c.AssetClassETF})
+func (t *TxCmd) run(ctx context.Context, db databackend.DataBackend, args txArgs) ([]databackend.Tx, error) {
+	txs, err := db.GetEquityTx(ctx, args.ccy, args.ticker, args.broker, nil, []c.AssetClass{c.AssetClassStock, c.AssetClassETF})
 	if err != nil {
 		return nil, fmt.Errorf("get equity transactions: %w", err)
 	}

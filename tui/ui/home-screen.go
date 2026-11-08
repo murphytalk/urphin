@@ -30,6 +30,7 @@ import (
 
 // Model owns portfolio state; only the UI event loop mutates it.
 type Model struct {
+	ctx            context.Context
 	app            setup.AppCtx
 	lists          []databackend.Watchlist
 	symbols        []string
@@ -58,11 +59,11 @@ type QuoteBatchMsg []c.AssetQuote
 type commandResultMsg struct{ err error }
 
 // NewModel loads each unique position once, independently of the visible watchlist.
-func NewModel(app setup.AppCtx) (*Model, error) {
+func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	if app.Db == nil || app.Settings == nil {
 		return nil, errors.New("UI requires a data backend and settings")
 	}
-	lists, err := app.Db.GetWatchList(nil)
+	lists, err := app.Db.GetWatchList(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load watchlists: %w", err)
 	}
@@ -107,7 +108,7 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 		}
 	}
 	m := &Model{
-		app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
+		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
 		follow:   true,
@@ -119,7 +120,7 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 		}),
 	}
 	for _, symbol := range m.symbols {
-		position, err := app.Db.CalculatePositionAndVWAP(nil, symbol)
+		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
 		if err != nil {
 			return nil, fmt.Errorf("load position %q: %w", symbol, err)
 		}
@@ -158,8 +159,8 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 }
 
 // Run owns the UI session; the application owner starts/stops feeds and closes the backend.
-func Run(app setup.AppCtx, marketData mktdata.MktData) (err error) {
-	m, err := NewModel(app)
+func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err error) {
+	m, err := NewModel(ctx, app)
 	if err != nil {
 		return err
 	}
@@ -312,7 +313,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncCommandPromptStyle()
 			m.resize()
 			return m, func() tea.Msg {
-				return commandResultMsg{err: commands.RunCmd(context.Background(), m.app.Db, name, args, false)}
+				return commandResultMsg{err: commands.RunCmd(m.ctx, m.app.Db, name, args, false)}
 			}
 		case "esc":
 			m.commandInput.Reset()

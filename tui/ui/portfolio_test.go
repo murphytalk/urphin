@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"reflect"
@@ -417,7 +418,7 @@ func TestPortfolioNonfiniteBackendCostsMustMarkProfitUnavailable(t *testing.T) {
 func TestPortfolioSummaryHeaderReceivesFXRates(t *testing.T) {
 	app := uiTestApp(&uiTestBackend{})
 	app.Cfg = &c.Config{App: c.AppCfg{FxPairs: []string{" eurusd ", "USDJPY", "EURGBP", "bad", "EURUSD"}}}
-	m, err := NewModel(app)
+	m, err := NewModel(context.Background(), app)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -197,7 +197,7 @@ func run() int {
 		return 1
 	}
 	defer func() {
-		if err := databackend.Close(); err != nil {
+		if err := databackend.Close(context.Background()); err != nil {
 			slog.Error("Failed to close data backend", "error", err)
 		}
 	}()
@@ -269,7 +269,7 @@ func run() int {
 	}()
 
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
-	if err := startUI(marketData); err != nil {
+	if err := startUI(context.Background(), marketData); err != nil {
 		slog.Error("UI failed", "error", err)
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -336,9 +336,9 @@ func writeThemeFile(path string, file io.WriteCloser, output []byte) error {
 	return nil
 }
 
-func startUI(mktData mktdata.MktData) error {
+func startUI(requestCtx context.Context, mktData mktdata.MktData) error {
 	// The UI session consumes quotes; this application retains feed/backend ownership.
-	return ui.Run(ctx, mktData)
+	return ui.Run(requestCtx, ctx, mktData)
 }
 
 func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {

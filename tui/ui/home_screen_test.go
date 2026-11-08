@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -30,7 +31,7 @@ type uiTestBackend struct {
 	closeCalls    int
 }
 
-func (b *uiTestBackend) GetWatchList(name *string) ([]databackend.Watchlist, error) {
+func (b *uiTestBackend) GetWatchList(_ context.Context, name *string) ([]databackend.Watchlist, error) {
 	b.watchCalls++
 	if name != nil {
 		return nil, errors.New("expected all watchlists, not a name filter")
@@ -43,13 +44,13 @@ func (b *uiTestBackend) GetWatchList(name *string) ([]databackend.Watchlist, err
 	return lists, b.watchErr
 }
 
-func (b *uiTestBackend) CalculatePositionAndVWAP(broker *string, symbol string) (databackend.PositionWithAssetRatio, error) {
+func (b *uiTestBackend) CalculatePositionAndVWAP(_ context.Context, broker *string, symbol string) (databackend.PositionWithAssetRatio, error) {
 	b.positionCalls = append(b.positionCalls, symbol)
 	b.brokers = append(b.brokers, broker)
 	return databackend.PositionWithAssetRatio{Pos: b.positions[symbol]}, b.positionErr[symbol]
 }
 
-func (b *uiTestBackend) Close() error {
+func (b *uiTestBackend) Close(context.Context) error {
 	b.closeCalls++
 	return nil
 }
@@ -71,7 +72,7 @@ func uiTestApp(b *uiTestBackend) setup.AppCtx {
 
 func uiTestModel(t *testing.T, lists []databackend.Watchlist, positions map[string]databackend.Position) *Model {
 	t.Helper()
-	m, err := NewModel(uiTestApp(&uiTestBackend{lists: lists, positions: positions}))
+	m, err := NewModel(context.Background(), uiTestApp(&uiTestBackend{lists: lists, positions: positions}))
 	if err != nil {
 		t.Fatalf("NewModel: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 		}
 	}
 	b := &uiTestBackend{lists: lists, positions: positions}
-	m, err := NewModel(uiTestApp(b))
+	m, err := NewModel(context.Background(), uiTestApp(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestNewModelValidationAndWrappedBackendErrors(t *testing.T) {
 		{"position error", uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Tickers: []string{"A", "B"}}}, positionErr: map[string]error{"A": sentinel}}), "load position \"A\"", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m, err := NewModel(tc.app)
+			m, err := NewModel(context.Background(), tc.app)
 			if m != nil || err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("model %v, error %v, want %q", m, err, tc.want)
 			}
@@ -270,7 +271,7 @@ func TestRunRejectsInvalidContextAndNilMarketDataWithoutTakingOwnership(t *testi
 		{"market data", uiTestApp(&uiTestBackend{}), "UI requires market data"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := Run(tc.app, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if err := Run(context.Background(), tc.app, nil); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Run error %v, want %q", err, tc.want)
 			}
 			if b, ok := tc.app.Db.(*uiTestBackend); ok && b.closeCalls != 0 {
@@ -357,7 +358,7 @@ func TestModelInitialSortAliasAndSettingsAreForwardedWithoutPersistence(t *testi
 				app.Settings.Sort = sort
 				app.Settings.Separate, app.Settings.ShowPositions = enabled, enabled
 				app.Settings.ExtraInfoExchange, app.Settings.ExtraInfoFundamentals = enabled, enabled
-				m, err := NewModel(app)
+				m, err := NewModel(context.Background(), app)
 				if err != nil {
 					t.Fatal(err)
 				}

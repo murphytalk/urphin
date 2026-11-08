@@ -17,23 +17,23 @@ type txTestBackend struct {
 	txs []databackend.Tx
 }
 
-func (b txTestBackend) GetEquityTx(*string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
+func (b txTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
 	return b.txs, nil
 }
 
-func (txTestBackend) GetAssetsWithPositions(*string, []c.AssetClass) ([]string, error) {
+func (txTestBackend) GetAssetsWithPositions(context.Context, *string, []c.AssetClass) ([]string, error) {
 	return nil, nil
 }
 
-func (txTestBackend) CalculatePositionAndVWAP(*string, string) (databackend.PositionWithAssetRatio, error) {
+func (txTestBackend) CalculatePositionAndVWAP(context.Context, *string, string) (databackend.PositionWithAssetRatio, error) {
 	return databackend.PositionWithAssetRatio{}, nil
 }
 
-func (txTestBackend) GetWatchList(*string) ([]databackend.Watchlist, error) {
+func (txTestBackend) GetWatchList(context.Context, *string) ([]databackend.Watchlist, error) {
 	return nil, nil
 }
 
-func (txTestBackend) Close() error {
+func (txTestBackend) Close(context.Context) error {
 	return nil
 }
 

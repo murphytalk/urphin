@@ -27,15 +27,15 @@ type watchTestBackend struct {
 	lastBrokerWasNil bool
 }
 
-func (b *watchTestBackend) GetEquityTx(*string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
+func (b *watchTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
 	return nil, nil
 }
 
-func (b *watchTestBackend) GetAssetsWithPositions(*string, []c.AssetClass) ([]string, error) {
+func (b *watchTestBackend) GetAssetsWithPositions(context.Context, *string, []c.AssetClass) ([]string, error) {
 	return nil, nil
 }
 
-func (b *watchTestBackend) CalculatePositionAndVWAP(broker *string, symbol string) (databackend.PositionWithAssetRatio, error) {
+func (b *watchTestBackend) CalculatePositionAndVWAP(_ context.Context, broker *string, symbol string) (databackend.PositionWithAssetRatio, error) {
 	b.positionCalls = append(b.positionCalls, symbol)
 	b.lastBrokerWasNil = broker == nil
 	if symbol == b.positionErrSym && b.positionErr != nil {
@@ -44,7 +44,7 @@ func (b *watchTestBackend) CalculatePositionAndVWAP(broker *string, symbol strin
 	return databackend.PositionWithAssetRatio{Pos: databackend.Position{Sym: symbol, Shares: b.shares[symbol]}}, nil
 }
 
-func (b *watchTestBackend) GetWatchList(name *string) ([]databackend.Watchlist, error) {
+func (b *watchTestBackend) GetWatchList(_ context.Context, name *string) ([]databackend.Watchlist, error) {
 	b.watchlistCalls++
 	b.lastPortfolio = name
 	if b.watchlistErr != nil {
@@ -61,7 +61,7 @@ func (b *watchTestBackend) GetWatchList(name *string) ([]databackend.Watchlist, 
 	return []databackend.Watchlist{}, nil
 }
 
-func (b *watchTestBackend) Close() error {
+func (b *watchTestBackend) Close(context.Context) error {
 	return nil
 }
 

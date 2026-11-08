@@ -1,6 +1,7 @@
 package databackend
 
 import (
+	"context"
 	"encoding/csv"
 	"fmt"
 	"os"
@@ -156,13 +157,19 @@ func fileAssetClass(value string) (c.AssetClass, error) {
 	return 0, fmt.Errorf("unknown asset class %q", value)
 }
 
-func (b *FileBackend) GetEquityTx(ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error) {
+func (b *FileBackend) GetEquityTx(ctx context.Context, ccy *string, ticker *string, broker *string, since *time.Time, assetClasses []c.AssetClass) ([]Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	classes := make(map[c.AssetClass]struct{}, len(assetClasses))
 	for _, assetClass := range assetClasses {
 		classes[assetClass] = struct{}{}
 	}
 	result := make([]Tx, 0)
 	for _, transaction := range b.transactions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		tx := transaction.Tx
 		if ccy != nil && tx.Ccy != *ccy || ticker != nil && tx.Ticker != *ticker || broker != nil && tx.Broker != *broker || since != nil && tx.Timestamp.Before(*since) {
 			continue
@@ -177,7 +184,10 @@ func (b *FileBackend) GetEquityTx(ccy *string, ticker *string, broker *string, s
 	return result, nil
 }
 
-func (b *FileBackend) GetAssetsWithPositions(broker *string, assetClasses []c.AssetClass) ([]string, error) {
+func (b *FileBackend) GetAssetsWithPositions(ctx context.Context, broker *string, assetClasses []c.AssetClass) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	classes := make(map[c.AssetClass]struct{}, len(assetClasses))
 	for _, assetClass := range assetClasses {
 		classes[assetClass] = struct{}{}
@@ -185,6 +195,9 @@ func (b *FileBackend) GetAssetsWithPositions(broker *string, assetClasses []c.As
 
 	candidates := make(map[string]struct{})
 	for _, transaction := range b.transactions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if len(classes) > 0 {
 			if _, ok := classes[transaction.AssetClass]; !ok {
 				continue
@@ -195,7 +208,10 @@ func (b *FileBackend) GetAssetsWithPositions(broker *string, assetClasses []c.As
 
 	assets := make([]string, 0, len(candidates))
 	for symbol := range candidates {
-		position, err := b.CalculatePositionAndVWAP(broker, symbol)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		position, err := b.CalculatePositionAndVWAP(ctx, broker, symbol)
 		if err != nil {
 			return nil, fmt.Errorf("calculate position for %q: %w", symbol, err)
 		}
@@ -207,10 +223,16 @@ func (b *FileBackend) GetAssetsWithPositions(broker *string, assetClasses []c.As
 	return assets, nil
 }
 
-func (b *FileBackend) CalculatePositionAndVWAP(broker *string, symbol string) (PositionWithAssetRatio, error) {
+func (b *FileBackend) CalculatePositionAndVWAP(ctx context.Context, broker *string, symbol string) (PositionWithAssetRatio, error) {
+	if err := ctx.Err(); err != nil {
+		return PositionWithAssetRatio{}, err
+	}
 	var currency string
 	var transactions []PositionTx
 	for _, transaction := range b.transactions {
+		if err := ctx.Err(); err != nil {
+			return PositionWithAssetRatio{}, err
+		}
 		tx := transaction.Tx
 		if tx.Ticker != symbol || broker != nil && tx.Broker != *broker {
 			continue
@@ -228,7 +250,10 @@ func (b *FileBackend) CalculatePositionAndVWAP(broker *string, symbol string) (P
 	return PositionWithAssetRatio{Pos: position}, nil
 }
 
-func (b *FileBackend) GetWatchList(name *string) ([]Watchlist, error) {
+func (b *FileBackend) GetWatchList(ctx context.Context, name *string) ([]Watchlist, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	result := make([]Watchlist, 0, len(b.watchlists))
 	for _, watchlist := range b.watchlists {
 		if name != nil && watchlist.Name != *name {
@@ -240,4 +265,4 @@ func (b *FileBackend) GetWatchList(name *string) ([]Watchlist, error) {
 	return result, nil
 }
 
-func (*FileBackend) Close() error { return nil }
+func (*FileBackend) Close(context.Context) error { return nil }

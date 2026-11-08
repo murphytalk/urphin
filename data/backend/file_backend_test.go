@@ -1,6 +1,7 @@
 package databackend
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,7 +37,7 @@ watchlist:
 	since := time.Date(2020, time.September, 2, 10, 0, 0, 0, time.UTC)
 	ticker := "IBM"
 	broker := "BK1"
-	transactions, err := backend.GetEquityTx(nil, &ticker, &broker, &since, []c.AssetClass{c.AssetClassStock})
+	transactions, err := backend.GetEquityTx(context.Background(), nil, &ticker, &broker, &since, []c.AssetClass{c.AssetClassStock})
 	if err != nil {
 		t.Fatalf("GetEquityTx() error = %v", err)
 	}
@@ -44,7 +45,7 @@ watchlist:
 		t.Fatalf("GetEquityTx() = %v, want the IBM sell transaction", transactions)
 	}
 
-	position, err := backend.CalculatePositionAndVWAP(&broker, ticker)
+	position, err := backend.CalculatePositionAndVWAP(context.Background(), &broker, ticker)
 	if err != nil {
 		t.Fatalf("CalculatePositionAndWAP() error = %v", err)
 	}
@@ -52,7 +53,7 @@ watchlist:
 		t.Errorf("position = %v, want 5 USD shares", position.Pos)
 	}
 
-	watchlists, err := backend.GetWatchList(nil)
+	watchlists, err := backend.GetWatchList(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("GetWatchList() error = %v", err)
 	}
@@ -84,7 +85,7 @@ func TestFileBackendGetAssetsWithPositions(t *testing.T) {
 	}
 
 	broker := "BK1"
-	got, err := backend.GetAssetsWithPositions(&broker, []c.AssetClass{c.AssetClassStock})
+	got, err := backend.GetAssetsWithPositions(context.Background(), &broker, []c.AssetClass{c.AssetClassStock})
 	if err != nil {
 		t.Fatalf("GetAssetsWithPositions() error = %v", err)
 	}
@@ -92,7 +93,7 @@ func TestFileBackendGetAssetsWithPositions(t *testing.T) {
 		t.Fatalf("GetAssetsWithPositions() = %v, want [OPEN SHORT]", got)
 	}
 
-	got, err = backend.GetAssetsWithPositions(nil, nil)
+	got, err = backend.GetAssetsWithPositions(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("GetAssetsWithPositions() error = %v", err)
 	}

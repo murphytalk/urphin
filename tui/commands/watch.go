@@ -30,7 +30,7 @@ func (w *WatchCmd) Name() string {
 	return "WATCH"
 }
 
-func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error {
+func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error {
 	portfolio, err := parseWatchArgs(args)
 	if err != nil {
 		return fmt.Errorf("parse WATCH arguments: %w", err)
@@ -39,7 +39,7 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 		return nil
 	}
 
-	watchlists, err := db.GetWatchList(portfolio)
+	watchlists, err := db.GetWatchList(ctx, portfolio)
 	if err != nil {
 		return fmt.Errorf("get watchlists: %w", err)
 	}
@@ -49,7 +49,7 @@ func (w *WatchCmd) Execute(_ context.Context, db databackend.DataBackend, args m
 	tickerSet := make(map[string]struct{})
 	for _, watchlist := range watchlists {
 		for _, ticker := range watchlist.Tickers {
-			position, err := db.CalculatePositionAndVWAP(nil, ticker)
+			position, err := db.CalculatePositionAndVWAP(ctx, nil, ticker)
 			if err != nil {
 				return fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
 			}

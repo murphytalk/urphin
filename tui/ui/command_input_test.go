@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -232,7 +233,7 @@ func TestCommandDiagnosticHonorsNoColor(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 	app := uiTestApp(&uiTestBackend{})
 	app.Styles = theme.BuildStyles(theme.Default(), "")
-	m, err := NewModel(app)
+	m, err := NewModel(context.Background(), app)
 	if err != nil {
 		t.Fatal(err)
 	}

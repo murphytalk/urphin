@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -585,7 +586,7 @@ func TestSessionHeadlessBubbleTeaLifecycleQuoteOwnershipNavigationAndQuit(t *tes
 				lists:     []databackend.Watchlist{{Name: "First", Tickers: []string{"A"}}, {Name: "Second", Tickers: []string{"B", "A"}}},
 				positions: map[string]databackend.Position{"A": {Shares: 1, Ccy: "USD"}, "B": {Shares: 2, Ccy: "EUR"}},
 			}
-			model, err := NewModel(uiTestApp(backend))
+			model, err := NewModel(context.Background(), uiTestApp(backend))
 			if err != nil {
 				t.Fatal(err)
 			}

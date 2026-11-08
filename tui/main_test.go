@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -31,11 +32,11 @@ type startUITestBackend struct {
 	closed bool
 }
 
-func (b *startUITestBackend) GetWatchList(*string) ([]databackend.Watchlist, error) {
+func (b *startUITestBackend) GetWatchList(context.Context, *string) ([]databackend.Watchlist, error) {
 	return nil, b.err
 }
 
-func (b *startUITestBackend) Close() error {
+func (b *startUITestBackend) Close(context.Context) error {
 	b.closed = true
 	return nil
 }
@@ -57,7 +58,7 @@ func TestStartUIPropagatesValidationErrorsWithoutClosingBackend(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx = tc.app
-			err := startUI(nil)
+			err := startUI(context.Background(), nil)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || (tc.wrap && !errors.Is(err, sentinel)) {
 				t.Fatalf("startUI error %v, want %q (wrapped=%t)", err, tc.want, tc.wrap)
 			}

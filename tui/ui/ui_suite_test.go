@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ var _ = Describe("home screen theme roles", func() {
 		app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
 		app.Settings.ShowSummary = false
 		app.Styles = styles
-		model, err := NewModel(app)
+		model, err := NewModel(context.Background(), app)
 		Expect(err).NotTo(HaveOccurred())
 		model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
 		view := model.View().Content
@@ -36,7 +37,7 @@ var _ = Describe("home screen theme roles", func() {
 	It("shows configured FX pairs at the right of the summary header", func() {
 		app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
 		app.Cfg = &c.Config{App: c.AppCfg{FxPairs: []string{"EURUSD", "USDJPY"}}}
-		model, err := NewModel(app)
+		model, err := NewModel(context.Background(), app)
 		Expect(err).NotTo(HaveOccurred())
 		model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
 		line := strings.Split(model.View().Content, "\n")[0]
@@ -49,7 +50,7 @@ var _ = Describe("home screen theme roles", func() {
 			app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main"}}})
 			app.Settings.ShowSummary = false
 			app.Styles = theme.BuildStyles(theme.Default(), "")
-			model, err := NewModel(app)
+			model, err := NewModel(context.Background(), app)
 			Expect(err).NotTo(HaveOccurred())
 			model.Update(tea.WindowSizeMsg{Width: 100, Height: 8})
 			return model
