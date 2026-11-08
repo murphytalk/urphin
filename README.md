@@ -37,6 +37,12 @@ ANTLR 4.13.x tool classpath, including its dependencies:
 ANTLR_TOOL_CLASSPATH=/path/to/antlr-tool-classpath make public
 ```
 
+Usage entries follow command rules reachable from the grammar's `cmd` dispatch.
+New argument labels need a display-name entry in `tui/commands/extract.go`'s
+`labelKeys`; `make check` verifies that generated labels resolve. The Java renderer
+handles the grammar AST forms currently in use and fails generation on unsupported
+forms; extend it when a grammar adds one.
+
 To use a different launcher, set `ANTLR` to a single executable — the script quotes it,
 so wrap a multi-word command in a script:
 
