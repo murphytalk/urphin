@@ -16,9 +16,9 @@ import (
 
 	c "github.com/murphytalk/urphin/internal"
 
-	alpacaFeed "github.com/murphytalk/urphin/internal/marketdata/mktfeed/alpaca"
 	"github.com/murphytalk/urphin/internal/marketdata/cache"
 	mktfeed "github.com/murphytalk/urphin/internal/marketdata/mktfeed"
+	alpacaFeed "github.com/murphytalk/urphin/internal/marketdata/mktfeed/alpaca"
 	currencyRate "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-currency-rates"
 	price "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price"
 	unaryClientYahoo "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
