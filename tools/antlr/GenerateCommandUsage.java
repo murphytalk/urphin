@@ -53,21 +53,46 @@ public final class GenerateCommandUsage {
   }
 
   private void generate() {
-    Rule dispatch = parser.getRule("baseCmd");
-    if (dispatch == null) throw fail("baseCmd", "missing dispatch rule");
+    Rule dispatch = parser.getRule("cmd");
+    if (dispatch == null) throw fail("cmd", "missing command dispatch rule");
+    List<Rule> commands = new ArrayList<>();
+    collectCommands(dispatch, new ArrayList<>(), commands);
+    for (Rule rule : commands) {
+      String name = commandName(rule);
+      String usage = render(child(rule.ast, 1), rule.name, new ArrayList<>());
+      usage = usage.trim();
+      if (usages.putIfAbsent(name, usage) != null) throw fail(rule.name, "duplicate command " + name);
+    }
+    if (usages.isEmpty()) throw fail("cmd", "no commands found");
+  }
+
+  private void collectCommands(Rule dispatch, List<String> stack, List<Rule> commands) {
+    if (stack.contains(dispatch.name)) throw fail(dispatch.name, "dispatch cycle: " + String.join(" -> ", stack) + " -> " + dispatch.name);
+    if (!isDispatch(dispatch)) {
+      commands.add(dispatch);
+      return;
+    }
+    stack.add(dispatch.name);
     GrammarAST block = child(dispatch.ast, 1);
     for (int i = 0; i < block.getChildCount(); i++) {
       GrammarAST alt = child(block, i);
-      if (alt.getChildCount() != 1 || child(alt, 0).getType() != ANTLRParser.RULE_REF) throw fail("baseCmd", "expected command rule alternative");
+      if (alt.getChildCount() != 1 || child(alt, 0).getType() != ANTLRParser.RULE_REF) throw fail(dispatch.name, "expected command rule alternative");
       String ruleName = child(alt, 0).getText();
       Rule rule = parser.getRule(ruleName);
-      if (rule == null) throw fail(ruleName, "unresolved command rule");
-      String name = commandName(rule);
-      String usage = render(child(rule.ast, 1), ruleName, new ArrayList<>());
-      usage = usage.trim();
-      if (usages.putIfAbsent(name, usage) != null) throw fail(ruleName, "duplicate command " + name);
+      if (rule == null) throw fail(dispatch.name, "unresolved command rule " + ruleName);
+      collectCommands(rule, stack, commands);
     }
-    if (usages.isEmpty()) throw fail("baseCmd", "no commands found");
+    stack.remove(stack.size() - 1);
+  }
+
+  private boolean isDispatch(Rule rule) {
+    GrammarAST body = child(rule.ast, 1);
+    if (body.getType() != ANTLRParser.BLOCK || body.getChildCount() == 0) return false;
+    for (int i = 0; i < body.getChildCount(); i++) {
+      GrammarAST alt = child(body, i);
+      if (alt.getType() != ANTLRParser.ALT || alt.getChildCount() != 1 || child(alt, 0).getType() != ANTLRParser.RULE_REF) return false;
+    }
+    return true;
   }
 
   private void verifyExamples(String grammar) {
@@ -110,6 +135,7 @@ public final class GenerateCommandUsage {
       case ANTLRParser.CLOSURE: return "[" + renderGroup(child(node, 0), owner, stack) + "]...";
       case ANTLRParser.POSITIVE_CLOSURE: return renderRepeated(child(node, 0), owner, stack) + "...";
       case ANTLRParser.ASSIGN: return renderLabel(child(node, 0).getText(), child(node, 1), owner, stack);
+      case ANTLRParser.SET: return renderSet(node, owner);
       case ANTLRParser.EPSILON: return "";
       default: throw fail(owner, "unsupported grammar node " + node.getText() + " (" + node.getType() + ")");
     }
@@ -143,6 +169,18 @@ public final class GenerateCommandUsage {
     for (int i = 0; i < node.getChildCount(); i++) alts.add(render(child(node, i), owner, stack));
     alts.removeIf(String::isBlank);
     return String.join(" | ", alts);
+  }
+
+  private String renderSet(GrammarAST set, String owner) {
+    List<String> alternatives = new ArrayList<>();
+    for (int i = 0; i < set.getChildCount(); i++) {
+      GrammarAST value = child(set, i);
+      if (value.getType() != ANTLRParser.TOKEN_REF) throw fail(owner, "unsupported token-set member " + value.getText());
+      String literal = literals.get(value.getText());
+      alternatives.add(literal == null ? "<" + value.getText().toLowerCase() + ">" : literal);
+    }
+    if (alternatives.isEmpty()) throw fail(owner, "empty token set");
+    return alternatives.size() == 1 ? alternatives.get(0) : "(" + String.join(" | ", alternatives) + ")";
   }
 
   private String renderLabel(String label, GrammarAST value, String owner, List<String> stack) {

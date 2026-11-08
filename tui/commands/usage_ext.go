@@ -2,7 +2,8 @@
 
 package commands
 
-// Public-only command hints are unavailable in extension builds.
-func generatedCommandUsage(string) string { return "" }
+import extparser "github.com/murphytalk/urphin/extension/tui/commands/antlr/generated"
 
-func generatedCommandUsages() map[string]string { return nil }
+func generatedCommandUsage(name string) string { return extparser.CommandUsage[name] }
+
+func generatedCommandUsages() map[string]string { return extparser.CommandUsage }

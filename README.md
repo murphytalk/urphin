@@ -27,9 +27,10 @@ v4.13.1 in `go.mod`).
 
 Install it per the official guide: <https://github.com/antlr/antlr4/blob/master/doc/getting-started.md>
 You need an `antlr4` command (4.13.x) on `PATH` and a JDK.
+When `JAVA_HOME/bin/java` exists, generation uses it. Otherwise generation warns and uses `java` from `PATH`.
 
-Public parser generation also reads the ANTLR grammar AST to create command usage
-hints. When `java-config` is unavailable, set `ANTLR_TOOL_CLASSPATH` to a complete
+Parser generation reads the ANTLR grammar AST to create command usage hints for
+the selected build. When `java-config` is unavailable, set `ANTLR_TOOL_CLASSPATH` to a complete
 ANTLR 4.13.x tool classpath, including its dependencies:
 
 ```sh
