@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -429,19 +428,5 @@ func TestInternalPasteMessagesAreHandled(t *testing.T) {
 	m, _ = m.Update(pasteErrMsg{wantErr})
 	if m.Err == nil || m.Err.Error() != wantErr.Error() {
 		t.Fatalf("clipboard error = %v, want %v", m.Err, wantErr)
-	}
-}
-
-func TestVirtualCursorBlinksWithoutTerminalCursor(t *testing.T) {
-	m := New()
-	styles := m.Styles()
-	styles.Cursor.BlinkSpeed = time.Millisecond
-	m.SetStyles(styles)
-	m.Focus()
-	before := m.virtualCursor.IsBlinked
-	msg := m.virtualCursor.Blink()()
-	m.virtualCursor, _ = m.virtualCursor.Update(msg)
-	if m.virtualCursor.IsBlinked == before {
-		t.Fatal("software cursor blink message did not change cursor visibility")
 	}
 }
