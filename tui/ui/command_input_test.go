@@ -2,6 +2,7 @@ package ui
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,6 +100,31 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 				t.Fatalf("height %d lost diagnostic in normal layout", height)
 			}
 		}
+	}
+}
+
+func TestCommandDiagnosticIsSingleLineAndResizeNoticeCountsIt(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	m.commandErr = errors.New("bad\n\x1b[31minput\x1b[0m\tvalue")
+	if got := m.commandDiagnostic(); strings.ContainsAny(got, "\r\n\t") || strings.Contains(got, "\x1b[") {
+		t.Fatalf("unsafe diagnostic = %q", got)
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 4})
+	header := m.summary.Height()
+	if got, want := ansi.Strip(m.View().Content), fmt.Sprintf("need 80 cols / %d rows", header+5); !strings.Contains(got, want) {
+		t.Fatalf("resize notice omitted diagnostic row: %q", got)
+	}
+}
+
+func TestCommandFooterDropsWholeHelpItemsToFitInput(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	footer := ansi.Strip(m.footer())
+	if !strings.HasPrefix(footer, "F10/^C Exit · Tab Nxt · ^Tab/⇧Tab Prv · F2 Sort") {
+		t.Fatalf("footer did not preserve whole ordered help items: %q", footer)
+	}
+	if strings.Contains(footer, "F3") || strings.Contains(footer, "^Home") {
+		t.Fatalf("footer clipped a partial help item: %q", footer)
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/setup"
+	"github.com/murphytalk/urphin/tui/ui/runeutil"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
@@ -456,7 +457,7 @@ func (m *Model) View() tea.View {
 	if m.width < 80 || m.height < header+4+extra {
 		lines := make([]string, m.height)
 		if m.height > 1 {
-			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4)), m.width, "")
+			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4+extra)), m.width, "")
 		}
 		if extra > 0 && m.height > 1 {
 			lines[len(lines)-2] = ansi.Truncate(diagnostic, m.width, "…")
@@ -496,14 +497,19 @@ func (m *Model) setCommandCursor(view *tea.View) {
 }
 
 func (m *Model) footer() string {
-	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr"}
+	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "^Home/End Top/Bot"}
+	budget := m.width
+	if m.commandVisible() {
+		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
+		budget = max(0, m.width-region-1)
+	}
 	text := ""
 	for _, part := range parts {
 		next := part
 		if text != "" {
 			next = text + " · " + part
 		}
-		if ansi.StringWidth(next) > m.width {
+		if ansi.StringWidth(next) > budget {
 			break
 		}
 		text = next
@@ -537,7 +543,9 @@ func (m *Model) displayedCommandError() error {
 
 func (m *Model) commandDiagnostic() string {
 	if err := m.displayedCommandError(); err != nil {
-		return lipgloss.NewStyle().Foreground(m.app.Styles.ErrorColor).Render(err.Error())
+		message := ansi.Strip(err.Error())
+		runes := runeutil.NewSanitizer(runeutil.ReplaceNewlines(" "), runeutil.ReplaceTabs(" ")).Sanitize([]rune(message))
+		return lipgloss.NewStyle().Foreground(m.app.Styles.ErrorColor).Render(string(runes))
 	}
 	return ""
 }
