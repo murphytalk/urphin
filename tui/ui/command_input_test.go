@@ -23,25 +23,34 @@ func TestValidateCommand(t *testing.T) {
 		raw    string
 		status textinput.Status
 		valid  string
+		hint   bool
 		hasErr bool
 	}{
-		{"", textinput.StatusNone, "", false},
-		{"  \t", textinput.StatusNone, "", false},
-		{"tx aapl", textinput.StatusValid, "TX aapl", false},
-		{"NOPE", textinput.StatusInvalid, "", true},
-		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", true},
-		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", true},
-		{"MKT", textinput.StatusPartialInvalid, "MKT", true},
-		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", true},
-		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", true},
-		{"TX AAPL extra", textinput.StatusPartialInvalid, "TX AAPL ", true},
-		{"PROP TICKER AAPL Note 日本語 extra", textinput.StatusPartialInvalid, "PROP TICKER AAPL Note 日本語 ", true},
-		{"PROP TICKER AAPL Note MixedCase", textinput.StatusValid, "PROP TICKER AAPL Note MixedCase", false},
+		{"", textinput.StatusNone, "", false, false},
+		{"  \t", textinput.StatusNone, "", false, false},
+		{"tx aapl", textinput.StatusValid, "TX aapl", true, false},
+		{"NOPE", textinput.StatusInvalid, "", false, true},
+		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
+		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", false, true},
+		{"MKT", textinput.StatusPartialInvalid, "MKT", false, true},
+		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", false, true},
+		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", false, true},
+		{"TX AAPL extra", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
+		{"PROP TICKER AAPL Note 日本語 extra", textinput.StatusPartialInvalid, "PROP TICKER AAPL Note 日本語 ", false, true},
+		{"PROP TICKER AAPL Note MixedCase", textinput.StatusValid, "PROP TICKER AAPL Note MixedCase", true, false},
 	} {
-		v, err := validateCommand(tc.raw)
-		if v.Status != tc.status || v.Valid != tc.valid || (err != nil) != tc.hasErr {
-			t.Errorf("validateCommand(%q) = %#v, %v", tc.raw, v, err)
+		v, hint, err := validateCommand(tc.raw)
+		if v.Status != tc.status || v.Valid != tc.valid || (hint != "") != tc.hint || (err != nil) != tc.hasErr {
+			t.Errorf("validateCommand(%q) = %#v, %q, %v", tc.raw, v, hint, err)
 		}
+	}
+}
+
+func TestValidateCommandHintUsesWholeCommandSyntax(t *testing.T) {
+	_, tx, txErr := validateCommand("TX")
+	_, txWithTicker, tickerErr := validateCommand("TX AAPL")
+	if txErr != nil || tickerErr != nil || tx != txWithTicker || tx != "TX [<broker> [<ticker>] | <ccy> | <ticker>]" {
+		t.Fatalf("TX hints differ or are wrong: %q, %q; errors %v, %v", tx, txWithTicker, txErr, tickerErr)
 	}
 }
 
@@ -66,8 +75,39 @@ func TestCommandFooterWidthsAndEditing(t *testing.T) {
 		t.Fatalf("typed value = %q", m.commandInput.Value())
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyEscape))
-	if m.commandInput.Value() != "" || m.commandErr != nil {
+	if m.commandInput.Value() != "" || m.commandErr != nil || m.commandHint != "" {
 		t.Fatal("Escape did not clear input and diagnostic")
+	}
+}
+
+func TestCommandHintStylePriorityAndLayout(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	uiTestUpdate(t, m, tea.PasteMsg{Content: "TX"})
+	want := m.app.Styles.Accent.Render("Usage: TX [<broker> [<ticker>] | <ccy> | <ticker>]")
+	if got := m.commandDiagnostic(); got != want {
+		t.Fatalf("hint diagnostic = %q, want %q", got, want)
+	}
+	if wantHeight := 12 - m.summary.Height() - 3; m.viewport.Height() != wantHeight {
+		t.Fatalf("valid hint viewport height = %d, want %d", m.viewport.Height(), wantHeight)
+	}
+	uiTestUpdate(t, m, tea.PasteMsg{Content: " @"})
+	if strings.Contains(ansi.Strip(m.commandDiagnostic()), "Usage:") || !strings.Contains(ansi.Strip(m.commandDiagnostic()), "Error at character") {
+		t.Fatalf("parse error did not take priority: %q", m.commandDiagnostic())
+	}
+	uiTestUpdate(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if wantHeight := 12 - m.summary.Height() - 2; m.hasCommandDiagnostic() || m.viewport.Height() != wantHeight {
+		t.Fatalf("clearing hint did not release row: diagnostic=%t height=%d", m.hasCommandDiagnostic(), m.viewport.Height())
+	}
+}
+
+func TestExecutionResultDoesNotRestoreHintForInvalidInput(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	m.commandInput.SetValue("TX")
+	m.commandInput.SetValue("TX @")
+	uiTestUpdate(t, m, commandResultMsg{})
+	if m.commandHint != "" || strings.Contains(ansi.Strip(m.commandDiagnostic()), "Usage:") {
+		t.Fatalf("execution result showed hint for invalid input: %q", m.commandDiagnostic())
 	}
 }
 
@@ -180,7 +220,7 @@ func TestCommandErrorColorsPromptWithActiveTheme(t *testing.T) {
 }
 
 func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
-	_, err := validateCommand("TX AAPL @")
+	_, _, err := validateCommand("TX AAPL @")
 	var parseErr *commands.ParseError
 	if !errors.As(err, &parseErr) {
 		t.Fatal("diagnostic must preserve original ParseError")
@@ -192,9 +232,12 @@ func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
 
 func TestValidateCommandParserEdgeCases(t *testing.T) {
 	for _, raw := range []string{"NOPE", "MKT", "MKT USD", "TX AAPL extra", "MKT EUR AAPL"} {
-		validation, err := validateCommand(raw)
+		validation, hint, err := validateCommand(raw)
 		if err == nil || validation.Status == textinput.StatusValid || validation.Status == textinput.StatusNone {
 			t.Errorf("%q accepted unexpectedly: %#v, %v", raw, validation, err)
+		}
+		if hint != "" {
+			t.Errorf("%q returned invalid-input hint %q", raw, hint)
 		}
 	}
 }
@@ -239,6 +282,10 @@ func TestCommandDiagnosticHonorsNoColor(t *testing.T) {
 	}
 	m.Init()
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("HELP")
+	if got := m.commandDiagnostic(); strings.Contains(got, "\x1b[") || !strings.HasPrefix(got, "Usage: HELP") {
+		t.Fatalf("usage styling ignored NO_COLOR: %q", got)
+	}
 	m.commandInput.SetValue("NOPE")
 	m.syncCommandPromptStyle()
 	if got := m.commandDiagnostic(); strings.Contains(got, "\\x1b[") || ansi.Strip(got) != got {
@@ -288,6 +335,9 @@ func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
 	if got := m.commandInput.Value(); got != "TX AAPL" {
 		t.Fatalf("Tab completion = %q", got)
 	}
+	if m.commandHint != "TX [<broker> [<ticker>] | <ccy> | <ticker>]" {
+		t.Fatalf("Tab did not refresh valid command hint: %q", m.commandHint)
+	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
 	if got := history.Previous(); got != "TX AAPL" {
 		t.Fatalf("Enter history entry = %q", got)
@@ -295,9 +345,12 @@ func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
 }
 
 func TestValidateCommandOnlyChecksSyntax(t *testing.T) {
-	validation, err := validateCommand("MKT USD AAPL")
+	validation, hint, err := validateCommand("MKT USD AAPL")
 	if err != nil || validation.Status != textinput.StatusValid {
 		t.Fatalf("syntax-valid command rejected before execution: %#v, %v", validation, err)
+	}
+	if hint != "MKT <ccy> <ticker>" {
+		t.Fatalf("valid command hint = %q", hint)
 	}
 }
 
