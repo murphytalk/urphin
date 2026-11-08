@@ -230,13 +230,21 @@ func TestUnhandledCursorMessageReachesVisibleInput(t *testing.T) {
 
 func TestCommandDiagnosticHonorsNoColor(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
-	m := uiTestModel(t, nil, nil)
-	m.app.Styles = theme.BuildStyles(theme.Default(), "")
-	m.commandInput.SetStyles(textinput.DefaultStyles(m.app.Styles))
+	app := uiTestApp(&uiTestBackend{})
+	app.Styles = theme.BuildStyles(theme.Default(), "")
+	m, err := NewModel(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Init()
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.commandInput.SetValue("NOPE")
 	m.syncCommandPromptStyle()
 	if got := m.commandDiagnostic(); strings.Contains(got, "\\x1b[") || ansi.Strip(got) != got {
 		t.Fatalf("diagnostic contains color with NO_COLOR: %q", got)
+	}
+	if cursor := m.View().Cursor; cursor == nil || !cursor.Blink {
+		t.Fatalf("terminal cursor does not request blinking under NO_COLOR: %#v", cursor)
 	}
 }
 
