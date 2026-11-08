@@ -33,6 +33,8 @@ jobs:
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Build public version
+        env:
+          ANTLR_TOOL_CLASSPATH: ${{ runner.temp }}/antlr-4.13.2-complete.jar
         run: make public
 
       - name: Test
