@@ -32,14 +32,14 @@ type AppCfg struct {
 	// LogKeepDays is a pointer so an absent key stays distinct from a configured
 	// 0: absent falls back to the default, while 0 keeps every rotated file, the
 	// same meaning as lumberjack's MaxAge 0.
-	LogKeepDays        *int     `yaml:"logKeepDays"`
-	Cache              string   `yaml:"cache"`
-	Databackend        string   `yaml:"databackend"`
-	OneShotMktDataFeed string   `yaml:"one-shot-mkt-data-feed"`
-	RandomMktData      bool     `yaml:"random-mkt-data"`
-	FxPairs            []string `yaml:"fx-pairs"`
-	Theme              string   `yaml:"theme"`
-	PriceColors        string   `yaml:"price-colors"`
+	LogKeepDays   *int        `yaml:"logKeepDays"`
+	Cache         string      `yaml:"cache"`
+	Databackend   string      `yaml:"databackend"`
+	MktDataFeed   QuoteSource `yaml:"mkt-data-feed"`
+	RandomMktData bool        `yaml:"random-mkt-data"`
+	FxPairs       []string    `yaml:"fx-pairs"`
+	Theme         string      `yaml:"theme"`
+	PriceColors   string      `yaml:"price-colors"`
 }
 
 type Settings struct {

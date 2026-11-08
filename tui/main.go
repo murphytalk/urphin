@@ -120,7 +120,7 @@ func init() {
 	flag.BoolVar(&listThemes, "list-themes", false, "list available themes")
 	flag.StringVar(&importTheme, "import-theme", "", "import a Base16 YAML theme")
 	flag.StringVar(&cmdLine, "C", "", "parse and run one command, then exit")
-	flag.StringVar(&mktDataFeedOverride, "m", "", "override one-shot market-data feed (yahoo or alpaca)")
+	flag.StringVar(&mktDataFeedOverride, "m", "", "override market-data feed")
 	flag.StringVar(&logPath, "log", logPathDefault, "log file")
 	flag.BoolVar(&ctx.Debug, "D", false, "debug log")
 
@@ -206,7 +206,7 @@ func run() int {
 
 	if commandProvided {
 		cachePath := ctx.Cfg.App.Cache
-		getLastPrices, err := resolveOneShotMktDataFeed(ctx.Cfg.App.OneShotMktDataFeed, mktDataFeedOverride, ctx.Cfg.Alpaca, cachePath)
+		getLastPrices, err := resolveOneShotMktDataFeed(ctx.Cfg.App.MktDataFeed, mktDataFeedOverride, ctx.Cfg.Alpaca, cachePath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -250,12 +250,12 @@ func run() int {
 
 	marketData := mktdata.NewMktData()
 	err := marketData.Start(mktdata.MktDataConfig{
-		CachePath:         ctx.Cfg.App.Cache,
-		TargetCurrency:    ctx.Settings.BaseCurrency,
-		FxPairs:           ctx.Cfg.App.FxPairs,
-		AlpacaCredentials: ctx.Cfg.Alpaca,
-		RandomMktData:     ctx.Cfg.App.RandomMktData,
-		RefreshInterval:   time.Duration(ctx.Settings.RefreshInterval) * time.Second,
+		CachePath:       ctx.Cfg.App.Cache,
+		TargetCurrency:  ctx.Settings.BaseCurrency,
+		FxPairs:         ctx.Cfg.App.FxPairs,
+		Cfg:             ctx.Cfg,
+		RandomMktData:   ctx.Cfg.App.RandomMktData,
+		RefreshInterval: time.Duration(ctx.Settings.RefreshInterval) * time.Second,
 	})
 	if err != nil {
 		slog.Error("Failed to start market data feeds", "error", err)
@@ -341,9 +341,9 @@ func startUI(requestCtx context.Context, mktData mktdata.MktData) error {
 	return ui.Run(requestCtx, ctx, mktData)
 }
 
-func resolveOneShotMktDataFeed(feed string, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {
+func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {
 	if override != "" {
-		feed = override
+		feed = c.QuoteSource(override)
 	}
 	if feed == "" {
 		feed = "yahoo"

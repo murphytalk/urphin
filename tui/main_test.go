@@ -75,7 +75,7 @@ func TestResolveOneShotMktDataFeed(t *testing.T) {
 	t.Cleanup(func() { ctx.Cfg = oldCfg })
 
 	for _, test := range []struct {
-		input    string
+		input    c.QuoteSource
 		override string
 		want     bool
 		wantErr  bool
@@ -89,7 +89,7 @@ func TestResolveOneShotMktDataFeed(t *testing.T) {
 		{input: "Yahoo", wantErr: true},
 		{input: "other", wantErr: true},
 	} {
-		t.Run(test.input+"/"+test.override, func(t *testing.T) {
+		t.Run(string(test.input)+"/"+test.override, func(t *testing.T) {
 			getLastPrices, err := resolveOneShotMktDataFeed(test.input, test.override, c.KeySecretCfg{}, "")
 			if (err != nil) != test.wantErr {
 				t.Fatalf("resolveOneShotMktDataFeed(%q, %q) error = %v, wantErr %v", test.input, test.override, err, test.wantErr)
@@ -97,7 +97,7 @@ func TestResolveOneShotMktDataFeed(t *testing.T) {
 			if (getLastPrices != nil) != test.want {
 				t.Fatalf("resolveOneShotMktDataFeed(%q, %q) returned function = %t, want %t", test.input, test.override, getLastPrices != nil, test.want)
 			}
-			selected := test.input
+			selected := string(test.input)
 			if test.override != "" {
 				selected = test.override
 			}

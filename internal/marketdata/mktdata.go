@@ -13,27 +13,26 @@ import (
 	"time"
 
 	//priceCoinbase "github.com/murphytalk/urphin/internal/marketdata/coinbase/monitor-price"
+
 	c "github.com/murphytalk/urphin/internal"
-	alpacaFeed "github.com/murphytalk/urphin/internal/marketdata/alpaca"
+
+	alpacaFeed "github.com/murphytalk/urphin/internal/marketdata/mktfeed/alpaca"
 	"github.com/murphytalk/urphin/internal/marketdata/cache"
+	mktfeed "github.com/murphytalk/urphin/internal/marketdata/mktfeed"
 	currencyRate "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-currency-rates"
 	price "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price"
 	unaryClientYahoo "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
 )
 
-type MktDataFeed interface {
-	Start() error
-	GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error)
-	SetSymbols(symbols []string, versionVector int) error
-	Stop() error
-}
-
 // mktDataFeed kept for older tests and helper code that refer to the concrete
 // market-data feed interface by the shorter name.
-type mktDataFeed = MktDataFeed
+type mktDataFeed = mktfeed.MktDataFeed
+type MktDataFeed = mktfeed.MktDataFeed
+type MktDataConfig = mktfeed.MktDataConfig
+type MktFeedFactory = mktfeed.MktFeedFactory
 
 type MktData interface {
-	Start(config MktDataConfig) error
+	Start(config mktfeed.MktDataConfig) error
 	Stop() error
 	// Subscribe merges symbols for id and requests them from every enabled provider.
 	// Quotes retain their provider-reported asset class. Repeat calls must use the same non-nil channel.
@@ -42,23 +41,19 @@ type MktData interface {
 	Subscribe(id string, symbols []string, updates chan<- c.AssetQuote) error
 	// Unsubscribe removes all symbols for id without closing its channel.
 	Unsubscribe(id string) error
-	RegisterMktDataFeed(feedName c.QuoteSource, feed MktDataFeed)
+	RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed)
 }
 
-type MktDataConfig struct {
-	CachePath         string
-	TargetCurrency    string
-	FxPairs           []string
-	AlpacaCredentials c.KeySecretCfg
-	RandomMktData     bool
-	RefreshInterval   time.Duration
-}
+type MktFeedFactoryMap = mktfeed.MktFeedFactoryMap
 
 // NewMktData creates an independent market-data service instance.
 func NewMktData() MktData {
 	return &mktDataImpl{
 		subscribers:  make(map[string]*subscriber),
 		pendingFeeds: make(map[c.QuoteSource]bool),
+		mktFeedFactories: MktFeedFactoryMap{
+			c.QuoteSourceAlpaca: alpacaFactory,
+		},
 	}
 }
 
@@ -112,23 +107,24 @@ const (
 )
 
 type mktDataImpl struct {
-	mu             sync.RWMutex
-	opMu           sync.Mutex
-	subscribers    map[string]*subscriber
-	feeds          map[c.QuoteSource]MktDataFeed
-	pendingFeeds   map[c.QuoteSource]bool // Protected by opMu; failed updates must be retried even when desired keys are unchanged.
-	currencyRates  c.MonitorCurrencyRate
-	fxPairSet      map[string]struct{}
-	fxQuotes       map[string]c.AssetQuote
-	fxRequests     chan []string
-	targetCurrency string
-	state          lifecycleState
-	ctx            context.Context
-	cancel         context.CancelFunc
-	chanError      chan error
-	chanQuotes     chan c.MessageUpdate[c.AssetQuote]
-	chanRates      chan c.CurrencyRates
-	versionVector  int
+	mu               sync.RWMutex
+	opMu             sync.Mutex
+	subscribers      map[string]*subscriber
+	feeds            map[c.QuoteSource]mktfeed.MktDataFeed
+	pendingFeeds     map[c.QuoteSource]bool // Protected by opMu; failed updates must be retried even when desired keys are unchanged.
+	currencyRates    c.MonitorCurrencyRate
+	fxPairSet        map[string]struct{}
+	fxQuotes         map[string]c.AssetQuote
+	fxRequests       chan []string
+	targetCurrency   string
+	state            lifecycleState
+	ctx              context.Context
+	cancel           context.CancelFunc
+	chanError        chan error
+	chanQuotes       chan c.MessageUpdate[c.AssetQuote]
+	chanRates        chan c.CurrencyRates
+	mktFeedFactories MktFeedFactoryMap
+	versionVector    int
 }
 
 type subscriber struct {
@@ -136,7 +132,7 @@ type subscriber struct {
 	updates chan<- c.AssetQuote
 }
 
-func (m *mktDataImpl) Start(config MktDataConfig) error {
+func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
@@ -171,19 +167,33 @@ func (m *mktDataImpl) Start(config MktDataConfig) error {
 	}
 	mktCache := cache.New(config.CachePath)
 	yahooAPI := newYahooAPI(mktCache, config.RandomMktData)
-	m.feeds = map[c.QuoteSource]MktDataFeed{
+	m.feeds = map[c.QuoteSource]mktfeed.MktDataFeed{
 		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanQuotes, chanRequestRates),
 	}
 	m.currencyRates = newYahooCurrencyRateMonitor(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanRates, chanRequestRates)
 	if config.RandomMktData {
 		slog.Warn("Only random market-data feed is enabled")
 	} else {
-		if err := addAlpacaProvider(m, config); err != nil {
-			m.cancel()
-			m.markStopped()
-			return err
+		regExtendedMktFeedFactories(m.mktFeedFactories)
+
+		if config.Cfg.App.MktDataFeed != "" {
+			factory, ok := m.mktFeedFactories[config.Cfg.App.MktDataFeed]
+			if !ok {
+				return errors.New("Market-data feed not registered; using Yahoo only")
+			} else {
+				slog.Info("Creating market-data feed", "feed", config.Cfg.App.MktDataFeed)
+				feed, err := factory(config, m.ctx, m.chanError, m.chanQuotes)
+				if err != nil {
+					return fmt.Errorf("failed to create market-data feed: %w", err)
+				} else {
+					m.RegisterMktDataFeed(config.Cfg.App.MktDataFeed, feed)
+				}
+			}
+		} else {
+			slog.Warn("Yahoo market feed only")
 		}
 	}
+
 	m.startConsumers(slices.Sorted(maps.Keys(m.fxPairSet)))
 	if err := m.startCurrencyRateMonitor(m.currencyRates); err != nil {
 		m.cancel()
@@ -209,7 +219,7 @@ func (m *mktDataImpl) beginStart() error {
 	return nil
 }
 
-func newYahooPriceFeed(config MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, quotes chan c.MessageUpdate[c.AssetQuote], requests chan []string) MktDataFeed {
+func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, quotes chan c.MessageUpdate[c.AssetQuote], requests chan []string) MktDataFeed {
 	return price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
 		UnaryAPI:                 api,
@@ -220,7 +230,7 @@ func newYahooPriceFeed(config MktDataConfig, ctx context.Context, api *unaryClie
 	}, price.WithRefreshInterval(config.RefreshInterval))
 }
 
-func newYahooCurrencyRateMonitor(config MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, updates chan c.CurrencyRates, requests chan []string) c.MonitorCurrencyRate {
+func newYahooCurrencyRateMonitor(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, updates chan c.CurrencyRates, requests chan []string) c.MonitorCurrencyRate {
 	monitor := currencyRate.NewMonitorCurrencyRateYahoo(currencyRate.Config{
 		Ctx:                      ctx,
 		UnaryAPI:                 api,
@@ -233,28 +243,23 @@ func newYahooCurrencyRateMonitor(config MktDataConfig, ctx context.Context, api 
 	return monitor
 }
 
-func addAlpacaProvider(m *mktDataImpl, config MktDataConfig) error {
-	credentials := config.AlpacaCredentials
+func alpacaFactory(mktCfg mktfeed.MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.MessageUpdate[c.AssetQuote]) (mktfeed.MktDataFeed, error) {
+	credentials := mktCfg.Cfg.Alpaca
 	if credentials.Key == "" || credentials.Secret == "" {
 		if credentials.Key != "" || credentials.Secret != "" {
-			slog.Error("Alpaca market data feed not registered: both API key and secret are required")
+			return nil, fmt.Errorf("Alpaca market data feed not registered: both API key and secret are required")
 		}
-		return nil
 	}
-	feed, err := alpacaFeed.NewMktDataFeed(alpacaFeed.Config{
-		Ctx:                  m.ctx,
+
+	return alpacaFeed.NewMktDataFeed(alpacaFeed.Config{
+		Ctx:                  ctx,
 		Credentials:          credentials,
-		ChanError:            m.chanError,
-		ChanUpdateAssetQuote: m.chanQuotes,
+		ChanError:            chanError,
+		ChanUpdateAssetQuote: chanQuotes,
 	})
-	if err != nil {
-		return fmt.Errorf("create Alpaca market data feed: %w", err)
-	}
-	m.RegisterMktDataFeed(c.QuoteSourceAlpaca, feed)
-	return nil
 }
 
-func (m *mktDataImpl) RegisterMktDataFeed(feedName c.QuoteSource, feed MktDataFeed) {
+func (m *mktDataImpl) RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed) {
 	m.feeds[feedName] = feed
 }
 
@@ -304,7 +309,7 @@ func requestFxPairRates(ctx context.Context, pairs []string, targetCurrency stri
 }
 
 func (m *mktDataImpl) startProviders() error {
-	started := make([]MktDataFeed, 0, len(m.feeds))
+	started := make([]mktfeed.MktDataFeed, 0, len(m.feeds))
 	for _, source := range feedSources(m.feeds) {
 		feed := m.feeds[source]
 		if err := m.startProvider(source, feed); err != nil {
@@ -315,7 +320,7 @@ func (m *mktDataImpl) startProviders() error {
 	return nil
 }
 
-func (m *mktDataImpl) startProvider(source c.QuoteSource, feed MktDataFeed) error {
+func (m *mktDataImpl) startProvider(source c.QuoteSource, feed mktfeed.MktDataFeed) error {
 	symbols := slices.Sorted(maps.Keys(m.subscriptionSymbols()))
 	if len(symbols) > 0 {
 		if err := feed.SetSymbols(symbols, m.versionVector); err != nil {
@@ -362,7 +367,7 @@ func (m *mktDataImpl) Stop() error {
 	return errors.Join(m.stopProviders(feeds), m.stopCurrencyRateMonitor(currencyRates))
 }
 
-func (m *mktDataImpl) stopProviders(feeds map[c.QuoteSource]MktDataFeed) error {
+func (m *mktDataImpl) stopProviders(feeds map[c.QuoteSource]mktfeed.MktDataFeed) error {
 	var errs []error
 	for _, source := range feedSources(feeds) {
 		if err := m.stopProvider(source, feeds[source]); err != nil {
@@ -372,7 +377,7 @@ func (m *mktDataImpl) stopProviders(feeds map[c.QuoteSource]MktDataFeed) error {
 	return errors.Join(errs...)
 }
 
-func (m *mktDataImpl) stopProvider(source c.QuoteSource, feed MktDataFeed) error {
+func (m *mktDataImpl) stopProvider(source c.QuoteSource, feed mktfeed.MktDataFeed) error {
 	if err := feed.Stop(); err != nil {
 		return fmt.Errorf("stop %v market-data feed: %w", source, err)
 	}
@@ -513,7 +518,7 @@ func (m *mktDataImpl) subscriptionSymbols() map[string]struct{} {
 
 func (m *mktDataImpl) updateProviderSubscriptions(
 	source c.QuoteSource,
-	feed MktDataFeed,
+	feed mktfeed.MktDataFeed,
 	oldSubscriptions, newSubscriptions map[string]struct{},
 	action string,
 ) error {
@@ -536,7 +541,7 @@ func (m *mktDataImpl) markStopped() {
 	m.mu.Unlock()
 }
 
-func (m *mktDataImpl) failStart(cause error, started []MktDataFeed, rates c.MonitorCurrencyRate, cancel context.CancelFunc) error {
+func (m *mktDataImpl) failStart(cause error, started []mktfeed.MktDataFeed, rates c.MonitorCurrencyRate, cancel context.CancelFunc) error {
 	if cancel != nil {
 		cancel()
 	}
@@ -678,7 +683,7 @@ func deliverQuote(sub *subscriber, quote c.AssetQuote, symbols map[string]struct
 	}
 }
 
-func feedSources(feeds map[c.QuoteSource]MktDataFeed) []c.QuoteSource {
+func feedSources(feeds map[c.QuoteSource]mktfeed.MktDataFeed) []c.QuoteSource {
 	sources := make([]c.QuoteSource, 0, len(feeds))
 	for source := range feeds {
 		sources = append(sources, source)
