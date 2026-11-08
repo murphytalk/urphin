@@ -24,12 +24,18 @@ func TestValidateCommand(t *testing.T) {
 		valid  string
 		hasErr bool
 	}{
+		{"", textinput.StatusNone, "", false},
 		{"  \t", textinput.StatusNone, "", false},
 		{"tx aapl", textinput.StatusValid, "TX aapl", false},
+		{"NOPE", textinput.StatusInvalid, "", true},
 		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", true},
 		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", true},
+		{"MKT", textinput.StatusPartialInvalid, "MKT", true},
 		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", true},
+		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", true},
+		{"TX AAPL extra", textinput.StatusPartialInvalid, "TX AAPL ", true},
 		{"PROP TICKER AAPL Note 日本語 extra", textinput.StatusPartialInvalid, "PROP TICKER AAPL Note 日本語 ", true},
+		{"PROP TICKER AAPL Note MixedCase", textinput.StatusValid, "PROP TICKER AAPL Note MixedCase", false},
 	} {
 		v, err := validateCommand(tc.raw)
 		if v.Status != tc.status || v.Valid != tc.valid || (err != nil) != tc.hasErr {
@@ -68,6 +74,7 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	m.commandErr = errors.New("syntax error")
 	for _, showSummary := range []bool{false, true} {
+		m.commandErr = errors.New("syntax error")
 		m.app.Settings.ShowSummary = showSummary
 		header := 0
 		if showSummary {
@@ -99,6 +106,14 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 			if height >= threshold && !strings.Contains(content, "syntax error") {
 				t.Fatalf("height %d lost diagnostic in normal layout", height)
 			}
+		}
+		m.commandErr = nil
+		uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: header + 4})
+		if got, want := len(strings.Split(m.View().Content, "\n")), header+4; got != want {
+			t.Fatalf("summary=%t no-error rows=%d, want %d", showSummary, got, want)
+		}
+		if m.viewport.Height() != 2 {
+			t.Fatalf("summary=%t no-error viewport height=%d, want 2", showSummary, m.viewport.Height())
 		}
 	}
 }
@@ -192,9 +207,24 @@ func TestCommandInputFocusTracksVisibility(t *testing.T) {
 	if m.commandInput.Focused() {
 		t.Fatal("narrow hidden input retained focus")
 	}
-	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("kept")
+	uiTestUpdate(t, m, tea.PasteMsg{Content: " hidden"})
+	if got := m.commandInput.Value(); got != "kept" {
+		t.Fatalf("hidden input accepted paste: %q", got)
+	}
+	if cmd := uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12}); cmd == nil {
+		t.Fatal("showing input did not restart cursor")
+	}
 	if !m.commandInput.Focused() {
 		t.Fatal("visible input did not regain focus")
+	}
+}
+
+func TestUnhandledCursorMessageReachesVisibleInput(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	if cmd := uiTestUpdate(t, m, tea.FocusMsg{}); cmd == nil {
+		t.Fatal("visible input did not handle cursor startup message")
 	}
 }
 
