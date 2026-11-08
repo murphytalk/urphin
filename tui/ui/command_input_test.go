@@ -243,8 +243,8 @@ func TestCommandDiagnosticHonorsNoColor(t *testing.T) {
 	if got := m.commandDiagnostic(); strings.Contains(got, "\\x1b[") || ansi.Strip(got) != got {
 		t.Fatalf("diagnostic contains color with NO_COLOR: %q", got)
 	}
-	if cursor := m.View().Cursor; cursor == nil || !cursor.Blink {
-		t.Fatalf("terminal cursor does not request blinking under NO_COLOR: %#v", cursor)
+	if !m.commandInput.VirtualCursor() || !strings.Contains(m.commandInput.View(), "\x1b[7m") {
+		t.Fatal("NO_COLOR input did not render its software-blinking cursor")
 	}
 }
 

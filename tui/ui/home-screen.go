@@ -139,9 +139,6 @@ func NewModel(app setup.AppCtx) (*Model, error) {
 	styles := textinput.DefaultStyles(app.Styles)
 	styles.Valid = app.Styles.Gain
 	m.commandInput.SetStyles(styles)
-	if _, noColor := app.Styles.ErrorColor.(lipgloss.NoColor); noColor {
-		m.commandInput.SetVirtualCursor(false)
-	}
 	m.commandInput.Placeholder = "Syntax check"
 	m.commandInput.AutoCase = true
 	m.commandInput.ShowSuggestions = true

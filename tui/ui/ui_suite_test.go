@@ -61,7 +61,10 @@ var _ = Describe("home screen theme roles", func() {
 		noColorModel := appWithTheme()
 		noColorView := noColorModel.View()
 		view = noColorView.Content
-		Expect(strings.Contains(view, "\x1b[")).To(BeFalse())
-		Expect(noColorView.Cursor).NotTo(BeNil())
+		Expect(strings.Contains(view, "\x1b[7m")).To(BeTrue())
+		withoutCursorStyle := strings.ReplaceAll(view, "\x1b[7m", "")
+		withoutCursorStyle = strings.ReplaceAll(withoutCursorStyle, "\x1b[m", "")
+		Expect(strings.Contains(withoutCursorStyle, "\x1b[")).To(BeFalse())
+		Expect(noColorView.Cursor).To(BeNil())
 	})
 })
