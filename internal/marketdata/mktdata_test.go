@@ -16,7 +16,7 @@ import (
 func TestFXQuotesInvertPreviousCloseWithRate(t *testing.T) {
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
 	service.fxQuotes = make(map[string]c.AssetQuote)
-	updates := make(chan c.AssetQuote, 2)
+	updates := make(chan c.QuoteUpdate, 2)
 	subscribeQuotes(t, service, "fx", updates, "EURUSD", "USDJPY")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,7 +29,7 @@ func TestFXQuotesInvertPreviousCloseWithRate(t *testing.T) {
 	for _, want := range []c.QuotePrice{{Price: 1.1, PricePrevClose: 1}, {Price: 200, PricePrevClose: 250}} {
 		select {
 		case quote := <-updates:
-			if quote.QuotePrice != want {
+			if quote.QuotePrice == nil || *quote.QuotePrice != want {
 				t.Fatalf("FX quote = %+v, want %+v", quote.QuotePrice, want)
 			}
 		case <-time.After(2 * time.Second):
@@ -72,14 +72,18 @@ func (f *testMktDataFeed) Start() error {
 
 func (f *testMktDataFeed) Stop() error { return nil }
 
-func (f *testMktDataFeed) GetAssetQuotes(...bool) ([]c.AssetQuote, error) {
+func (f *testMktDataFeed) GetAssetQuotes(...bool) ([]c.QuoteUpdate, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.snapshotReads++
 	if f.failSnapshot {
 		return nil, errors.New("test snapshot read failed")
 	}
-	return slices.Clone(f.quotes), nil
+	updates := make([]c.QuoteUpdate, 0, len(f.quotes))
+	for _, quote := range f.quotes {
+		updates = append(updates, c.NewQuoteUpdate(quote, 0, 0))
+	}
+	return updates, nil
 }
 
 func (f *testMktDataFeed) SetSymbols(symbols []string, _ int) error {
@@ -103,18 +107,19 @@ func newTestMktData(feeds map[c.QuoteSource]mktDataFeed) *mktDataImpl {
 	return service
 }
 
-func subscribeQuotes(t *testing.T, service *mktDataImpl, id string, updates chan c.AssetQuote, symbols ...string) {
+func subscribeQuotes(t *testing.T, service *mktDataImpl, id string, updates chan c.QuoteUpdate, symbols ...string) {
 	t.Helper()
 	if err := service.Subscribe(id, symbols, updates); err != nil {
 		t.Fatalf("Subscribe(%q) error = %v", id, err)
 	}
 }
 
-func wantQuote(t *testing.T, updates <-chan c.AssetQuote, want c.AssetQuote) {
+func wantQuote(t *testing.T, updates <-chan c.QuoteUpdate, want c.AssetQuote) {
 	t.Helper()
 	select {
 	case got, open := <-updates:
-		if !open || got != want {
+		local, hasPrice := got.ToAssetQuote(nil)
+		if !open || !hasPrice || local != want {
 			t.Fatalf("quote = %+v (open=%t), want %+v", got, open, want)
 		}
 	default:
@@ -122,7 +127,7 @@ func wantQuote(t *testing.T, updates <-chan c.AssetQuote, want c.AssetQuote) {
 	}
 }
 
-func wantNoQuote(t *testing.T, updates <-chan c.AssetQuote) {
+func wantNoQuote(t *testing.T, updates <-chan c.QuoteUpdate) {
 	t.Helper()
 	select {
 	case got, open := <-updates:
@@ -134,7 +139,7 @@ func wantNoQuote(t *testing.T, updates <-chan c.AssetQuote) {
 func TestNewMktDataReturnsIndependentInstances(t *testing.T) {
 	first := NewMktData().(*mktDataImpl)
 	second := NewMktData().(*mktDataImpl)
-	subscribeQuotes(t, first, "watch", make(chan c.AssetQuote, 1), "AAPL")
+	subscribeQuotes(t, first, "watch", make(chan c.QuoteUpdate, 1), "AAPL")
 	first.pendingFeeds[c.QuoteSourceYahoo] = true
 	if first == second || len(second.subscriptionSymbols()) != 0 || len(second.pendingFeeds) != 0 {
 		t.Fatal("new market-data instances share service or subscription state")
@@ -152,7 +157,7 @@ func TestSubscribersMergeSymbolsAndKeepSharedProviderSymbols(t *testing.T) {
 	alpaca := &testMktDataFeed{}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: yahoo, c.QuoteSourceAlpaca: alpaca})
 	aapl, spy := "AAPL", "SPY"
-	first, second := make(chan c.AssetQuote, 10), make(chan c.AssetQuote, 10)
+	first, second := make(chan c.QuoteUpdate, 10), make(chan c.QuoteUpdate, 10)
 	subscribeQuotes(t, service, "first", first, aapl, aapl)
 	subscribeQuotes(t, service, "first", first, spy, aapl)
 	subscribeQuotes(t, service, "second", second, aapl)
@@ -204,7 +209,7 @@ func TestSubscriptionSnapshotsAreIsolatedAndOnlySeedNewSymbols(t *testing.T) {
 	}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: feed})
 	aapl, spy := "AAPL", "SPY"
-	first, second := make(chan c.AssetQuote, 10), make(chan c.AssetQuote, 10)
+	first, second := make(chan c.QuoteUpdate, 10), make(chan c.QuoteUpdate, 10)
 	subscribeQuotes(t, service, "first", first, aapl)
 	wantQuote(t, first, apple)
 	live := apple
@@ -231,7 +236,7 @@ type orderedSnapshotFeed struct {
 	afterSnapshot func()
 }
 
-func (f *orderedSnapshotFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error) {
+func (f *orderedSnapshotFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
 	quotes, err := f.testMktDataFeed.GetAssetQuotes(ignoreCache...)
 	if f.afterSnapshot != nil {
 		f.afterSnapshot()
@@ -246,7 +251,7 @@ func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
 	feed := &orderedSnapshotFeed{testMktDataFeed: testMktDataFeed{quotes: []c.AssetQuote{old}}}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceAlpaca: feed})
 	feed.afterSnapshot = func() { service.routeQuote(c.QuoteSourceAlpaca, live) }
-	updates := make(chan c.AssetQuote, 2)
+	updates := make(chan c.QuoteUpdate, 2)
 
 	if err := service.Subscribe("home", []string{"AAPL"}, updates); err != nil {
 		t.Fatal(err)
@@ -256,7 +261,7 @@ func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
 }
 
 func BenchmarkQuoteDelivery(b *testing.B) {
-	updates := make(chan c.AssetQuote, 1)
+	updates := make(chan c.QuoteUpdate, 1)
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
 	service.subscribers["benchmark"] = &subscriber{
 		symbols: map[string]struct{}{"AAPL": {}}, updates: updates,
@@ -295,7 +300,7 @@ func TestStopWaitsForStalledSubscriptionProviderCall(t *testing.T) {
 	}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceAlpaca: feed})
 	subscribeDone := make(chan error, 1)
-	go func() { subscribeDone <- service.Subscribe("home", []string{"AAPL"}, make(chan c.AssetQuote, 1)) }()
+	go func() { subscribeDone <- service.Subscribe("home", []string{"AAPL"}, make(chan c.QuoteUpdate, 1)) }()
 	<-feed.entered
 
 	stopDone := make(chan error, 1)
@@ -325,7 +330,7 @@ func TestRouteQuoteFanoutPreservesClassesAndUsesSymbolFallback(t *testing.T) {
 		t.Run(fmt.Sprint(source), func(t *testing.T) {
 			feed := &testMktDataFeed{}
 			service := newTestMktData(map[c.QuoteSource]mktDataFeed{source: feed})
-			first, second := make(chan c.AssetQuote, 4), make(chan c.AssetQuote, 4)
+			first, second := make(chan c.QuoteUpdate, 4), make(chan c.QuoteUpdate, 4)
 			subscribeQuotes(t, service, "first", first, "SPY", "SPY")
 			subscribeQuotes(t, service, "second", second, "SPY")
 			for _, fallback := range []bool{false, true} {
@@ -353,6 +358,46 @@ func TestRouteQuoteFanoutPreservesClassesAndUsesSymbolFallback(t *testing.T) {
 	}
 }
 
+func TestQuoteFanoutUsesIndependentPricesForEveryPublication(t *testing.T) {
+	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
+	first, second := make(chan c.QuoteUpdate, 2), make(chan c.QuoteUpdate, 2)
+	subscribeQuotes(t, service, "first", first, "AAPL")
+	subscribeQuotes(t, service, "second", second, "AAPL")
+	quote := c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
+
+	service.routeQuote(c.QuoteSourceYahoo, quote)
+	firstUpdate, secondUpdate := <-first, <-second
+	if firstUpdate.QuotePrice == secondUpdate.QuotePrice {
+		t.Fatal("subscribers share mutable price pointer")
+	}
+	firstUpdate.QuotePrice.Price = 1
+	if secondUpdate.QuotePrice.Price != 100 || quote.QuotePrice.Price != 100 {
+		t.Fatal("recipient mutation changed another subscriber or local quote")
+	}
+
+	service.routeQuote(c.QuoteSourceYahoo, quote)
+	nextFirst, nextSecond := <-first, <-second
+	if nextFirst.QuotePrice == firstUpdate.QuotePrice || nextSecond.QuotePrice == secondUpdate.QuotePrice ||
+		nextFirst.QuotePrice == nextSecond.QuotePrice || nextFirst.QuotePrice.Price != 100 {
+		t.Fatal("successive publications reused or shared a price pointer")
+	}
+}
+
+func TestDroppedQuoteDeliveryRetainsPublisherOwnership(t *testing.T) {
+	updates := make(chan c.QuoteUpdate, 1)
+	sentinel := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: 1}}, 0, 0)
+	updates <- sentinel
+	owned := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: 2}}, 0, 0)
+	price := owned.QuotePrice
+	deliverQuote(&subscriber{updates: updates}, owned, map[string]struct{}{"AAPL": {}})
+	if owned.QuotePrice != price || owned.QuotePrice.Price != 2 {
+		t.Fatal("failed enqueue changed or transferred publisher-owned object")
+	}
+	if got := <-updates; got.QuotePrice == nil || got.QuotePrice.Price != 1 {
+		t.Fatal("full subscriber channel lost existing item")
+	}
+}
+
 func TestSubscribeValidation(t *testing.T) {
 	symbol := "AAPL"
 	for _, test := range []struct {
@@ -365,7 +410,7 @@ func TestSubscribeValidation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := NewMktData().(*mktDataImpl)
-			updates := make(chan c.AssetQuote, 1)
+			updates := make(chan c.QuoteUpdate, 1)
 			if test.nilChannel {
 				updates = nil
 			}
@@ -380,7 +425,7 @@ func TestSubscribeValidation(t *testing.T) {
 
 	t.Run("same ID requires same channel until unsubscribe", func(t *testing.T) {
 		service := NewMktData().(*mktDataImpl)
-		first, second := make(chan c.AssetQuote, 1), make(chan c.AssetQuote, 1)
+		first, second := make(chan c.QuoteUpdate, 1), make(chan c.QuoteUpdate, 1)
 		subscribeQuotes(t, service, "watch", first, symbol)
 		other := "SPY"
 		if err := service.Subscribe("watch", []string{other}, second); err == nil {
@@ -406,7 +451,7 @@ func TestSubscribeValidation(t *testing.T) {
 			if prestart {
 				service.state = lifecycleNew
 			}
-			updates := make(chan c.AssetQuote, 1)
+			updates := make(chan c.QuoteUpdate, 1)
 			err := service.Subscribe("watch", []string{symbol, ""}, updates)
 			if err == nil || err.Error() != "empty symbol" {
 				t.Fatalf("Subscribe error = %v, want only empty-symbol error", err)
@@ -425,7 +470,7 @@ func TestSubscribeValidation(t *testing.T) {
 
 func TestPrestartSubscriptionsApplyUnionAndSnapshotsAtProviderStart(t *testing.T) {
 	service := NewMktData().(*mktDataImpl)
-	first, second := make(chan c.AssetQuote, 4), make(chan c.AssetQuote, 4)
+	first, second := make(chan c.QuoteUpdate, 4), make(chan c.QuoteUpdate, 4)
 	subscribeQuotes(t, service, "first", first, "AAPL", "SPY")
 	subscribeQuotes(t, service, "second", second, "AAPL")
 	wantNoQuote(t, first)
@@ -465,7 +510,7 @@ func TestSubscribeRetriesTotalAndPartialProviderFailures(t *testing.T) {
 				good.quotes = []c.AssetQuote{other}
 				service.feeds[c.QuoteSourceAlpaca] = good
 			}
-			updates := make(chan c.AssetQuote, 4)
+			updates := make(chan c.QuoteUpdate, 4)
 			for attempt := 0; attempt < 2; attempt++ {
 				if err := service.Subscribe("watch", []string{symbol}, updates); err == nil || !strings.Contains(err.Error(), "rejected subscription") {
 					t.Fatalf("Subscribe error = %v, want provider failure", err)
@@ -499,7 +544,7 @@ func TestSubscriptionSnapshotReadFailureIsReturnedAndRetried(t *testing.T) {
 	quote := c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock}
 	feed := &testMktDataFeed{failSnapshot: true, quotes: []c.AssetQuote{quote}}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: feed})
-	updates := make(chan c.AssetQuote, 2)
+	updates := make(chan c.QuoteUpdate, 2)
 	if err := service.Subscribe("watch", []string{symbol}, updates); err == nil || !strings.Contains(err.Error(), "snapshot read failed") {
 		t.Fatalf("Subscribe error = %v, want snapshot failure", err)
 	}
@@ -522,7 +567,7 @@ func TestSubscriptionSnapshotReadFailureIsReturnedAndRetried(t *testing.T) {
 func TestUnsubscribeFailureUnregistersImmediatelyAndUnknownIDRetries(t *testing.T) {
 	feed := &testMktDataFeed{}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: feed})
-	updates := make(chan c.AssetQuote, 2)
+	updates := make(chan c.QuoteUpdate, 2)
 	subscribeQuotes(t, service, "watch", updates, "AAPL")
 	feed.mu.Lock()
 	feed.failOnUnsubscribe = true
@@ -558,11 +603,11 @@ func TestBlockedSubscribersDoNotStallSnapshotsOrLiveFanout(t *testing.T) {
 	quote := c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock}
 	feed := &testMktDataFeed{quotes: []c.AssetQuote{quote}}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: feed})
-	full, unbuffered, fast := make(chan c.AssetQuote, 1), make(chan c.AssetQuote), make(chan c.AssetQuote, 128)
-	full <- c.AssetQuote{Symbol: "sentinel"}
+	full, unbuffered, fast := make(chan c.QuoteUpdate, 1), make(chan c.QuoteUpdate), make(chan c.QuoteUpdate, 128)
+	full <- c.NewQuoteUpdate(c.AssetQuote{Symbol: "sentinel"}, 0, 0)
 	done := make(chan error, 1)
 	go func() {
-		for id, updates := range map[string]chan c.AssetQuote{"full": full, "unbuffered": unbuffered, "fast": fast} {
+		for id, updates := range map[string]chan c.QuoteUpdate{"full": full, "unbuffered": unbuffered, "fast": fast} {
 			if err := service.Subscribe(id, []string{"AAPL"}, updates); err != nil {
 				done <- err
 				return
@@ -593,7 +638,7 @@ func TestBlockedSubscribersDoNotStallSnapshotsOrLiveFanout(t *testing.T) {
 func TestConcurrentRoutingAndSubscriberChanges(t *testing.T) {
 	feed := &testMktDataFeed{}
 	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: feed, c.QuoteSourceAlpaca: feed})
-	stable := make(chan c.AssetQuote, 2048)
+	stable := make(chan c.QuoteUpdate, 2048)
 	subscribeQuotes(t, service, "stable", stable, "AAPL")
 	var workers sync.WaitGroup
 	start := make(chan struct{})
@@ -604,7 +649,7 @@ func TestConcurrentRoutingAndSubscriberChanges(t *testing.T) {
 			<-start
 			id := fmt.Sprintf("worker-%d", worker)
 			for i := 0; i < 100; i++ {
-				updates := make(chan c.AssetQuote, 1)
+				updates := make(chan c.QuoteUpdate, 1)
 				if err := service.Subscribe(id, []string{"AAPL"}, updates); err != nil {
 					t.Errorf("Subscribe: %v", err)
 					return
@@ -638,7 +683,7 @@ func TestStoppedServiceRejectsSubscriptionsAndDropsUpdatesWithoutClosingChannels
 			if prestart {
 				service.state = lifecycleNew
 			}
-			updates := make(chan c.AssetQuote, 1)
+			updates := make(chan c.QuoteUpdate, 1)
 			subscribeQuotes(t, service, "watch", updates, "AAPL")
 			if err := service.Stop(); err != nil {
 				t.Fatal(err)
@@ -654,7 +699,7 @@ func TestStoppedServiceRejectsSubscriptionsAndDropsUpdatesWithoutClosingChannels
 			if err := service.Unsubscribe("watch"); err == nil {
 				t.Fatal("stopped service accepted unsubscribe")
 			}
-			updates <- c.AssetQuote{Symbol: "caller-owned"}
+			updates <- c.NewQuoteUpdate(c.AssetQuote{Symbol: "caller-owned"}, 0, 0)
 			wantQuote(t, updates, c.AssetQuote{Symbol: "caller-owned"})
 			close(updates)
 			service.routeQuote(c.QuoteSourceYahoo, c.AssetQuote{Symbol: "AAPL"})
@@ -710,7 +755,7 @@ func TestFXSubscriptionDeliversCurrencyRateQuotes(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	updates := make(chan c.AssetQuote, 10)
+	updates := make(chan c.QuoteUpdate, 10)
 	if err := service.Subscribe("fx-header", []string{"EURUSD", "USDJPY"}, updates); err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +765,7 @@ func TestFXSubscriptionDeliversCurrencyRateQuotes(t *testing.T) {
 	for len(waiting) > 0 {
 		select {
 		case quote := <-updates:
-			if quote.Class != c.AssetClassFx || quote.QuoteSource != c.QuoteSourceYahoo ||
+			if quote.Class != c.AssetClassFx || quote.QuoteSource != c.QuoteSourceYahoo || quote.QuotePrice == nil ||
 				quote.Currency.FromCurrencyCode+quote.Currency.ToCurrencyCode != quote.Symbol ||
 				quote.Currency.Rate <= 0 || quote.Currency.Rate != quote.QuotePrice.Price {
 				t.Fatalf("invalid FX quote: %+v", quote)

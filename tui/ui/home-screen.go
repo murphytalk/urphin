@@ -55,7 +55,7 @@ type Model struct {
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
-type QuoteBatchMsg []c.AssetQuote
+type QuoteBatchMsg []c.QuoteUpdate
 
 type commandResultMsg struct{ err error }
 
@@ -214,9 +214,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			visible[symbol] = struct{}{}
 		}
 		displayed, changed, ratesChanged := false, false, false
-		for _, quote := range msg {
+		for _, update := range msg {
+			symbol := update.Symbol
+			if symbol == "" {
+				symbol = update.Meta.SymbolInSourceAPI
+			}
+			previous, hasPrevious := m.quotes[symbol]
+			var previousQuote *c.AssetQuote
+			if hasPrevious {
+				previousQuote = &previous
+			}
+			quote, hasPrice := update.ToAssetQuote(previousQuote)
+			if !hasPrice {
+				if _, isFxPair := m.fxPairSet[symbol]; isFxPair {
+					// FX currency metadata can update independently of its price block.
+				} else {
+					continue
+				}
+			}
 			if quote.Symbol == "" {
-				quote.Symbol = quote.Meta.SymbolInSourceAPI
+				quote.Symbol = symbol
 			}
 			if _, exists := m.positions[quote.Symbol]; !exists {
 				if _, isFxPair := m.fxPairSet[quote.Symbol]; isFxPair {

@@ -20,7 +20,7 @@ import (
 type sessionTestSubscription struct {
 	id      string
 	symbols []string
-	updates chan<- c.AssetQuote
+	updates chan<- c.QuoteUpdate
 	attempt int
 }
 
@@ -58,7 +58,7 @@ func (f *sessionTestFeed) Stop() error {
 	return nil
 }
 
-func (f *sessionTestFeed) Subscribe(id string, symbols []string, updates chan<- c.AssetQuote) error {
+func (f *sessionTestFeed) Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error {
 	f.mu.Lock()
 	call := sessionTestSubscription{id: id, symbols: slices.Clone(symbols), updates: updates, attempt: len(f.calls.subscriptions) + 1}
 	f.calls.subscriptions = append(f.calls.subscriptions, call)
@@ -128,13 +128,13 @@ func sessionTestNew(t *testing.T, feed *sessionTestFeed, symbols []string) *quot
 	return s
 }
 
-func sessionTestBatch(t *testing.T, msg tea.Msg) map[string]c.AssetQuote {
+func sessionTestBatch(t *testing.T, msg tea.Msg) map[string]c.QuoteUpdate {
 	t.Helper()
 	batch, ok := msg.(QuoteBatchMsg)
 	if !ok {
 		t.Fatalf("message %T, want QuoteBatchMsg", msg)
 	}
-	quotes := make(map[string]c.AssetQuote, len(batch))
+	quotes := make(map[string]c.QuoteUpdate, len(batch))
 	for _, quote := range batch {
 		if _, duplicate := quotes[quote.Symbol]; duplicate {
 			t.Fatalf("batch did not coalesce symbol %q", quote.Symbol)
@@ -450,22 +450,34 @@ func TestSessionBurstCoalescesLatestPerSymbolAndUsesMetaFallback(t *testing.T) {
 			if fullBuffer {
 				count = cap(s.updates)
 			}
-			want := map[string]c.AssetQuote{}
+			want := map[string]c.QuoteUpdate{}
 			for i := range count {
 				symbol := []string{"A", "B", "C"}[i%3]
 				quote := uiTestQuote(symbol, "USD", float64(i+1), float64(i))
 				if i%2 == 0 {
 					quote.Symbol, quote.Meta.SymbolInSourceAPI = "", symbol
 				}
+				expected := quote.Clone()
+				expected.Symbol = symbol
+				want[symbol] = expected
 				s.updates <- quote
-				quote.Symbol = symbol
-				want[symbol] = quote
 			}
 			quotes := sessionTestBatch(t, sessionTestAwait(t, sessionTestCommand(s.receive()), "coalesced burst"))
 			if !reflect.DeepEqual(quotes, want) || len(s.updates) != 0 {
 				t.Fatalf("coalesced quotes %#v, want %#v; remaining %d", quotes, want, len(s.updates))
 			}
 		})
+	}
+}
+
+func TestReceiveDropsSupersededQueuedQuoteForSameSymbol(t *testing.T) {
+	s := sessionTestNew(t, newSessionTestFeed(), []string{"A"})
+	s.updates <- uiTestQuote("A", "USD", 100, 90)
+	s.updates <- uiTestQuote("A", "USD", 101, 90)
+
+	batch := sessionTestBatch(t, sessionTestAwait(t, sessionTestCommand(s.receive()), "latest queued quote"))
+	if len(batch) != 1 || batch["A"].QuotePrice == nil || batch["A"].QuotePrice.Price != 101 {
+		t.Fatalf("receiver retained superseded payload: %+v", batch)
 	}
 }
 

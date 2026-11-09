@@ -80,12 +80,12 @@ func uiTestModel(t *testing.T, lists []databackend.Watchlist, positions map[stri
 	return m
 }
 
-func uiTestQuote(symbol, currency string, price, previous float64) c.AssetQuote {
-	return c.AssetQuote{
+func uiTestQuote(symbol, currency string, price, previous float64) c.QuoteUpdate {
+	return c.NewQuoteUpdate(c.AssetQuote{
 		Symbol: symbol, Name: "Company " + symbol, Class: c.AssetClassStock,
 		Currency:   c.Currency{FromCurrencyCode: currency, ToCurrencyCode: "GBP", Rate: 99},
 		QuotePrice: c.QuotePrice{Price: price, PricePrevClose: previous, Change: price - previous},
-	}
+	}, 0, 0)
 }
 
 func uiTestKey(code rune, modifiers ...tea.KeyMod) tea.KeyPressMsg {

@@ -31,7 +31,7 @@ type Config struct {
 	Ctx                  context.Context
 	Credentials          c.KeySecretCfg
 	ChanError            chan error
-	ChanUpdateAssetQuote chan c.MessageUpdate[c.AssetQuote]
+	ChanUpdateAssetQuote chan c.QuoteUpdate
 }
 
 type quoteEntry struct {
@@ -47,7 +47,7 @@ type MktDataFeed struct {
 	snapshotClient       snapshotClient
 	streamClient         streamClient
 	chanError            chan error
-	chanUpdateAssetQuote chan c.MessageUpdate[c.AssetQuote]
+	chanUpdateAssetQuote chan c.QuoteUpdate
 
 	setMu         sync.Mutex
 	mu            sync.RWMutex
@@ -68,7 +68,7 @@ func (m *MktDataFeed) SupportsAssetClass(assetClass c.AssetClass) bool {
 var _ interface {
 	SupportsAssetClass(c.AssetClass) bool
 	Start() error
-	GetAssetQuotes(...bool) ([]c.AssetQuote, error)
+	GetAssetQuotes(...bool) ([]c.QuoteUpdate, error)
 	SetSymbols([]string, int) error
 	SetCurrencyRates(c.CurrencyRates) error
 	Stop() error
@@ -97,7 +97,7 @@ func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 	}, nil
 }
 
-func (m *MktDataFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error) {
+func (m *MktDataFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
 	if len(ignoreCache) > 0 && ignoreCache[0] {
 		m.setMu.Lock()
 		defer m.setMu.Unlock()
@@ -116,10 +116,10 @@ func (m *MktDataFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	quotes := make([]c.AssetQuote, 0, len(m.symbols))
+	quotes := make([]c.QuoteUpdate, 0, len(m.symbols))
 	for _, symbol := range m.symbols {
 		if entry, exists := m.quotes[symbol]; exists {
-			quotes = append(quotes, entry.quote)
+			quotes = append(quotes, c.NewQuoteUpdate(entry.quote, m.versionVector, entry.timestamp.UnixNano()))
 		}
 	}
 	return quotes, nil
@@ -348,11 +348,7 @@ func (m *MktDataFeed) handleQuote(quote stream.Quote) {
 
 	if m.chanUpdateAssetQuote != nil {
 		select {
-		case m.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-			ID:            quote.Symbol,
-			Data:          entry.quote,
-			VersionVector: versionVector,
-		}:
+		case m.chanUpdateAssetQuote <- c.NewQuoteUpdate(entry.quote, versionVector, quote.Timestamp.UnixNano()):
 		case <-m.ctx.Done():
 		}
 	}

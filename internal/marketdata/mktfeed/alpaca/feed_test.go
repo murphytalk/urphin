@@ -110,7 +110,7 @@ func TestSetSymbolsSnapshotFailurePreservesLiveSetAndCache(t *testing.T) {
 
 func TestHandleQuoteUpdatesMidpointAndIgnoresInvalidOrOldQuotes(t *testing.T) {
 	timestamp := time.Date(2026, time.November, 3, 10, 0, 0, 0, time.UTC)
-	updates := make(chan c.MessageUpdate[c.AssetQuote], 2)
+	updates := make(chan c.QuoteUpdate, 2)
 	feed := &MktDataFeed{
 		ctx:                  context.Background(),
 		chanUpdateAssetQuote: updates,
@@ -135,9 +135,9 @@ func TestHandleQuoteUpdatesMidpointAndIgnoresInvalidOrOldQuotes(t *testing.T) {
 		Timestamp: timestamp.Add(time.Second),
 	})
 	update := <-updates
-	if update.ID != "AAPL" || update.VersionVector != 17 ||
-		update.Data.QuotePrice.Price != 111 || update.Data.QuotePrice.Change != 21 ||
-		update.Data.QuotePrice.ChangePercent != 23.333333333333332 {
+	if update.Symbol != "AAPL" || update.Generation != 17 || update.Revision != timestamp.Add(time.Second).UnixNano() ||
+		update.QuotePrice.Price != 111 || update.QuotePrice.Change != 21 ||
+		update.QuotePrice.ChangePercent != 23.333333333333332 {
 		t.Errorf("stream update = %+v", update)
 	}
 

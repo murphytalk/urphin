@@ -20,7 +20,7 @@ type subscriptionMsg struct{ err error }
 type quoteSession struct {
 	feed          mktdata.MktData
 	symbols       []string
-	updates       chan c.AssetQuote
+	updates       chan c.QuoteUpdate
 	ctx           context.Context
 	cancel        context.CancelFunc
 	receiving     chan struct{}
@@ -37,7 +37,7 @@ func newQuoteSession(feed mktdata.MktData, symbols []string) *quoteSession {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &quoteSession{
 		feed: feed, symbols: slices.Clone(symbols), ctx: ctx, cancel: cancel,
-		updates: make(chan c.AssetQuote, max(64, 2*len(symbols))), receiving: make(chan struct{}),
+		updates: make(chan c.QuoteUpdate, max(64, 2*len(symbols))), receiving: make(chan struct{}),
 		delays: []time.Duration{time.Second, 2 * time.Second},
 	}
 }
@@ -54,8 +54,8 @@ func (s *quoteSession) receive() tea.Cmd {
 				s.channelClosed.Store(true)
 				return nil
 			}
-			latest := make(map[string]c.AssetQuote)
-			add := func(quote c.AssetQuote) {
+			latest := make(map[string]c.QuoteUpdate)
+			add := func(quote c.QuoteUpdate) {
 				if quote.Symbol == "" {
 					quote.Symbol = quote.Meta.SymbolInSourceAPI
 				}

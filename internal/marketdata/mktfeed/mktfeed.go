@@ -18,11 +18,11 @@ type MktDataConfig struct {
 
 type MktDataFeed interface {
 	Start() error
-	GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error)
+	GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error)
 	SetSymbols(symbols []string, versionVector int) error
 	Stop() error
 }
 
-type MktFeedFactory func(mktCfg MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.MessageUpdate[c.AssetQuote]) (MktDataFeed, error)
+type MktFeedFactory func(mktCfg MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.QuoteUpdate) (MktDataFeed, error)
 
 type MktFeedFactoryMap map[c.QuoteSource]MktFeedFactory

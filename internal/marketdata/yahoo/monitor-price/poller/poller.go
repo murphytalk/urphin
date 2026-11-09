@@ -20,7 +20,7 @@ type Poller struct {
 	ctx                  context.Context
 	cancel               context.CancelFunc
 	unaryAPI             *unary.UnaryAPI
-	chanUpdateAssetQuote chan c.MessageUpdate[c.AssetQuote]
+	chanUpdateAssetQuote chan c.QuoteUpdate
 	chanError            chan error
 	versionVector        int
 }
@@ -28,7 +28,7 @@ type Poller struct {
 // PollerConfig represents the configuration for the poller
 type PollerConfig struct {
 	UnaryAPI             *unary.UnaryAPI
-	ChanUpdateAssetQuote chan c.MessageUpdate[c.AssetQuote]
+	ChanUpdateAssetQuote chan c.QuoteUpdate
 	ChanError            chan error
 }
 
@@ -93,6 +93,8 @@ func (p *Poller) Start() error {
 func (p *Poller) run(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var revision int64
+	var lastVersion int
 
 	for {
 		select {
@@ -104,6 +106,10 @@ func (p *Poller) run(interval time.Duration) {
 			symbols := slices.Clone(p.symbols)
 			versionVector := p.versionVector
 			p.mu.Unlock()
+			if versionVector != lastVersion {
+				revision = 0
+				lastVersion = versionVector
+			}
 			// Skip making a HTTP request if no symbols are set
 			if len(symbols) == 0 {
 
@@ -125,14 +131,11 @@ func (p *Poller) run(interval time.Duration) {
 
 			// Send the asset quotes to the update channel
 			for _, assetQuote := range assetQuotes {
+				revision++
 				select {
 				case <-p.ctx.Done():
 					return
-				case p.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-					ID:            assetQuote.Meta.SymbolInSourceAPI,
-					Data:          assetQuote,
-					VersionVector: versionVector,
-				}:
+				case p.chanUpdateAssetQuote <- c.NewQuoteUpdate(assetQuote, versionVector, revision):
 				}
 			}
 		}

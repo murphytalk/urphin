@@ -39,11 +39,10 @@ func TestHandleUpdatesCancelsBlockedForwarding(t *testing.T) {
 		ctx:                      observedContext{ctx, selects},
 		assetQuotesCache:         []*c.AssetQuote{quote},
 		assetQuotesCacheLookup:   map[string]*c.AssetQuote{"AAPL": quote},
-		chanPollUpdateAssetQuote: make(chan c.MessageUpdate[c.AssetQuote], 1),
+		quoteRevisions:           make(map[string]int64),
+		chanPollUpdateAssetQuote: make(chan c.QuoteUpdate, 1),
 	}
-	m.chanPollUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-		ID: "AAPL", Data: c.AssetQuote{QuotePrice: c.QuotePrice{Price: 42}},
-	}
+	m.chanPollUpdateAssetQuote <- c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: 42}}, 0, 1)
 	done := make(chan struct{})
 	go func() { m.handleUpdates(); close(done) }()
 	await(t, selects) // Input select.
@@ -81,7 +80,7 @@ func TestCurrencyRequestCancelsBlockedSend(t *testing.T) {
 func TestRefreshAndUpdatesCopyQuotesUnderLock(t *testing.T) {
 	m := NewMonitorPriceYahoo(Config{
 		Ctx: context.Background(), UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: true}),
-		ChanUpdateAssetQuote: make(chan c.MessageUpdate[c.AssetQuote], 200),
+		ChanUpdateAssetQuote: make(chan c.QuoteUpdate, 200),
 	})
 	defer m.cancel()
 	m.symbols = []string{"AAPL"}
@@ -95,9 +94,7 @@ func TestRefreshAndUpdatesCopyQuotesUnderLock(t *testing.T) {
 	go func() {
 		defer workers.Done()
 		for i := 1; i <= 100; i++ {
-			m.chanPollUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-				ID: "AAPL", Data: c.AssetQuote{QuotePrice: c.QuotePrice{Price: float64(i)}},
-			}
+			m.chanPollUpdateAssetQuote <- c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: float64(i)}}, 0, int64(i))
 		}
 	}()
 	for i := 0; i < 100; i++ {

@@ -58,7 +58,7 @@ func TestConcurrentStartAndRefreshInterval(t *testing.T) {
 }
 
 func TestConcurrentSetSymbolsKeepsTickSnapshotCoherent(t *testing.T) {
-	updates := make(chan c.MessageUpdate[c.AssetQuote])
+	updates := make(chan c.QuoteUpdate)
 	p := NewPoller(context.Background(), PollerConfig{
 		UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: true}), ChanUpdateAssetQuote: updates,
 	})
@@ -77,8 +77,8 @@ func TestConcurrentSetSymbolsKeepsTickSnapshotCoherent(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		select {
 		case update := <-updates:
-			if want := fmt.Sprintf("S%d", update.VersionVector); update.ID != want {
-				t.Errorf("symbol = %s, version = %d, want %s", update.ID, update.VersionVector, want)
+			if want := fmt.Sprintf("S%d", update.Generation); update.Symbol != want {
+				t.Errorf("symbol = %s, generation = %d, want %s", update.Symbol, update.Generation, want)
 			}
 		case <-time.After(2 * time.Second):
 			t.Fatal("poller produced no update")

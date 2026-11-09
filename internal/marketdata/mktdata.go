@@ -38,7 +38,7 @@ type MktData interface {
 	// Quotes retain their provider-reported asset class. Repeat calls must use the same non-nil channel.
 	// Delivery is nonblocking: updates are skipped when the channel cannot accept them.
 	// The caller owns the channel and must unsubscribe before closing it.
-	Subscribe(id string, symbols []string, updates chan<- c.AssetQuote) error
+	Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error
 	// Unsubscribe removes all symbols for id without closing its channel.
 	Unsubscribe(id string) error
 	RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed)
@@ -121,7 +121,7 @@ type mktDataImpl struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	chanError        chan error
-	chanQuotes       chan c.MessageUpdate[c.AssetQuote]
+	chanQuotes       chan c.QuoteUpdate
 	chanRates        chan c.CurrencyRates
 	mktFeedFactories MktFeedFactoryMap
 	versionVector    int
@@ -129,7 +129,7 @@ type mktDataImpl struct {
 
 type subscriber struct {
 	symbols map[string]struct{}
-	updates chan<- c.AssetQuote
+	updates chan<- c.QuoteUpdate
 }
 
 func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
@@ -148,7 +148,7 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 	}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.chanError = make(chan error, errChanSize)
-	m.chanQuotes = make(chan c.MessageUpdate[c.AssetQuote], quoteChanSize)
+	m.chanQuotes = make(chan c.QuoteUpdate, quoteChanSize)
 	m.chanRates = make(chan c.CurrencyRates, quoteChanSize)
 	chanRequestRates := make(chan []string, quoteChanSize)
 	m.fxRequests = chanRequestRates
@@ -219,7 +219,7 @@ func (m *mktDataImpl) beginStart() error {
 	return nil
 }
 
-func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, quotes chan c.MessageUpdate[c.AssetQuote], requests chan []string) MktDataFeed {
+func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, quotes chan c.QuoteUpdate, requests chan []string) MktDataFeed {
 	return price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
 		UnaryAPI:                 api,
@@ -243,7 +243,7 @@ func newYahooCurrencyRateMonitor(config mktfeed.MktDataConfig, ctx context.Conte
 	return monitor
 }
 
-func alpacaFactory(mktCfg mktfeed.MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.MessageUpdate[c.AssetQuote]) (mktfeed.MktDataFeed, error) {
+func alpacaFactory(mktCfg mktfeed.MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.QuoteUpdate) (mktfeed.MktDataFeed, error) {
 	credentials := mktCfg.Cfg.Alpaca
 	if credentials.Key == "" || credentials.Secret == "" {
 		if credentials.Key != "" || credentials.Secret != "" {
@@ -335,7 +335,7 @@ func (m *mktDataImpl) startProvider(source c.QuoteSource, feed mktfeed.MktDataFe
 		slog.Error("Read market-data feed snapshot", "source", source, "error", err)
 	} else {
 		for _, quote := range quotes {
-			m.routeQuote(source, quote)
+			m.routeQuoteUpdateFrom(source, quote)
 		}
 	}
 	return nil
@@ -394,7 +394,7 @@ func (m *mktDataImpl) stopCurrencyRateMonitor(monitor c.MonitorCurrencyRate) err
 	return nil
 }
 
-func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.AssetQuote) error {
+func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
@@ -437,7 +437,7 @@ func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.As
 	m.mu.RLock()
 	for symbol := range requestedSymbols {
 		if quote, exists := m.fxQuotes[symbol]; exists {
-			deliverQuote(sub, quote, requestedSymbols)
+			deliverQuote(sub, c.NewQuoteUpdate(quote, 0, 0), requestedSymbols)
 		}
 	}
 	m.mu.RUnlock()
@@ -578,13 +578,13 @@ func (m *mktDataImpl) consumeErrors(ctx context.Context, errors <-chan error) {
 	}
 }
 
-func (m *mktDataImpl) consumeQuoteUpdates(ctx context.Context, updates <-chan c.MessageUpdate[c.AssetQuote]) {
+func (m *mktDataImpl) consumeQuoteUpdates(ctx context.Context, updates <-chan c.QuoteUpdate) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case update := <-updates:
-			m.routeQuote(update.Data.QuoteSource, update.Data)
+			m.routeQuoteUpdate(update)
 		}
 	}
 }
@@ -649,6 +649,14 @@ func (m *mktDataImpl) consumeCurrencyRateUpdates(ctx context.Context, updates <-
 }
 
 func (m *mktDataImpl) routeQuote(source c.QuoteSource, quote c.AssetQuote) {
+	m.routeQuoteUpdateFrom(source, c.NewQuoteUpdate(quote, 0, 0))
+}
+
+func (m *mktDataImpl) routeQuoteUpdate(update c.QuoteUpdate) {
+	m.routeQuoteUpdateFrom(update.QuoteSource, update)
+}
+
+func (m *mktDataImpl) routeQuoteUpdateFrom(source c.QuoteSource, update c.QuoteUpdate) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if m.state != lifecycleRunning {
@@ -659,12 +667,12 @@ func (m *mktDataImpl) routeQuote(source c.QuoteSource, quote c.AssetQuote) {
 		return
 	}
 	for _, sub := range m.subscribers {
-		deliverQuote(sub, quote, sub.symbols)
+		deliverQuote(sub, update, sub.symbols)
 	}
 }
 
 // The caller holds mu so Unsubscribe cannot return while a send is in progress.
-func deliverQuote(sub *subscriber, quote c.AssetQuote, symbols map[string]struct{}) {
+func deliverQuote(sub *subscriber, quote c.QuoteUpdate, symbols map[string]struct{}) {
 	symbol := quote.Symbol
 	if symbol == "" {
 		symbol = quote.Meta.SymbolInSourceAPI
@@ -678,7 +686,7 @@ func deliverQuote(sub *subscriber, quote c.AssetQuote, symbols map[string]struct
 	}
 	quote.Symbol = symbol
 	select {
-	case sub.updates <- quote:
+	case sub.updates <- quote.Clone():
 	default:
 	}
 }

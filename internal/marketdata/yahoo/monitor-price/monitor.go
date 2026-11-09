@@ -32,14 +32,16 @@ type MonitorPriceYahoo struct {
 	assetQuotesCache         []*c.AssetQuote           // Asset quotes for all assets retrieved at start or on symbol change
 	assetQuotesCacheLookup   map[string]*c.AssetQuote  // Asset quotes for all assets retrieved at least once (symbol change does not remove symbols)
 	currencyRatesCache       map[string]c.CurrencyRate // Cache of currency rates
-	chanPollUpdateAssetQuote chan c.MessageUpdate[c.AssetQuote]
+	chanPollUpdateAssetQuote chan c.QuoteUpdate
 	chanError                chan error
 	mu                       sync.RWMutex
 	muCurrencyRates          sync.RWMutex
 	ctx                      context.Context
 	cancel                   context.CancelFunc
 	isStarted                bool
-	chanUpdateAssetQuote     chan c.MessageUpdate[c.AssetQuote]
+	chanUpdateAssetQuote     chan c.QuoteUpdate
+	versionVector            int
+	quoteRevisions           map[string]int64
 	chanRequestCurrencyRates chan []string
 }
 
@@ -58,7 +60,7 @@ type Config struct {
 	Ctx                      context.Context
 	UnaryAPI                 *unary.UnaryAPI
 	ChanError                chan error
-	ChanUpdateAssetQuote     chan c.MessageUpdate[c.AssetQuote]
+	ChanUpdateAssetQuote     chan c.QuoteUpdate
 	ChanRequestCurrencyRates chan []string
 	Cache                    c.Cache
 }
@@ -73,7 +75,8 @@ func NewMonitorPriceYahoo(config Config, opts ...Option) *MonitorPriceYahoo {
 		assetQuotesCacheLookup:   make(map[string]*c.AssetQuote),
 		symbolToCurrency:         make(map[string]string),
 		assetQuotesCache:         make([]*c.AssetQuote, 0),
-		chanPollUpdateAssetQuote: make(chan c.MessageUpdate[c.AssetQuote]),
+		quoteRevisions:           make(map[string]int64),
+		chanPollUpdateAssetQuote: make(chan c.QuoteUpdate),
 		chanError:                config.ChanError,
 		unaryAPI:                 config.UnaryAPI,
 		cache:                    config.Cache,
@@ -106,13 +109,13 @@ func WithRefreshInterval(interval time.Duration) Option {
 }
 
 // GetAssetQuotes returns the asset quotes either from the cache or from the unary API if ignoreCache is set
-func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error) {
+func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
 
 	// If ignoreCache is set, get the asset quotes from the unary API and update the cache
 	if len(ignoreCache) > 0 && ignoreCache[0] {
 		_, err := m.getAssetQuotesAndReplaceCache()
 		if err != nil {
-			return []c.AssetQuote{}, err
+			return []c.QuoteUpdate{}, err
 		}
 	}
 
@@ -120,9 +123,9 @@ func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	result := make([]c.AssetQuote, len(m.assetQuotesCache))
+	result := make([]c.QuoteUpdate, len(m.assetQuotesCache))
 	for i, quote := range m.assetQuotesCache {
-		result[i] = *quote
+		result[i] = c.NewQuoteUpdate(*quote, m.versionVector, m.quoteRevisions[quote.Symbol])
 	}
 
 	return result, nil
@@ -142,6 +145,8 @@ func (m *MonitorPriceYahoo) SetSymbols(symbols []string, versionVector int) erro
 	m.symbols = symbols
 	m.input.symbols = symbols
 	m.input.symbolsLookup = make(map[string]bool)
+	m.versionVector = versionVector
+	m.quoteRevisions = make(map[string]int64, len(symbols))
 	for _, symbol := range symbols {
 		m.input.symbolsLookup[symbol] = true
 	}
@@ -234,7 +239,11 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 		case updateMessage := <-m.chanPollUpdateAssetQuote:
 			m.mu.Lock()
 
-			assetQuote, exists := m.assetQuotesCacheLookup[updateMessage.ID]
+			symbol := updateMessage.Symbol
+			if symbol == "" {
+				symbol = updateMessage.Meta.SymbolInSourceAPI
+			}
+			assetQuote, exists := m.assetQuotesCacheLookup[symbol]
 
 			// If product id does not exist in cache, skip update (this would happen if the API returns a price for a symbol that was not requested)
 			if !exists {
@@ -245,28 +254,21 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 			}
 
 			// Skip update if nothing has changed
-			if assetQuote.QuotePrice.Price == updateMessage.Data.QuotePrice.Price &&
-				assetQuote.Exchange.IsActive == updateMessage.Data.Exchange.IsActive &&
-				assetQuote.QuotePrice.PriceDayHigh == updateMessage.Data.QuotePrice.PriceDayHigh {
+			updatedQuote, ok := updateMessage.ToAssetQuote(assetQuote)
+			if !ok {
+				m.mu.Unlock()
+				continue
+			}
+			if assetQuote.QuotePrice.Price == updatedQuote.QuotePrice.Price &&
+				assetQuote.Exchange.IsActive == updatedQuote.Exchange.IsActive &&
+				assetQuote.QuotePrice.PriceDayHigh == updatedQuote.QuotePrice.PriceDayHigh {
 
 				m.mu.Unlock()
 
 				continue
 			}
-			// Update properties on the asset quote which may have changed
-			assetQuote.QuotePrice.Price = updateMessage.Data.QuotePrice.Price
-			assetQuote.QuotePrice.Change = updateMessage.Data.QuotePrice.Change
-			assetQuote.QuotePrice.ChangePercent = updateMessage.Data.QuotePrice.ChangePercent
-			assetQuote.QuotePrice.PriceDayHigh = updateMessage.Data.QuotePrice.PriceDayHigh
-			assetQuote.QuotePrice.PriceDayLow = updateMessage.Data.QuotePrice.PriceDayLow
-			assetQuote.QuotePrice.PriceOpen = updateMessage.Data.QuotePrice.PriceOpen
-			assetQuote.QuotePrice.PricePrevClose = updateMessage.Data.QuotePrice.PricePrevClose
-			assetQuote.QuoteExtended.FiftyTwoWeekHigh = updateMessage.Data.QuoteExtended.FiftyTwoWeekHigh
-			assetQuote.QuoteExtended.FiftyTwoWeekLow = updateMessage.Data.QuoteExtended.FiftyTwoWeekLow
-			assetQuote.QuoteExtended.MarketCap = updateMessage.Data.QuoteExtended.MarketCap
-			assetQuote.QuoteExtended.Volume = updateMessage.Data.QuoteExtended.Volume
-			assetQuote.Exchange.IsActive = updateMessage.Data.Exchange.IsActive
-			assetQuote.Exchange.IsRegularTradingSession = updateMessage.Data.Exchange.IsRegularTradingSession
+			*assetQuote = updatedQuote
+			m.quoteRevisions[symbol] = updateMessage.Revision
 
 			quote := *assetQuote
 			m.mu.Unlock()
@@ -275,11 +277,7 @@ func (m *MonitorPriceYahoo) handleUpdates() {
 			select {
 			case <-m.ctx.Done():
 				return
-			case m.chanUpdateAssetQuote <- c.MessageUpdate[c.AssetQuote]{
-				ID:            quote.Symbol,
-				Data:          quote,
-				VersionVector: updateMessage.VersionVector,
-			}:
+			case m.chanUpdateAssetQuote <- c.NewQuoteUpdate(quote, updateMessage.Generation, updateMessage.Revision):
 			}
 
 			continue

@@ -168,6 +168,64 @@ type AssetQuote struct {
 	Meta          Meta
 }
 
+// QuoteUpdate is the owned transport form of an AssetQuote. A successful send
+// transfers QuotePrice to the receiver; publishers must stop using it.
+type QuoteUpdate struct {
+	Name          string
+	Symbol        string
+	Class         AssetClass
+	Currency      Currency
+	QuotePrice    *QuotePrice
+	QuoteExtended QuoteExtended
+	QuoteFutures  QuoteFutures
+	QuoteSource   QuoteSource
+	Exchange      Exchange
+	Meta          Meta
+	Generation    int
+	Revision      int64
+}
+
+// NewQuoteUpdate copies quote data and gives the transport its own price object.
+func NewQuoteUpdate(quote AssetQuote, generation int, revision int64) QuoteUpdate {
+	price := quote.QuotePrice
+	return QuoteUpdate{
+		Name: quote.Name, Symbol: quote.Symbol, Class: quote.Class,
+		Currency: quote.Currency, QuotePrice: &price,
+		QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
+		QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
+		Generation: generation, Revision: revision,
+	}
+}
+
+// Clone returns an independently owned transport payload.
+func (quote QuoteUpdate) Clone() QuoteUpdate {
+	if quote.QuotePrice != nil {
+		price := *quote.QuotePrice
+		quote.QuotePrice = &price
+	}
+	return quote
+}
+
+// ToAssetQuote builds receiver-local state. A nil price preserves a prior price
+// and reports false when no prior price exists.
+func (quote QuoteUpdate) ToAssetQuote(previous *AssetQuote) (AssetQuote, bool) {
+	result := AssetQuote{
+		Name: quote.Name, Symbol: quote.Symbol, Class: quote.Class,
+		Currency: quote.Currency, QuoteExtended: quote.QuoteExtended,
+		QuoteFutures: quote.QuoteFutures, QuoteSource: quote.QuoteSource,
+		Exchange: quote.Exchange, Meta: quote.Meta,
+	}
+	if quote.QuotePrice != nil {
+		result.QuotePrice = *quote.QuotePrice
+		return result, true
+	}
+	if previous != nil {
+		result.QuotePrice = previous.QuotePrice
+		return result, true
+	}
+	return result, false
+}
+
 type MessageUpdate[T any] struct {
 	Data          T
 	ID            string

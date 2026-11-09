@@ -323,7 +323,8 @@ func TestPortfolioAssetsPreserveQuoteFieldsBothCostsAndRequestedOrder(t *testing
 	if assets[0].Symbol != "B" || asset.Symbol != "A" || assets[0].Meta.OrderIndex != 0 || asset.Meta.OrderIndex != 1 {
 		t.Fatal("assets lost requested order or used backend/provider aliases")
 	}
-	if asset.Name != q.Name || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != q.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.quotes["A"].Meta.OrderIndex != 99 {
+	localQuote, _ := q.ToAssetQuote(nil)
+	if asset.Name != q.Name || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != localQuote.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.quotes["A"].Meta.OrderIndex != 99 {
 		t.Fatal("quote metadata not forwarded intact or source cache mutated")
 	}
 	want := c.Position{Quantity: 2, UnitCost: 80, AvgCost: 70, Cost: 160, UnitValue: 100, Value: 200, DayChange: c.PositionChange{Amount: 20, Percent: 20.0 / 180 * 100}, TotalChange: c.PositionChange{Amount: 40, Percent: 25}, Weight: 100}
@@ -442,13 +443,13 @@ func TestPortfolioSummaryHeaderReceivesFXRates(t *testing.T) {
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
 	check("EURUSD 1.0856 (N/A) • USDJPY 160.00 (N/A)")
 	uiTestUpdate(t, m, QuoteBatchMsg{
-		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD"}, QuotePrice: c.QuotePrice{Price: 1.09}},
+		c.NewQuoteUpdate(c.AssetQuote{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD"}, QuotePrice: c.QuotePrice{Price: 1.09}}, 0, 0),
 		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: math.NaN()}},
 	})
 	check("EURUSD 1.0900 (N/A) • USDJPY N/A")
 	uiTestUpdate(t, m, QuoteBatchMsg{
-		{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.1}, QuotePrice: c.QuotePrice{Price: 1.1, PricePrevClose: 1}},
-		{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: 160}, QuotePrice: c.QuotePrice{Price: 160, PricePrevClose: 200}},
+		c.NewQuoteUpdate(c.AssetQuote{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.1}, QuotePrice: c.QuotePrice{Price: 1.1, PricePrevClose: 1}}, 0, 0),
+		c.NewQuoteUpdate(c.AssetQuote{Symbol: "USDJPY", Currency: c.Currency{FromCurrencyCode: "USD", ToCurrencyCode: "JPY", Rate: 160}, QuotePrice: c.QuotePrice{Price: 160, PricePrevClose: 200}}, 0, 0),
 	})
 	check("EURUSD ↑ 1.1000 (10.00%) • USDJPY ↓ 160.00 (-20.00%)")
 }
