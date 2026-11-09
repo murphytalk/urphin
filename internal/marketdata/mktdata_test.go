@@ -226,6 +226,100 @@ func TestSubscriptionSnapshotsAreIsolatedAndOnlySeedNewSymbols(t *testing.T) {
 	}
 }
 
+type orderedSnapshotFeed struct {
+	testMktDataFeed
+	afterSnapshot func()
+}
+
+func (f *orderedSnapshotFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.AssetQuote, error) {
+	quotes, err := f.testMktDataFeed.GetAssetQuotes(ignoreCache...)
+	if f.afterSnapshot != nil {
+		f.afterSnapshot()
+	}
+	return quotes, err
+}
+
+func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
+	old := c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceAlpaca, QuotePrice: c.QuotePrice{Price: 100}}
+	live := old
+	live.QuotePrice.Price = 101
+	feed := &orderedSnapshotFeed{testMktDataFeed: testMktDataFeed{quotes: []c.AssetQuote{old}}}
+	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceAlpaca: feed})
+	feed.afterSnapshot = func() { service.routeQuote(c.QuoteSourceAlpaca, live) }
+	updates := make(chan c.AssetQuote, 2)
+
+	if err := service.Subscribe("home", []string{"AAPL"}, updates); err != nil {
+		t.Fatal(err)
+	}
+	wantQuote(t, updates, live)
+	wantNoQuote(t, updates)
+}
+
+func BenchmarkQuoteDelivery(b *testing.B) {
+	updates := make(chan c.AssetQuote, 1)
+	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
+	service.subscribers["benchmark"] = &subscriber{
+		symbols: map[string]struct{}{"AAPL": {}}, updates: updates,
+	}
+	quote := c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		service.routeQuote(c.QuoteSourceYahoo, quote)
+		<-updates
+	}
+}
+
+type stalledSetSymbolsFeed struct {
+	testMktDataFeed
+	entered    chan struct{}
+	release    chan struct{}
+	stopCalled chan struct{}
+	once       sync.Once
+}
+
+func (f *stalledSetSymbolsFeed) SetSymbols(symbols []string, version int) error {
+	f.once.Do(func() { close(f.entered) })
+	<-f.release
+	return f.testMktDataFeed.SetSymbols(symbols, version)
+}
+
+func (f *stalledSetSymbolsFeed) Stop() error {
+	close(f.stopCalled)
+	return nil
+}
+
+func TestStopWaitsForStalledSubscriptionProviderCall(t *testing.T) {
+	feed := &stalledSetSymbolsFeed{
+		entered: make(chan struct{}), release: make(chan struct{}), stopCalled: make(chan struct{}),
+	}
+	service := newTestMktData(map[c.QuoteSource]mktDataFeed{c.QuoteSourceAlpaca: feed})
+	subscribeDone := make(chan error, 1)
+	go func() { subscribeDone <- service.Subscribe("home", []string{"AAPL"}, make(chan c.AssetQuote, 1)) }()
+	<-feed.entered
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- service.Stop() }()
+	select {
+	case err := <-stopDone:
+		t.Fatalf("Stop() returned while provider call remained blocked: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	close(feed.release)
+	if err := <-subscribeDone; err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	if err := <-stopDone; err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	select {
+	case <-feed.stopCalled:
+	default:
+		t.Fatal("Stop() did not stop provider")
+	}
+}
+
 func TestRouteQuoteFanoutPreservesClassesAndUsesSymbolFallback(t *testing.T) {
 	for _, source := range []c.QuoteSource{c.QuoteSourceYahoo, c.QuoteSourceAlpaca} {
 		t.Run(fmt.Sprint(source), func(t *testing.T) {
