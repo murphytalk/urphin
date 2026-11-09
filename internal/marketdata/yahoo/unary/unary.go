@@ -65,7 +65,6 @@ type requestKind uint8
 
 const (
 	quotesRequest requestKind = iota
-	currencyMapRequest
 	currencyRatesRequest
 )
 
@@ -79,17 +78,11 @@ type request struct {
 
 type response struct {
 	quotes        []c.QuoteUpdate
-	currencyMap   map[string]SymbolToCurrency
 	currencyRates c.CurrencyRates
 	err           error
 }
 
 var errWorkerStopped = errors.New("Yahoo request worker stopped")
-
-type SymbolToCurrency struct {
-	Symbol       string
-	FromCurrency string
-}
 
 // sessionCache is the serializable form of the Yahoo session (cookies + crumb)
 // persisted to the startup cache so it can be shared between ticker instances.
@@ -212,9 +205,6 @@ func (u *requestOwner) execute(ctx context.Context, req request) response {
 	case quotesRequest:
 		quotes, err := u.getAssetQuotes(ctx, req.symbols)
 		return response{quotes: quotes, err: err}
-	case currencyMapRequest:
-		currencies, err := u.getCurrencyMap(ctx, req.symbols)
-		return response{currencyMap: currencies, err: err}
 	case currencyRatesRequest:
 		rates, err := u.getCurrencyRates(ctx, req.symbols, req.targetCurrency)
 		return response{currencyRates: rates, err: err}
@@ -285,7 +275,7 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 }
 
 func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
-	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
+	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get quotes: %w", err)
@@ -297,34 +287,6 @@ func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]
 		updates[i] = c.NewQuoteUpdate(quote, 0, 0)
 	}
 	return updates, nil
-}
-
-// GetCurrencyMap retrieves the currency which the price quote will be denominated in for the given symbols
-func (u *UnaryAPI) GetCurrencyMap(ctx context.Context, symbols []string) (map[string]SymbolToCurrency, error) {
-	if len(symbols) == 0 {
-		return map[string]SymbolToCurrency{}, nil
-	}
-	result := u.submit(ctx, request{kind: currencyMapRequest, symbols: symbols})
-	return result.currencyMap, result.err
-}
-
-func (u *requestOwner) getCurrencyMap(ctx context.Context, symbols []string) (map[string]SymbolToCurrency, error) {
-	result, err := u.getQuotes(ctx, symbols, []string{"regularMarketPrice", "currency"})
-
-	if err != nil {
-		return map[string]SymbolToCurrency{}, err
-	}
-
-	symbolToCurrency := make(map[string]SymbolToCurrency)
-
-	for _, quote := range result.QuoteResponse.Quotes {
-		symbolToCurrency[quote.Symbol] = SymbolToCurrency{
-			Symbol:       quote.Symbol,
-			FromCurrency: quote.Currency,
-		}
-	}
-
-	return symbolToCurrency, nil
 }
 
 // GetCurrencyRates accepts an array of ISO 4217 currency codes and a target ISO 4217 currency code and returns a conversion rate for each of the input currencies to the target currency

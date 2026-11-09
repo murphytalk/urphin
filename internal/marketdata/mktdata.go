@@ -231,7 +231,7 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 	yahooAPI := newYahooAPI(mktCache, config.RandomMktData)
 	m.yahooAPI = yahooAPI
 	m.feeds = map[c.QuoteSource]mktfeed.MktDataFeed{
-		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanQuotes, chanRequestRates),
+		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, m.chanError, m.chanQuotes, chanRequestRates),
 	}
 	m.currencyRates = newYahooCurrencyRateMonitor(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanRates, chanRequestRates)
 	if config.RandomMktData {
@@ -280,14 +280,13 @@ func (m *mktDataImpl) beginStart() error {
 	return nil
 }
 
-func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, mktCache c.Cache, errors chan error, quotes chan c.QuoteUpdate, requests chan []string) MktDataFeed {
+func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, errors chan error, quotes chan c.QuoteUpdate, requests chan []string) MktDataFeed {
 	return price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
 		UnaryAPI:                 api,
 		ChanError:                errors,
 		ChanUpdateAssetQuote:     quotes,
 		ChanRequestCurrencyRates: requests,
-		Cache:                    mktCache,
 	}, price.WithRefreshInterval(config.RefreshInterval))
 }
 

@@ -3,403 +3,513 @@ package monitorPriceYahoo
 import (
 	"context"
 	"errors"
-	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
-	poller "github.com/murphytalk/urphin/internal/marketdata/yahoo/monitor-price/poller"
 	unary "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
 )
 
+const commandQueueSize = 32
+
+var errMonitorStopped = errors.New("Yahoo price monitor stopped")
+
+type commandKind uint8
+
 const (
-	// cacheKeyCurrencyMap namespaces cached per-symbol denomination currencies.
-	cacheKeyCurrencyMap = "yahoo:currency-map:"
-	// ttlCurrencyMap caches a symbol's denomination currency, which is effectively
-	// static, so it can be reused for a long time.
-	ttlCurrencyMap = 7 * 24 * time.Hour
+	startCommand commandKind = iota
+	setSymbolsCommand
+	getSnapshotCommand
+	getFreshSnapshotCommand
+	stopCommand
 )
 
-// MonitorPriceYahoo represents a Yahoo Finance monitor
-type MonitorPriceYahoo struct {
+type command struct {
+	kind       commandKind
+	symbols    []string
+	generation int
+	reply      chan commandResult
+}
+
+type commandResult struct {
+	quotes []c.QuoteUpdate
+	err    error
+}
+
+type fetchResult struct {
+	id       uint64
+	configID uint64
+	quotes   []c.AssetQuote
+	err      error
+}
+
+type fetchWaiter struct {
+	kind  commandKind
+	reply chan commandResult
+}
+
+type quoteFetch struct {
+	id           uint64
+	configID     uint64
+	generation   int
+	symbols      []string
+	publish      bool
+	reportErrors bool
+	waiters      []fetchWaiter
+}
+
+type monitorOptions struct{ refreshInterval time.Duration }
+
+type ownerConfig struct {
 	unaryAPI                 *unary.UnaryAPI
-	poller                   *poller.Poller
-	cache                    c.Cache
-	input                    input
-	symbols                  []string
-	symbolToCurrency         map[string]string         // Map of symbols to currency
-	assetQuotesCache         []*c.AssetQuote           // Asset quotes for all assets retrieved at start or on symbol change
-	assetQuotesCacheLookup   map[string]*c.AssetQuote  // Asset quotes for all assets retrieved at least once (symbol change does not remove symbols)
-	currencyRatesCache       map[string]c.CurrencyRate // Cache of currency rates
-	chanPollUpdateAssetQuote chan c.QuoteUpdate
 	chanError                chan error
-	mu                       sync.RWMutex
-	muCurrencyRates          sync.RWMutex
-	ctx                      context.Context
-	cancel                   context.CancelFunc
-	isStarted                bool
 	chanUpdateAssetQuote     chan c.QuoteUpdate
-	versionVector            int
-	quoteRevisions           map[string]int64
 	chanRequestCurrencyRates chan []string
+	refreshInterval          time.Duration
+}
+
+// MonitorPriceYahoo is the command handle for one Yahoo price owner.
+type MonitorPriceYahoo struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	commands chan command
+	done     chan struct{}
+	config   ownerConfig
 }
 
 func (m *MonitorPriceYahoo) SupportsAssetClass(assetClass c.AssetClass) bool {
 	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
 }
 
-// input represents user input for the Yahoo monitor with any transformation
-type input struct {
-	symbols       []string
-	symbolsLookup map[string]bool
-}
-
-// Config contains the required configuration for the Yahoo monitor
+// Config contains the required configuration for the Yahoo monitor.
 type Config struct {
 	Ctx                      context.Context
 	UnaryAPI                 *unary.UnaryAPI
 	ChanError                chan error
 	ChanUpdateAssetQuote     chan c.QuoteUpdate
 	ChanRequestCurrencyRates chan []string
-	Cache                    c.Cache
 }
 
-// Option defines an option for configuring the monitor
-type Option func(*MonitorPriceYahoo)
+// Option configures the monitor before its owner starts.
+type Option func(*monitorOptions)
 
 func NewMonitorPriceYahoo(config Config, opts ...Option) *MonitorPriceYahoo {
-	ctx, cancel := context.WithCancel(config.Ctx)
+	ctx := config.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	options := monitorOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
 
 	monitor := &MonitorPriceYahoo{
-		assetQuotesCacheLookup:   make(map[string]*c.AssetQuote),
-		symbolToCurrency:         make(map[string]string),
-		assetQuotesCache:         make([]*c.AssetQuote, 0),
-		quoteRevisions:           make(map[string]int64),
-		chanPollUpdateAssetQuote: make(chan c.QuoteUpdate),
-		chanError:                config.ChanError,
-		unaryAPI:                 config.UnaryAPI,
-		cache:                    config.Cache,
-		ctx:                      ctx,
-		cancel:                   cancel,
-		chanUpdateAssetQuote:     config.ChanUpdateAssetQuote,
-		chanRequestCurrencyRates: config.ChanRequestCurrencyRates,
+		ctx: ctx, cancel: cancel, commands: make(chan command, commandQueueSize),
+		done: make(chan struct{}),
+		config: ownerConfig{
+			unaryAPI: config.UnaryAPI, chanError: config.ChanError,
+			chanUpdateAssetQuote:     config.ChanUpdateAssetQuote,
+			chanRequestCurrencyRates: config.ChanRequestCurrencyRates,
+			refreshInterval:          options.refreshInterval,
+		},
 	}
-
-	pollerConfig := poller.PollerConfig{
-		ChanUpdateAssetQuote: monitor.chanPollUpdateAssetQuote,
-		ChanError:            monitor.chanError,
-		UnaryAPI:             config.UnaryAPI,
-	}
-	monitor.poller = poller.NewPoller(ctx, pollerConfig)
-
-	for _, opt := range opts {
-		opt(monitor)
-	}
-
+	go monitor.run()
 	return monitor
 }
 
-// WithRefreshInterval sets the refresh interval for the monitor
+// WithRefreshInterval sets the monitor's polling interval.
 func WithRefreshInterval(interval time.Duration) Option {
-	return func(m *MonitorPriceYahoo) {
-		// TODO: handle error
-		m.poller.SetRefreshInterval(interval) //nolint:errcheck
-	}
+	return func(options *monitorOptions) { options.refreshInterval = interval }
 }
 
-// GetAssetQuotes returns the asset quotes either from the cache or from the unary API if ignoreCache is set
+// GetAssetQuotes returns cached quotes, or fetches a fresh snapshot when requested.
 func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
-
-	// If ignoreCache is set, get the asset quotes from the unary API and update the cache
+	kind := getSnapshotCommand
 	if len(ignoreCache) > 0 && ignoreCache[0] {
-		_, err := m.getAssetQuotesAndReplaceCache()
-		if err != nil {
-			return []c.QuoteUpdate{}, err
-		}
+		kind = getFreshSnapshotCommand
 	}
-
-	// If ignoreCache is not set, return the asset quotes from the cache without making a HTTP request
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make([]c.QuoteUpdate, len(m.assetQuotesCache))
-	for i, quote := range m.assetQuotesCache {
-		result[i] = c.NewQuoteUpdate(*quote, m.versionVector, m.quoteRevisions[quote.Symbol])
-	}
-
-	return result, nil
+	result := m.call(command{kind: kind})
+	return result.quotes, result.err
 }
 
-// SetSymbols sets the symbols to monitor
-func (m *MonitorPriceYahoo) SetSymbols(symbols []string, versionVector int) error {
-
-	var err error
-
-	m.mu.Lock()
-
-	// Deduplicate symbols since input may have duplicates
-	symbols = slices.Clone(symbols)
-	slices.Sort(symbols)
-	symbols = slices.Compact(symbols)
-	m.symbols = symbols
-	m.input.symbols = symbols
-	m.input.symbolsLookup = make(map[string]bool)
-	m.versionVector = versionVector
-	m.quoteRevisions = make(map[string]int64, len(symbols))
-	for _, symbol := range symbols {
-		m.input.symbolsLookup[symbol] = true
-	}
-
-	m.mu.Unlock()
-
-	// Check for symbols which don't have a known currency and retrieve the currency for those symbols
-	// TODO: conditionally bypass if currency conversion is not enabled
-	err = m.getCurrencyForEachSymbolAndUpdateCurrencyMap()
-	if err != nil {
-		return err
-	}
-
-	// Since the symbols have changed, make a synchronous call to get price quotes for the new symbols
-	_, err = m.getAssetQuotesAndReplaceCache()
-	if err != nil {
-		return err
-	}
-
-	// Set the symbols to monitor on the poller
-	m.poller.SetSymbols(symbols, versionVector)
-
-	return nil
-
+// SetSymbols replaces the monitored symbol set and waits for its initial snapshot.
+func (m *MonitorPriceYahoo) SetSymbols(symbols []string, generation int) error {
+	result := m.call(command{kind: setSymbolsCommand, symbols: slices.Clone(symbols), generation: generation})
+	return result.err
 }
 
-// Start the monitor
+// Start fetches an initial snapshot and starts periodic refreshes.
 func (m *MonitorPriceYahoo) Start() error {
-
-	var err error
-
-	if m.isStarted {
-		return errors.New("monitor already started")
-	}
-
-	// On start, get initial quotes from unary API
-	_, err = m.getAssetQuotesAndReplaceCache()
-	if err != nil {
-		return err
-	}
-
-	// Start polling for price quotes
-	err = m.poller.Start()
-	if err != nil {
-		return err
-	}
-
-	// Start listening for price quote updates
-	go m.handleUpdates()
-
-	m.isStarted = true
-
-	return nil
+	return m.call(command{kind: startCommand}).err
 }
 
-// Stop the monitor
+// Stop cancels and joins the owner and any active request.
 func (m *MonitorPriceYahoo) Stop() error {
-
-	if !m.isStarted {
-		return errors.New("monitor not started")
+	select {
+	case <-m.done:
+		return nil
+	default:
 	}
-
-	m.cancel()
-
-	return nil
+	result := m.call(command{kind: stopCommand})
+	select {
+	case <-m.done:
+	case <-m.ctx.Done():
+		<-m.done
+	}
+	if errors.Is(result.err, errMonitorStopped) || errors.Is(result.err, context.Canceled) {
+		return nil
+	}
+	return result.err
 }
 
-func (m *MonitorPriceYahoo) SetCurrencyRates(currencyRates c.CurrencyRates) error {
-	m.muCurrencyRates.Lock()
-	m.currencyRatesCache = currencyRates
-	m.muCurrencyRates.Unlock()
-
-	// Map over each asset quote and update the currency rate
-	// TODO: make this more efficient by selectively updating based on changes in rates
-	_, err := m.getAssetQuotesAndReplaceCache()
-	if err != nil {
-		return err
+func (m *MonitorPriceYahoo) call(cmd command) commandResult {
+	cmd.reply = make(chan commandResult, 1)
+	select {
+	case m.commands <- cmd:
+	case <-m.done:
+		return commandResult{err: errMonitorStopped}
+	case <-m.ctx.Done():
+		return commandResult{err: m.ctx.Err()}
 	}
-
-	return nil
+	select {
+	case result := <-cmd.reply:
+		return result
+	case <-m.done:
+		select {
+		case result := <-cmd.reply:
+			return result
+		default:
+			return commandResult{err: errMonitorStopped}
+		}
+	case <-m.ctx.Done():
+		return commandResult{err: m.ctx.Err()}
+	}
 }
 
-// handleUpdates listens for asset quote change messages and updates the cache
-func (m *MonitorPriceYahoo) handleUpdates() {
+type priceOwner struct {
+	monitor             *MonitorPriceYahoo
+	configID            uint64
+	generation          int
+	symbols             []string
+	quotes              map[string]c.AssetQuote
+	quoteOrder          []string
+	revisions           map[string]int64
+	started             bool
+	startPending        bool
+	ticker              *time.Ticker
+	active              *quoteFetch
+	pending             *quoteFetch
+	nextID              uint64
+	results             chan fetchResult
+	workers             sync.WaitGroup
+	pendingUpdates      map[string]c.QuoteUpdate
+	updateOrder         []string
+	pendingErrors       []error
+	pendingCurrencies   map[string]struct{}
+	requestedCurrencies map[string]struct{}
+}
+
+func (m *MonitorPriceYahoo) run() {
+	defer close(m.done)
+	owner := &priceOwner{
+		monitor: m, quotes: make(map[string]c.AssetQuote), revisions: make(map[string]int64),
+		results: make(chan fetchResult, 1), pendingUpdates: make(map[string]c.QuoteUpdate),
+		pendingCurrencies: make(map[string]struct{}), requestedCurrencies: make(map[string]struct{}),
+	}
 	for {
+		var ticks <-chan time.Time
+		if owner.ticker != nil {
+			ticks = owner.ticker.C
+		}
+		var updates chan c.QuoteUpdate
+		var nextUpdate c.QuoteUpdate
+		if len(owner.updateOrder) > 0 {
+			updates = m.config.chanUpdateAssetQuote
+			nextUpdate = owner.pendingUpdates[owner.updateOrder[0]]
+		}
+		var currencyRequests chan []string
+		var nextCurrencies []string
+		var currenciesToMark []string
+		if len(owner.pendingCurrencies) > 0 {
+			currencyRequests = m.config.chanRequestCurrencyRates
+			nextCurrencies = slices.Sorted(maps.Keys(owner.pendingCurrencies))
+			currenciesToMark = slices.Clone(nextCurrencies)
+		}
+		var errorUpdates chan error
+		var nextError error
+		if len(owner.pendingErrors) > 0 {
+			errorUpdates = m.config.chanError
+			nextError = owner.pendingErrors[0]
+		}
+
 		select {
 		case <-m.ctx.Done():
+			owner.shutdown(m.ctx.Err())
 			return
-
-		case updateMessage := <-m.chanPollUpdateAssetQuote:
-			m.mu.Lock()
-
-			symbol := updateMessage.Symbol
-			if symbol == "" {
-				symbol = updateMessage.Meta.SymbolInSourceAPI
-			}
-			assetQuote, exists := m.assetQuotesCacheLookup[symbol]
-
-			// If product id does not exist in cache, skip update (this would happen if the API returns a price for a symbol that was not requested)
-			if !exists {
-				// TODO: log product not found in cache - should not happen
-				m.mu.Unlock()
-
-				continue
-			}
-
-			// Skip update if nothing has changed
-			updatedQuote, ok := updateMessage.ToAssetQuote(assetQuote)
-			if !ok {
-				m.mu.Unlock()
-				continue
-			}
-			if assetQuote.QuotePrice.Price == updatedQuote.QuotePrice.Price &&
-				assetQuote.Exchange.IsActive == updatedQuote.Exchange.IsActive &&
-				assetQuote.QuotePrice.PriceDayHigh == updatedQuote.QuotePrice.PriceDayHigh {
-
-				m.mu.Unlock()
-
-				continue
-			}
-			*assetQuote = updatedQuote
-			m.quoteRevisions[symbol] = updateMessage.Revision
-
-			quote := *assetQuote
-			m.mu.Unlock()
-
-			// Send a message with an updated quote
-			select {
-			case <-m.ctx.Done():
+		case cmd := <-m.commands:
+			if owner.handle(cmd) {
+				owner.shutdown(errMonitorStopped)
+				m.cancel()
 				return
-			case m.chanUpdateAssetQuote <- c.NewQuoteUpdate(quote, updateMessage.Generation, updateMessage.Revision):
 			}
-
-			continue
+		case result := <-owner.results:
+			owner.finishFetch(result)
+		case <-ticks:
+			owner.refresh()
+		case updates <- nextUpdate:
+			owner.sentUpdate()
+		case currencyRequests <- nextCurrencies:
+			owner.sentCurrencyRequest(currenciesToMark)
+		case errorUpdates <- nextError:
+			owner.pendingErrors = owner.pendingErrors[1:]
 		}
 	}
 }
 
-// Get asset quotes from unary API, add futures quotes, filter out assets not explicitly requested, and replace the asset quotes cache
-func (m *MonitorPriceYahoo) getAssetQuotesAndReplaceCache() ([]*c.AssetQuote, error) {
-
-	lookup := make(map[string]*c.AssetQuote)
-	cache := make([]*c.AssetQuote, 0)
-
-	// Make a synchronous call to get price quotes
-	m.mu.RLock()
-	symbols := slices.Clone(m.symbols)
-	m.mu.RUnlock()
-	assetQuotes, _, err := m.unaryAPI.GetAssetQuotes(m.ctx, symbols)
-	if err != nil {
-		return []*c.AssetQuote{}, err
+func (owner *priceOwner) handle(cmd command) bool {
+	switch cmd.kind {
+	case getSnapshotCommand:
+		owner.reply(cmd.reply, owner.snapshot(), nil)
+	case getFreshSnapshotCommand:
+		owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
+			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
+	case setSymbolsCommand:
+		owner.setSymbols(cmd)
+	case startCommand:
+		if owner.started || owner.startPending {
+			owner.reply(cmd.reply, nil, errors.New("monitor already started"))
+			return false
+		}
+		if owner.monitor.config.refreshInterval <= 0 {
+			owner.reply(cmd.reply, nil, errors.New("refresh interval is not set"))
+			return false
+		}
+		owner.startPending = true
+		owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
+			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
+	case stopCommand:
+		owner.reply(cmd.reply, nil, nil)
+		return true
 	}
+	return false
+}
 
-	// Add currency rate to each price quote
-	m.muCurrencyRates.RLock()
-	for _, quote := range assetQuotes {
+func (owner *priceOwner) setSymbols(cmd command) {
+	symbols := cmd.symbols
+	slices.Sort(symbols)
+	symbols = slices.Compact(symbols)
+	owner.configID++
+	owner.generation = cmd.generation
+	owner.symbols = symbols
+	owner.quotes = make(map[string]c.AssetQuote)
+	owner.quoteOrder = nil
+	owner.revisions = make(map[string]int64, len(symbols))
+	owner.pendingUpdates = make(map[string]c.QuoteUpdate)
+	owner.updateOrder = nil
+	var waiters []fetchWaiter
+	publish := false
+	reportErrors := false
+	if owner.active != nil {
+		waiters = append(waiters, owner.active.waiters...)
+		owner.active.waiters = nil
+		publish = publish || owner.active.publish
+		reportErrors = reportErrors || owner.active.reportErrors
+	}
+	if owner.pending != nil {
+		waiters = append(waiters, owner.pending.waiters...)
+		publish = publish || owner.pending.publish
+		reportErrors = reportErrors || owner.pending.reportErrors
+		owner.pending = nil
+	}
+	waiters = append(waiters, fetchWaiter{kind: cmd.kind, reply: cmd.reply})
+	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation, symbols: symbols,
+		publish: publish, reportErrors: reportErrors, waiters: waiters})
+}
 
+func (owner *priceOwner) enqueue(fetch *quoteFetch) {
+	if owner.active == nil {
+		owner.startFetch(fetch)
+		return
+	}
+	if owner.active.configID == fetch.configID {
+		owner.active.publish = owner.active.publish || fetch.publish
+		owner.active.reportErrors = owner.active.reportErrors || fetch.reportErrors
+		owner.active.waiters = append(owner.active.waiters, fetch.waiters...)
+		return
+	}
+	if owner.pending == nil {
+		owner.pending = fetch
+		return
+	}
+	owner.pending.configID = fetch.configID
+	owner.pending.generation = fetch.generation
+	owner.pending.symbols = fetch.symbols
+	owner.pending.publish = owner.pending.publish || fetch.publish
+	owner.pending.reportErrors = owner.pending.reportErrors || fetch.reportErrors
+	owner.pending.waiters = append(owner.pending.waiters, fetch.waiters...)
+}
+
+func (owner *priceOwner) startFetch(fetch *quoteFetch) {
+	owner.nextID++
+	fetch.id = owner.nextID
+	owner.active = fetch
+	owner.workers.Add(1)
+	go func() {
+		defer owner.workers.Done()
+		if owner.monitor.config.unaryAPI == nil {
+			select {
+			case owner.results <- fetchResult{id: fetch.id, configID: fetch.configID, err: errors.New("Yahoo API is required")}:
+			case <-owner.monitor.ctx.Done():
+			}
+			return
+		}
+		quotes, _, err := owner.monitor.config.unaryAPI.GetAssetQuotes(owner.monitor.ctx, fetch.symbols)
+		select {
+		case owner.results <- fetchResult{id: fetch.id, configID: fetch.configID, quotes: quotes, err: err}:
+		case <-owner.monitor.ctx.Done():
+		}
+	}()
+}
+
+func (owner *priceOwner) finishFetch(result fetchResult) {
+	fetch := owner.active
+	if fetch == nil || fetch.id != result.id {
+		return
+	}
+	owner.active = nil
+	if fetch.configID == owner.configID && result.configID == owner.configID {
+		if result.err != nil {
+			if fetch.reportErrors && owner.monitor.config.chanError != nil {
+				owner.pendingErrors = append(owner.pendingErrors, result.err)
+			}
+			if owner.startPending {
+				owner.startPending = false
+			}
+			owner.completeWaiters(fetch.waiters, result.err)
+		} else {
+			owner.accept(result.quotes, fetch)
+			for _, waiter := range fetch.waiters {
+				if waiter.kind == startCommand {
+					owner.started = true
+					owner.startPending = false
+					owner.ticker = time.NewTicker(owner.monitor.config.refreshInterval)
+				}
+				if waiter.kind == getFreshSnapshotCommand {
+					owner.reply(waiter.reply, owner.snapshot(), nil)
+				} else {
+					owner.reply(waiter.reply, nil, nil)
+				}
+			}
+		}
+	} else {
+		for _, waiter := range fetch.waiters {
+			owner.reply(waiter.reply, nil, errMonitorStopped)
+		}
+	}
+	if owner.pending != nil {
+		pending := owner.pending
+		owner.pending = nil
+		owner.startFetch(pending)
+	}
+}
+
+func (owner *priceOwner) accept(quotes []c.AssetQuote, fetch *quoteFetch) {
+	previous := owner.quotes
+	current := make(map[string]c.AssetQuote, len(quotes))
+	order := make([]string, 0, len(quotes))
+	for _, quote := range quotes {
+		if quote.Symbol == "" {
+			quote.Symbol = quote.Meta.SymbolInSourceAPI
+		}
+		if quote.Symbol == "" || !slices.Contains(fetch.symbols, quote.Symbol) {
+			continue
+		}
 		if quote.Currency.FromCurrencyCode == "" {
 			quote.Currency.FromCurrencyCode = "USD"
 		}
-
-		if currencyRate, exists := m.currencyRatesCache[quote.Currency.FromCurrencyCode]; exists {
-
-			quote.Currency.Rate = currencyRate.Rate
-			quote.Currency.ToCurrencyCode = currencyRate.ToCurrency
+		if _, exists := current[quote.Symbol]; !exists {
+			order = append(order, quote.Symbol)
 		}
-
-		lookup[quote.Meta.SymbolInSourceAPI] = &quote
-		cache = append(cache, &quote)
-	}
-	m.muCurrencyRates.RUnlock()
-
-	// Replace the cache with new sets of asset quotes
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.assetQuotesCache = cache
-	m.assetQuotesCacheLookup = lookup
-
-	return m.assetQuotesCache, nil
-}
-
-func (m *MonitorPriceYahoo) getCurrencyForEachSymbolAndUpdateCurrencyMap() error {
-	m.mu.RLock()
-	symbols := slices.Clone(m.symbols)
-	m.mu.RUnlock()
-	// No need to process if no symbols are provided
-	if len(symbols) == 0 {
-		return nil
-	}
-
-	symbolsWithoutCurrency := make([]string, 0)
-
-	// Check if symbols already have a currency mapping
-	m.muCurrencyRates.RLock()
-	for _, symbol := range symbols {
-		if _, exists := m.symbolToCurrency[symbol]; !exists {
-			symbolsWithoutCurrency = append(symbolsWithoutCurrency, symbol)
+		current[quote.Symbol] = quote
+		owner.revisions[quote.Symbol]++
+		if fetch.publish && previous[quote.Symbol] != quote {
+			owner.queueUpdate(quote, fetch.generation, owner.revisions[quote.Symbol])
 		}
-	}
-	m.muCurrencyRates.RUnlock()
-
-	// Resolve a symbol's currency from cache since the currency
-	// for a symbol is effectively static
-	symbolToCurrency := make(map[string]unary.SymbolToCurrency)
-	symbolsToFetch := make([]string, 0, len(symbolsWithoutCurrency))
-
-	for _, symbol := range symbolsWithoutCurrency {
-		var cached unary.SymbolToCurrency
-		if m.cache != nil && m.cache.Get(cacheKeyCurrencyMap+symbol, &cached) {
-			symbolToCurrency[symbol] = cached
-
-			continue
-		}
-
-		symbolsToFetch = append(symbolsToFetch, symbol)
-	}
-
-	if len(symbolsToFetch) > 0 {
-		// Get the currency each symbol's price quote will be denominated in
-		fetched, err := m.unaryAPI.GetCurrencyMap(m.ctx, symbolsToFetch)
-		if err != nil {
-			return fmt.Errorf("failed to get currency information: %w", err)
-		}
-
-		for symbol, currency := range fetched {
-			symbolToCurrency[symbol] = currency
-
-			if m.cache != nil {
-				m.cache.Set(cacheKeyCurrencyMap+symbol, currency, ttlCurrencyMap)
+		currency := quote.Currency.FromCurrencyCode
+		if owner.monitor.config.chanRequestCurrencyRates != nil {
+			if _, requested := owner.requestedCurrencies[currency]; !requested {
+				owner.pendingCurrencies[currency] = struct{}{}
 			}
 		}
 	}
+	owner.quotes = current
+	owner.quoteOrder = order
+}
 
-	m.muCurrencyRates.Lock()
-
-	fromCurrenciesToRequest := make([]string, 0)
-
-	for symbol, currency := range symbolToCurrency {
-		// Add price quote currency denomination to the currency map
-		m.symbolToCurrency[symbol] = currency.FromCurrency
-
-		// Add currencies for new symbols to request list of currencies to retrieve currency rates (duplicate are okay)
-		// TODO: confirm symbols would not be missed by only incrementally adding currencies rather than requesting everything not in m.currencyRatesCache
-		fromCurrenciesToRequest = append(fromCurrenciesToRequest, currency.FromCurrency)
+func (owner *priceOwner) refresh() {
+	if len(owner.symbols) == 0 {
+		return
 	}
+	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
+		symbols: slices.Clone(owner.symbols), publish: true, reportErrors: true})
+}
 
-	m.muCurrencyRates.Unlock()
+func (owner *priceOwner) snapshot() []c.QuoteUpdate {
+	quotes := make([]c.QuoteUpdate, 0, len(owner.quoteOrder))
+	for _, symbol := range owner.quoteOrder {
+		quotes = append(quotes, c.NewQuoteUpdate(owner.quotes[symbol], owner.generation, owner.revisions[symbol]))
+	}
+	return quotes
+}
 
+func (owner *priceOwner) queueUpdate(quote c.AssetQuote, generation int, revision int64) {
+	if _, exists := owner.pendingUpdates[quote.Symbol]; !exists {
+		owner.updateOrder = append(owner.updateOrder, quote.Symbol)
+	}
+	owner.pendingUpdates[quote.Symbol] = c.NewQuoteUpdate(quote, generation, revision)
+}
+
+func (owner *priceOwner) sentUpdate() {
+	symbol := owner.updateOrder[0]
+	delete(owner.pendingUpdates, symbol)
+	owner.updateOrder = owner.updateOrder[1:]
+}
+
+func (owner *priceOwner) sentCurrencyRequest(currencies []string) {
+	for _, currency := range currencies {
+		delete(owner.pendingCurrencies, currency)
+		owner.requestedCurrencies[currency] = struct{}{}
+	}
+}
+
+func (owner *priceOwner) reply(reply chan commandResult, quotes []c.QuoteUpdate, err error) {
 	select {
-	case <-m.ctx.Done():
-		return m.ctx.Err()
-	case m.chanRequestCurrencyRates <- fromCurrenciesToRequest:
-		return nil
+	case reply <- commandResult{quotes: quotes, err: err}:
+	default:
+	}
+}
+
+func (owner *priceOwner) shutdown(err error) {
+	if owner.ticker != nil {
+		owner.ticker.Stop()
+	}
+	if owner.active != nil {
+		owner.completeWaiters(owner.active.waiters, err)
+		owner.active.waiters = nil
+	}
+	if owner.pending != nil {
+		owner.completeWaiters(owner.pending.waiters, err)
+		owner.pending = nil
+	}
+	owner.monitor.cancel()
+	owner.workers.Wait()
+}
+
+func (owner *priceOwner) completeWaiters(waiters []fetchWaiter, err error) {
+	for _, waiter := range waiters {
+		owner.reply(waiter.reply, nil, err)
 	}
 }

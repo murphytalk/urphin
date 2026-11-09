@@ -20,14 +20,6 @@ func TestRandomModeSynthesizesYahooQueryResponsesWithoutRequests(t *testing.T) {
 		t.Errorf("synthetic price = %v, want a value in [0, 100)", price)
 	}
 
-	currencies, err := api.GetCurrencyMap(context.Background(), []string{"MSFT"})
-	if err != nil {
-		t.Fatalf("GetCurrencyMap() error = %v", err)
-	}
-	if currencies["MSFT"].FromCurrency != "USD" {
-		t.Errorf("synthetic currency = %q, want USD", currencies["MSFT"].FromCurrency)
-	}
-
 	rates, err := api.GetCurrencyRates(context.Background(), []string{"EUR"}, "USD")
 	if err != nil {
 		t.Fatalf("GetCurrencyRates() error = %v", err)
