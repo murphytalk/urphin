@@ -1,162 +1,205 @@
-// Package cache provides a simple file-based, inter-process cache for data
-// fetched at startup (e.g. the symbol map, Yahoo session, currency lookups) and
-// other slow-changing data such as the latest-version check. Multiple ticker
-// instances running on the same machine share a single JSON file so that only
-// the first instance to fetch a given piece of data (within its TTL) pays the
-// cost of the network request.
-//
-// Each entry carries its own expiry, set by the caller via Set, so that
-// long-lived data (symbol map, session, per-symbol currency) can be reused for
-// much longer than volatile data (currency rates).
-//
-// All keys are namespaced with schemaVersion so that, after a ticker upgrade
-// that changes the shape of any cached value, entries written by the previous
-// version are simply not found (and are pruned on the next write) rather than
-// being decoded into the new shape and silently misread. Bump schemaVersion
-// whenever a cached value's structure changes.
+// Package cache persists startup data and other slow-changing values.
 package cache
 
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
-const schemaVersion = 1
+const (
+	schemaVersion = 1
+	commandBuffer = 64
+)
 
 type entry struct {
 	ExpiresAt time.Time       `json:"expires_at"`
 	Payload   json.RawMessage `json:"payload"`
 }
 
-// keyPrefix is prepended to every key to namespace entries by cache schema
-// version (e.g. "v1:").
-func keyPrefix() string {
-	return "v" + strconv.Itoa(schemaVersion) + ":"
+type operation uint8
+
+const (
+	getOperation operation = iota
+	setOperation
+	closeOperation
+)
+
+type command struct {
+	operation operation
+	key       string
+	payload   []byte
+	ttl       time.Duration
+	reply     chan result
 }
 
-// Cache is a file-backed key/value store with a per-entry TTL. When disabled,
-// all operations are no-ops and Get always reports a miss.
+type result struct {
+	payload []byte
+	found   bool
+}
+
+// Cache is a file-backed key/value store with a per-entry TTL. An empty path
+// disables caching. Its owner serializes memory and file access.
 type Cache struct {
-	path    string
-	enabled bool
-	mu      sync.Mutex
-	entries map[string]entry
+	path     string
+	enabled  bool
+	commands chan command
+	done     chan struct{}
 }
 
-// New creates a cache backed by the file at path. When enabled is false the
-// returned cache neither reads nor writes the file. The existing file (if any)
-// is loaded into memory so reads during this session are served without
-// re-reading the file.
+// New starts a cache owner. A nonempty path enables persistence; an empty path
+// makes Get and Set no-ops.
 func New(path string) *Cache {
-	cache := &Cache{
-		path:    path,
-		enabled: len(path) == 0,
-		entries: make(map[string]entry),
+	c := &Cache{
+		path: path, enabled: path != "",
+		commands: make(chan command, commandBuffer), done: make(chan struct{}),
 	}
-
-	if cache.enabled {
-		cache.entries = readEntries(path)
-	}
-
-	return cache
+	go c.run()
+	return c
 }
 
-// Get reports whether key has a fresh entry and, if so, decodes its payload
-// into out. It returns false on a disabled cache, a missing key, an expired
-// entry, or a decode error.
+// Get reports whether key has a fresh entry and decodes a caller-local copy.
 func (c *Cache) Get(key string, out any) bool {
 	if !c.enabled {
 		return false
 	}
-
-	c.mu.Lock()
-	cached, exists := c.entries[keyPrefix()+key]
-	c.mu.Unlock()
-
-	if !exists {
+	reply := make(chan result, 1)
+	if !c.send(command{operation: getOperation, key: key, reply: reply}) {
 		return false
 	}
-
-	if !time.Now().Before(cached.ExpiresAt) {
+	select {
+	case res := <-reply:
+		return res.found && json.Unmarshal(res.payload, out) == nil
+	case <-c.done:
 		return false
 	}
-
-	if err := json.Unmarshal(cached.Payload, out); err != nil {
-		return false
-	}
-
-	return true
 }
 
-// Set stores value under key with the given time-to-live and persists the cache
-// file. It is a no-op on a disabled cache. Failures to marshal or persist are
-// silently ignored - the cache is an optimization and must never break startup.
+// Set serializes caller data before transfer. Persistence failures are ignored
+// so cache writes cannot fail application operations.
 func (c *Cache) Set(key string, value any, ttl time.Duration) {
 	if !c.enabled {
 		return
 	}
-
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return
 	}
+	reply := make(chan result, 1)
+	if !c.send(command{operation: setOperation, key: key, payload: payload, ttl: ttl, reply: reply}) {
+		return
+	}
+	select {
+	case <-reply:
+	case <-c.done:
+	}
+}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Close waits for the owner to finish. Repeated calls return the same result.
+func (c *Cache) Close() error {
+	select {
+	case <-c.done:
+		return nil
+	default:
+	}
+	reply := make(chan result, 1)
+	if !c.send(command{operation: closeOperation, reply: reply}) {
+		<-c.done
+		return nil
+	}
+	select {
+	case <-reply:
+		<-c.done
+	case <-c.done:
+	}
+	return nil
+}
 
-	// Re-read the file and merge so entries written by other instances since
-	// this cache was created are not clobbered (last-writer-wins per key).
-	c.entries = readEntries(c.path)
+// Done closes after the owner has stopped processing commands.
+func (c *Cache) Done() <-chan struct{} { return c.done }
 
-	// Drop entries written under a different cache schema version so the file
-	// does not accumulate unreadable data across ticker upgrades.
-	prefix := keyPrefix()
-	for existingKey := range c.entries {
-		if !strings.HasPrefix(existingKey, prefix) {
-			delete(c.entries, existingKey)
+func (c *Cache) send(cmd command) bool {
+	select {
+	case <-c.done:
+		return false
+	case c.commands <- cmd:
+		return true
+	}
+}
+
+func (c *Cache) run() {
+	entries := make(map[string]entry)
+	if c.enabled {
+		entries = readEntries(c.path)
+	}
+	for cmd := range c.commands {
+		switch cmd.operation {
+		case getOperation:
+			cached, exists := entries[keyPrefix()+cmd.key]
+			if !exists || !time.Now().Before(cached.ExpiresAt) {
+				cmd.reply <- result{}
+				continue
+			}
+			cmd.reply <- result{found: true, payload: append([]byte(nil), cached.Payload...)}
+		case setOperation:
+			entries = readEntries(c.path)
+			prefix := keyPrefix()
+			for existingKey := range entries {
+				if !strings.HasPrefix(existingKey, prefix) {
+					delete(entries, existingKey)
+				}
+			}
+			entries[prefix+cmd.key] = entry{ExpiresAt: time.Now().Add(cmd.ttl), Payload: cmd.payload}
+			_ = writeEntries(c.path, entries)
+			cmd.reply <- result{}
+		case closeOperation:
+			cmd.reply <- result{}
+			close(c.done)
+			return
 		}
 	}
-
-	c.entries[prefix+key] = entry{ExpiresAt: time.Now().Add(ttl), Payload: payload}
-
-	writeEntries(c.path, c.entries)
 }
+
+// keyPrefix namespaces entries; bump schemaVersion when a cached value's shape changes.
+func keyPrefix() string { return "v" + strconv.Itoa(schemaVersion) + ":" }
 
 func readEntries(path string) map[string]entry {
 	entries := make(map[string]entry)
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return entries
 	}
-
 	if err := json.Unmarshal(data, &entries); err != nil {
 		return make(map[string]entry)
 	}
-
 	return entries
 }
 
-func writeEntries(path string, entries map[string]entry) {
+// shortcut: writes are serialized only within this process; add cross-process coordination if lost updates must be prevented.
+func writeEntries(path string, entries map[string]entry) error {
 	data, err := json.Marshal(entries)
 	if err != nil {
-		return
+		return err
 	}
-
-	//if err := MkdirAll(filepath.Dir(path), 0755); err != nil {
-	//	return
-	//}
-
-	// Write to a temp file and rename so a concurrent reader never observes a
-	// partially written file.
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
-		return
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*.tmp")
+	if err != nil {
+		return err
 	}
-
-	_ = os.Rename(tmpPath, path)
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

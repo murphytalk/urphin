@@ -114,20 +114,22 @@ func NewMktData() MktData {
 }
 
 // YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
-func YahooGetLastPrices(symbols []string, cachePath string, randomMktData bool) (map[string]float64, error) {
+func YahooGetLastPrices(symbols []string, cachePath string, randomMktData bool) (prices map[string]float64, resultErr error) {
 	if len(symbols) == 0 {
 		return map[string]float64{}, nil
 	}
 
 	slog.Info("Requesting Yahoo market-data quotes", "symbols", symbols)
-	yahooAPI := newYahooAPI(cache.New(cachePath), randomMktData)
+	mktCache := cache.New(cachePath)
+	defer func() { resultErr = errors.Join(resultErr, mktCache.Close()) }()
+	yahooAPI := newYahooAPI(mktCache, randomMktData)
 	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(symbols)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote request failed", "error", err, "symbols", symbols)
 		return nil, err
 	}
 
-	prices, err := lastPricesFromQuotes(symbols, quotesBySymbol)
+	prices, err = lastPricesFromQuotes(symbols, quotesBySymbol)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote response was incomplete", "error", err, "symbols", symbols)
 		return nil, err
@@ -179,6 +181,7 @@ type mktDataImpl struct {
 	chanError        chan error
 	chanQuotes       chan c.QuoteUpdate
 	chanRates        chan c.CurrencyRates
+	mktCache         c.Cache
 	mktFeedFactories MktFeedFactoryMap
 	versionVector    int
 }
@@ -222,6 +225,7 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 		}
 	}
 	mktCache := cache.New(config.CachePath)
+	m.mktCache = mktCache
 	yahooAPI := newYahooAPI(mktCache, config.RandomMktData)
 	m.feeds = map[c.QuoteSource]mktfeed.MktDataFeed{
 		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanQuotes, chanRequestRates),
@@ -235,12 +239,12 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 		if config.Cfg.App.MktDataFeed != "" {
 			factory, ok := m.mktFeedFactories[config.Cfg.App.MktDataFeed]
 			if !ok {
-				return errors.New("Market-data feed not registered; using Yahoo only")
+				return m.failSetup(errors.New("Market-data feed not registered; using Yahoo only"))
 			} else {
 				slog.Info("Creating market-data feed", "feed", config.Cfg.App.MktDataFeed)
 				feed, err := factory(config, m.ctx, m.chanError, m.chanQuotes)
 				if err != nil {
-					return fmt.Errorf("failed to create market-data feed: %w", err)
+					return m.failSetup(fmt.Errorf("failed to create market-data feed: %w", err))
 				} else {
 					m.RegisterMktDataFeed(config.Cfg.App.MktDataFeed, feed)
 				}
@@ -252,9 +256,7 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 
 	m.startConsumers(slices.Sorted(maps.Keys(m.fxPairSet)))
 	if err := m.startCurrencyRateMonitor(m.currencyRates); err != nil {
-		m.cancel()
-		m.markStopped()
-		return err
+		return m.failSetup(err)
 	}
 	if err := m.startProviders(); err != nil {
 		return err
@@ -420,7 +422,7 @@ func (m *mktDataImpl) Stop() error {
 	if cancel != nil {
 		cancel()
 	}
-	return errors.Join(m.stopProviders(feeds), m.stopCurrencyRateMonitor(currencyRates))
+	return errors.Join(m.stopProviders(feeds), m.stopCurrencyRateMonitor(currencyRates), m.closeCache())
 }
 
 func (m *mktDataImpl) stopProviders(feeds map[c.QuoteSource]mktfeed.MktDataFeed) error {
@@ -597,6 +599,24 @@ func (m *mktDataImpl) markStopped() {
 	m.mu.Unlock()
 }
 
+func (m *mktDataImpl) failSetup(cause error) error {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	if err := m.closeCache(); err != nil {
+		cause = errors.Join(cause, err)
+	}
+	m.markStopped()
+	return cause
+}
+
+func (m *mktDataImpl) closeCache() error {
+	if m.mktCache == nil {
+		return nil
+	}
+	return m.mktCache.Close()
+}
+
 func (m *mktDataImpl) failStart(cause error, started []mktfeed.MktDataFeed, rates c.MonitorCurrencyRate, cancel context.CancelFunc) error {
 	if cancel != nil {
 		cancel()
@@ -611,6 +631,9 @@ func (m *mktDataImpl) failStart(cause error, started []mktfeed.MktDataFeed, rate
 		if err := rates.Stop(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if err := m.closeCache(); err != nil {
+		errs = append(errs, err)
 	}
 	m.markStopped()
 	return errors.Join(errs...)

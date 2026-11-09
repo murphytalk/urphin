@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/marketdata/cache"
 )
 
 func TestFXQuotesInvertPreviousCloseWithRate(t *testing.T) {
@@ -48,6 +50,44 @@ func TestLocalDetachAcknowledgementSurvivesProviderCleanupFailure(t *testing.T) 
 	result := <-command.reply
 	if result.operationID != 19 || !result.localDetached || !errors.Is(result.err, cleanupErr) {
 		t.Fatalf("detach result = %+v", result)
+	}
+}
+
+func TestFailedStartClosesCacheOwner(t *testing.T) {
+	service := NewMktData().(*mktDataImpl)
+	if err := service.Start(MktDataConfig{
+		CachePath: filepath.Join(t.TempDir(), "cache.json"),
+		Cfg:       &c.Config{App: c.AppCfg{MktDataFeed: "unregistered"}},
+	}); err == nil {
+		t.Fatal("Start() accepted an unregistered provider")
+	}
+	owner, ok := service.mktCache.(*cache.Cache)
+	if !ok {
+		t.Fatal("service did not retain its cache handle")
+	}
+	select {
+	case <-owner.Done():
+	default:
+		t.Fatal("failed Start() leaked cache owner")
+	}
+}
+
+func TestStopClosesCacheOwner(t *testing.T) {
+	service := NewMktData().(*mktDataImpl)
+	if err := service.Start(MktDataConfig{RandomMktData: true, CachePath: filepath.Join(t.TempDir(), "cache.json")}); err != nil {
+		t.Fatal(err)
+	}
+	owner, ok := service.mktCache.(*cache.Cache)
+	if !ok {
+		t.Fatal("service did not retain its cache handle")
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-owner.Done():
+	default:
+		t.Fatal("Stop() returned before the cache owner stopped")
 	}
 }
 
