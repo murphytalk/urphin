@@ -102,7 +102,7 @@ func TestResolveOneShotMktDataFeed(t *testing.T) {
 				selected = test.override
 			}
 			if selected == "" || selected == "yahoo" {
-				prices, err := getLastPrices(nil)
+				prices, err := getLastPrices(context.Background(), nil)
 				if err != nil || len(prices) != 0 {
 					t.Errorf("Yahoo last-price function returned %v, %v; want empty prices and no error", prices, err)
 				}

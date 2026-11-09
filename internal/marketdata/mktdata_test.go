@@ -70,6 +70,11 @@ func TestFailedStartClosesCacheOwner(t *testing.T) {
 	default:
 		t.Fatal("failed Start() leaked cache owner")
 	}
+	select {
+	case <-service.yahooAPI.Done():
+	default:
+		t.Fatal("failed Start() leaked Yahoo request owner")
+	}
 }
 
 func TestStopClosesCacheOwner(t *testing.T) {
@@ -88,6 +93,11 @@ func TestStopClosesCacheOwner(t *testing.T) {
 	case <-owner.Done():
 	default:
 		t.Fatal("Stop() returned before the cache owner stopped")
+	}
+	select {
+	case <-service.yahooAPI.Done():
+	default:
+		t.Fatal("Stop() returned before the Yahoo request owner stopped")
 	}
 }
 

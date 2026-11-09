@@ -59,8 +59,10 @@ func TestConcurrentStartAndRefreshInterval(t *testing.T) {
 
 func TestConcurrentSetSymbolsKeepsTickSnapshotCoherent(t *testing.T) {
 	updates := make(chan c.QuoteUpdate)
+	api := unary.NewUnaryAPI(unary.Config{RandomMktData: true})
+	t.Cleanup(api.Close)
 	p := NewPoller(context.Background(), PollerConfig{
-		UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: true}), ChanUpdateAssetQuote: updates,
+		UnaryAPI: api, ChanUpdateAssetQuote: updates,
 	})
 	defer p.cancel()
 	p.SetSymbols([]string{"S0"}, 0)
@@ -108,8 +110,10 @@ func TestRunCancelsBlockedSends(t *testing.T) {
 		t.Run(fmt.Sprintf("APIError=%t", fail), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			api := unary.NewUnaryAPI(unary.Config{RandomMktData: !fail, BaseURL: "://invalid"})
+			t.Cleanup(api.Close)
 			p := NewPoller(ctx, PollerConfig{
-				UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: !fail, BaseURL: "://invalid"}),
+				UnaryAPI: api,
 			})
 			selects := make(chan struct{}, 10)
 			p.ctx = observedContext{p.ctx, selects}

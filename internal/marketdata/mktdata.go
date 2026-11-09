@@ -114,22 +114,23 @@ func NewMktData() MktData {
 }
 
 // YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
-func YahooGetLastPrices(symbols []string, cachePath string, randomMktData bool) (prices map[string]float64, resultErr error) {
+func YahooGetLastPrices(ctx context.Context, symbols []string, cachePath string, randomMktData bool) (map[string]float64, error) {
 	if len(symbols) == 0 {
 		return map[string]float64{}, nil
 	}
 
 	slog.Info("Requesting Yahoo market-data quotes", "symbols", symbols)
 	mktCache := cache.New(cachePath)
-	defer func() { resultErr = errors.Join(resultErr, mktCache.Close()) }()
 	yahooAPI := newYahooAPI(mktCache, randomMktData)
-	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(symbols)
+	defer mktCache.Close()
+	defer yahooAPI.Close()
+	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(ctx, symbols)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote request failed", "error", err, "symbols", symbols)
 		return nil, err
 	}
 
-	prices, err = lastPricesFromQuotes(symbols, quotesBySymbol)
+	prices, err := lastPricesFromQuotes(symbols, quotesBySymbol)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote response was incomplete", "error", err, "symbols", symbols)
 		return nil, err
@@ -182,6 +183,7 @@ type mktDataImpl struct {
 	chanQuotes       chan c.QuoteUpdate
 	chanRates        chan c.CurrencyRates
 	mktCache         c.Cache
+	yahooAPI         *unaryClientYahoo.UnaryAPI
 	mktFeedFactories MktFeedFactoryMap
 	versionVector    int
 }
@@ -227,6 +229,7 @@ func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
 	mktCache := cache.New(config.CachePath)
 	m.mktCache = mktCache
 	yahooAPI := newYahooAPI(mktCache, config.RandomMktData)
+	m.yahooAPI = yahooAPI
 	m.feeds = map[c.QuoteSource]mktfeed.MktDataFeed{
 		c.QuoteSourceYahoo: newYahooPriceFeed(config, m.ctx, yahooAPI, mktCache, m.chanError, m.chanQuotes, chanRequestRates),
 	}
@@ -422,7 +425,10 @@ func (m *mktDataImpl) Stop() error {
 	if cancel != nil {
 		cancel()
 	}
-	return errors.Join(m.stopProviders(feeds), m.stopCurrencyRateMonitor(currencyRates), m.closeCache())
+	stopErr := errors.Join(m.stopProviders(feeds), m.stopCurrencyRateMonitor(currencyRates))
+	m.closeYahooAPI()
+	m.closeCache()
+	return stopErr
 }
 
 func (m *mktDataImpl) stopProviders(feeds map[c.QuoteSource]mktfeed.MktDataFeed) error {
@@ -603,11 +609,18 @@ func (m *mktDataImpl) failSetup(cause error) error {
 	if m.cancel != nil {
 		m.cancel()
 	}
+	m.closeYahooAPI()
 	if err := m.closeCache(); err != nil {
 		cause = errors.Join(cause, err)
 	}
 	m.markStopped()
 	return cause
+}
+
+func (m *mktDataImpl) closeYahooAPI() {
+	if m.yahooAPI != nil {
+		m.yahooAPI.Close()
+	}
 }
 
 func (m *mktDataImpl) closeCache() error {
@@ -632,6 +645,7 @@ func (m *mktDataImpl) failStart(cause error, started []mktfeed.MktDataFeed, rate
 			errs = append(errs, err)
 		}
 	}
+	m.closeYahooAPI()
 	if err := m.closeCache(); err != nil {
 		errs = append(errs, err)
 	}

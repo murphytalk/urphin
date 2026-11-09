@@ -78,8 +78,10 @@ func TestCurrencyRequestCancelsBlockedSend(t *testing.T) {
 }
 
 func TestRefreshAndUpdatesCopyQuotesUnderLock(t *testing.T) {
+	api := unary.NewUnaryAPI(unary.Config{RandomMktData: true})
+	t.Cleanup(api.Close)
 	m := NewMonitorPriceYahoo(Config{
-		Ctx: context.Background(), UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: true}),
+		Ctx: context.Background(), UnaryAPI: api,
 		ChanUpdateAssetQuote: make(chan c.QuoteUpdate, 200),
 	})
 	defer m.cancel()

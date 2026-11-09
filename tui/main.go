@@ -341,7 +341,7 @@ func startUI(requestCtx context.Context, mktData mktdata.MktData) error {
 	return ui.Run(requestCtx, ctx, mktData)
 }
 
-func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials c.KeySecretCfg, cachePath string) (func([]string) (map[string]float64, error), error) {
+func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials c.KeySecretCfg, cachePath string) (func(context.Context, []string) (map[string]float64, error), error) {
 	if override != "" {
 		feed = c.QuoteSource(override)
 	}
@@ -350,11 +350,11 @@ func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials 
 	}
 	switch feed {
 	case "yahoo":
-		return func(tickers []string) (map[string]float64, error) {
-			return mktdata.YahooGetLastPrices(tickers, cachePath, ctx.Cfg.App.RandomMktData)
+		return func(requestCtx context.Context, tickers []string) (map[string]float64, error) {
+			return mktdata.YahooGetLastPrices(requestCtx, tickers, cachePath, ctx.Cfg.App.RandomMktData)
 		}, nil
 	case "alpaca":
-		return func(tickers []string) (map[string]float64, error) {
+		return func(requestCtx context.Context, tickers []string) (map[string]float64, error) {
 			var alpacaErr error
 			if credentials.Key == "" || credentials.Secret == "" {
 				alpacaErr = errors.New("Alpaca API key and secret are required")
@@ -367,7 +367,7 @@ func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials 
 			}
 
 			slog.Error("Alpaca one-shot market-data lookup failed; falling back to Yahoo", "error", alpacaErr)
-			prices, yahooErr := mktdata.YahooGetLastPrices(tickers, cachePath, ctx.Cfg.App.RandomMktData)
+			prices, yahooErr := mktdata.YahooGetLastPrices(requestCtx, tickers, cachePath, ctx.Cfg.App.RandomMktData)
 			if yahooErr != nil {
 				return nil, errors.Join(
 					fmt.Errorf("Alpaca lookup failed: %w", alpacaErr),

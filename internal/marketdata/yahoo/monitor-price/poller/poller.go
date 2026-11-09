@@ -117,7 +117,7 @@ func (p *Poller) run(interval time.Duration) {
 			}
 
 			// Make a HTTP request to get the asset quotes
-			assetQuotes, _, err := p.unaryAPI.GetAssetQuotes(symbols)
+			assetQuotes, _, err := p.unaryAPI.GetAssetQuotes(p.ctx, symbols)
 
 			if err != nil {
 				select {

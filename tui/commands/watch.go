@@ -69,7 +69,7 @@ func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args
 		if cmdCtx.GetLastPrice == nil {
 			return fmt.Errorf("get last prices for tickers %v: command context is not configured", tickers)
 		}
-		prices, err = cmdCtx.GetLastPrice(tickers)
+		prices, err = cmdCtx.GetLastPrice(ctx, tickers)
 		if err != nil {
 			return fmt.Errorf("get last prices for tickers %v: %w", tickers, err)
 		}

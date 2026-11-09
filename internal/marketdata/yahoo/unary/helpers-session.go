@@ -1,6 +1,7 @@
 package unary
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,27 +25,23 @@ const (
 )
 
 // refreshSession refreshes the Yahoo Finance session by getting new cookies and crumb
-func (u *UnaryAPI) refreshSession() error {
-	var err error
-
-	// Get cookies
-	u.cookies, err = u.getCookie()
+func (u *requestOwner) refreshSession(ctx context.Context) error {
+	cookies, err := u.getCookie(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Get crumb
-	u.crumb, err = u.getCrumb()
+	crumb, err := u.getCrumb(ctx, cookies)
 	if err != nil {
 		return err
 	}
-
+	u.cookies, u.crumb = cookies, crumb
 	return nil
 }
 
 // getCookie retrieves authentication cookies from Yahoo Finance
-func (u *UnaryAPI) getCookie() ([]*http.Cookie, error) {
-	req, err := http.NewRequest(http.MethodGet, u.sessionRootURL, nil)
+func (u *requestOwner) getCookie(ctx context.Context) ([]*http.Cookie, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.sessionRootURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating cookie request: %w", err)
 	}
@@ -62,7 +59,8 @@ func (u *UnaryAPI) getCookie() ([]*http.Cookie, error) {
 
 	// Check for EU consent redirect
 	if isEUConsentRedirect(resp) {
-		return u.getCookieEU()
+		_ = resp.Body.Close()
+		return u.getCookieEU(ctx)
 	}
 
 	cookies := resp.Cookies()
@@ -74,14 +72,17 @@ func (u *UnaryAPI) getCookie() ([]*http.Cookie, error) {
 }
 
 // getCookieEU handles the EU consent flow to get cookies
-func (u *UnaryAPI) getCookieEU() ([]*http.Cookie, error) {
+func (u *requestOwner) getCookieEU(ctx context.Context) ([]*http.Cookie, error) {
 	var cookies []*http.Cookie
 
 	// Create a client with a redirect limit of 3 instead of the default of 1
 	client1 := u.createClientWithRedirectLimit(3)
 
 	// First request to get redirected to consent page
-	req1, _ := http.NewRequest(http.MethodGet, u.sessionRootURL, nil)
+	req1, err := http.NewRequestWithContext(ctx, http.MethodGet, u.sessionRootURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating EU cookie request: %w", err)
+	}
 
 	req1.Header.Set("Authority", "finance.yahoo.com")
 	req1.Header.Set("Accept", defaultAcceptValue)
@@ -116,6 +117,7 @@ func (u *UnaryAPI) getCookieEU() ([]*http.Cookie, error) {
 	if len(gucsCookies) == 0 {
 		return nil, errors.New("session refresh error: GUCS cookie missing from response")
 	}
+	_ = resp1.Body.Close()
 
 	// Submit consent form
 	formData := url.Values{}
@@ -126,7 +128,7 @@ func (u *UnaryAPI) getCookieEU() ([]*http.Cookie, error) {
 
 	formDataStr := formData.Encode()
 
-	req2, err := http.NewRequest(http.MethodPost, u.sessionConsentURL+fmt.Sprintf(sessionConsentPathPattern, sessionID), strings.NewReader(formDataStr))
+	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, u.sessionConsentURL+fmt.Sprintf(sessionConsentPathPattern, sessionID), strings.NewReader(formDataStr))
 	if err != nil {
 		return nil, fmt.Errorf("error creating consent submission request: %w", err)
 	}
@@ -176,8 +178,8 @@ func (u *UnaryAPI) getCookieEU() ([]*http.Cookie, error) {
 }
 
 // getCrumb retrieves the crumb value needed for authenticated requests
-func (u *UnaryAPI) getCrumb() (string, error) {
-	req, err := http.NewRequest(http.MethodGet, u.sessionCrumbURL+sessionCrumbPath, nil)
+func (u *requestOwner) getCrumb(ctx context.Context, cookies []*http.Cookie) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.sessionCrumbURL+sessionCrumbPath, nil)
 	if err != nil {
 		return "", fmt.Errorf("error creating crumb request: %w", err)
 	}
@@ -190,7 +192,7 @@ func (u *UnaryAPI) getCrumb() (string, error) {
 	req.Header.Set("User-Agent", defaultUserAgent)
 
 	// Add cookies
-	for _, cookie := range u.cookies {
+	for _, cookie := range cookies {
 		req.AddCookie(cookie)
 	}
 
@@ -205,22 +207,28 @@ func (u *UnaryAPI) getCrumb() (string, error) {
 	}
 
 	// Read crumb from response body
-	crumbBytes, _ := io.ReadAll(resp.Body)
+	crumbBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read crumb response: %w", err)
+	}
 	crumb := string(crumbBytes)
 
 	return crumb, nil
 }
 
 // createClientWithRedirectLimit returns a new http.Client with the specified redirect limit
-func (a *UnaryAPI) createClientWithRedirectLimit(limit int) *http.Client {
-	return &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= limit {
-				return http.ErrUseLastResponse
-			}
+func (u *requestOwner) createClientWithRedirectLimit(limit int) *http.Client {
+	client := *u.client
+	client.CheckRedirect = redirectLimit(limit)
+	return &client
+}
 
-			return nil
-		},
+func redirectLimit(limit int) func(*http.Request, []*http.Request) error {
+	return func(_ *http.Request, via []*http.Request) error {
+		if len(via) >= limit {
+			return http.ErrUseLastResponse
+		}
+		return nil
 	}
 }
 

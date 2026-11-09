@@ -295,7 +295,7 @@ func (m *MonitorPriceYahoo) getAssetQuotesAndReplaceCache() ([]*c.AssetQuote, er
 	m.mu.RLock()
 	symbols := slices.Clone(m.symbols)
 	m.mu.RUnlock()
-	assetQuotes, _, err := m.unaryAPI.GetAssetQuotes(symbols)
+	assetQuotes, _, err := m.unaryAPI.GetAssetQuotes(m.ctx, symbols)
 	if err != nil {
 		return []*c.AssetQuote{}, err
 	}
@@ -367,7 +367,7 @@ func (m *MonitorPriceYahoo) getCurrencyForEachSymbolAndUpdateCurrencyMap() error
 
 	if len(symbolsToFetch) > 0 {
 		// Get the currency each symbol's price quote will be denominated in
-		fetched, err := m.unaryAPI.GetCurrencyMap(symbolsToFetch)
+		fetched, err := m.unaryAPI.GetCurrencyMap(m.ctx, symbolsToFetch)
 		if err != nil {
 			return fmt.Errorf("failed to get currency information: %w", err)
 		}

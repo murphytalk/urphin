@@ -1,7 +1,9 @@
 package unary
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -22,11 +24,19 @@ const (
 	cacheKeySession = "yahoo:session"
 	// ttlSession bounds reuse of the Yahoo session. The session itself is valid
 	// for much longer and is re-established automatically if rejected.
-	ttlSession = 24 * time.Hour
+	ttlSession       = 24 * time.Hour
+	requestQueueSize = 32
+	requestTimeout   = 20 * time.Second
 )
 
-// UnaryAPI is a client for the API
+// UnaryAPI is a request handle whose worker exclusively owns the HTTP session.
 type UnaryAPI struct {
+	commands chan request
+	done     chan struct{}
+	cancel   context.CancelFunc
+}
+
+type requestOwner struct {
 	client            *http.Client
 	baseURL           string
 	sessionRootURL    string
@@ -36,6 +46,7 @@ type UnaryAPI struct {
 	crumb             string
 	cache             c.Cache
 	randomMktData     bool
+	requestTimeout    time.Duration
 }
 
 // Config contains configuration options for the UnaryAPI client
@@ -46,7 +57,34 @@ type Config struct {
 	SessionConsentURL string
 	Cache             c.Cache
 	RandomMktData     bool
+	HTTPClient        *http.Client
+	RequestTimeout    time.Duration
 }
+
+type requestKind uint8
+
+const (
+	quotesRequest requestKind = iota
+	currencyMapRequest
+	currencyRatesRequest
+)
+
+type request struct {
+	ctx            context.Context
+	kind           requestKind
+	symbols        []string
+	targetCurrency string
+	reply          chan response
+}
+
+type response struct {
+	quotes        []c.QuoteUpdate
+	currencyMap   map[string]SymbolToCurrency
+	currencyRates c.CurrencyRates
+	err           error
+}
+
+var errWorkerStopped = errors.New("Yahoo request worker stopped")
 
 type SymbolToCurrency struct {
 	Symbol       string
@@ -71,20 +109,29 @@ func NewUnaryAPI(config Config) *UnaryAPI {
 	if config.RandomMktData {
 		slog.Info("Yahoo random market-data mode enabled; network traffic disabled")
 	} else {
-		// Create client with limited redirects
-		client = &http.Client{
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 1 {
-					return http.ErrUseLastResponse
-				}
-
-				return nil
-			},
+		if config.HTTPClient != nil {
+			clientCopy := *config.HTTPClient
+			client = &clientCopy
+		} else {
+			client = &http.Client{}
+		}
+		if client.CheckRedirect == nil {
+			client.CheckRedirect = redirectLimit(1)
 		}
 		slog.Info("Yahoo HTTP client created")
 	}
 
-	return &UnaryAPI{
+	ctx, cancel := context.WithCancel(context.Background())
+	api := &UnaryAPI{
+		commands: make(chan request, requestQueueSize),
+		done:     make(chan struct{}),
+		cancel:   cancel,
+	}
+	timeout := config.RequestTimeout
+	if timeout <= 0 {
+		timeout = requestTimeout
+	}
+	owner := &requestOwner{
 		client:            client,
 		baseURL:           config.BaseURL,
 		sessionRootURL:    config.SessionRootURL,
@@ -92,12 +139,93 @@ func NewUnaryAPI(config Config) *UnaryAPI {
 		sessionConsentURL: config.SessionConsentURL,
 		cache:             config.Cache,
 		randomMktData:     config.RandomMktData,
+		requestTimeout:    timeout,
+	}
+	go api.run(ctx, owner)
+	return api
+}
+
+func (u *UnaryAPI) run(ctx context.Context, owner *requestOwner) {
+	defer close(u.done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-u.commands:
+			if ctx.Err() != nil {
+				return
+			}
+			if err := req.ctx.Err(); err != nil {
+				req.reply <- response{err: err}
+				continue
+			}
+			workCtx, cancel := context.WithTimeout(req.ctx, owner.requestTimeout)
+			stopClose := context.AfterFunc(ctx, cancel)
+			result := owner.execute(workCtx, req)
+			stopClose()
+			cancel()
+			req.reply <- result
+		}
+	}
+}
+
+// Close cancels in-flight HTTP work and joins the request worker.
+func (u *UnaryAPI) Close() {
+	u.cancel()
+	<-u.done
+}
+
+// Done closes after the request worker has stopped.
+func (u *UnaryAPI) Done() <-chan struct{} { return u.done }
+
+func (u *UnaryAPI) submit(ctx context.Context, req request) response {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req.ctx = ctx
+	req.symbols = append([]string(nil), req.symbols...)
+	req.reply = make(chan response, 1)
+	select {
+	case <-ctx.Done():
+		return response{err: ctx.Err()}
+	case <-u.done:
+		return response{err: errWorkerStopped}
+	case u.commands <- req:
+	}
+	select {
+	case result := <-req.reply:
+		return result
+	case <-ctx.Done():
+		return response{err: ctx.Err()}
+	case <-u.done:
+		select {
+		case result := <-req.reply:
+			return result
+		default:
+			return response{err: errWorkerStopped}
+		}
+	}
+}
+
+func (u *requestOwner) execute(ctx context.Context, req request) response {
+	switch req.kind {
+	case quotesRequest:
+		quotes, err := u.getAssetQuotes(ctx, req.symbols)
+		return response{quotes: quotes, err: err}
+	case currencyMapRequest:
+		currencies, err := u.getCurrencyMap(ctx, req.symbols)
+		return response{currencyMap: currencies, err: err}
+	case currencyRatesRequest:
+		rates, err := u.getCurrencyRates(ctx, req.symbols, req.targetCurrency)
+		return response{currencyRates: rates, err: err}
+	default:
+		return response{err: errors.New("unknown Yahoo request")}
 	}
 }
 
 // loadSessionFromCache populates cookies and crumb from the shared cache when
 // available. It returns true on a cache hit.
-func (u *UnaryAPI) loadSessionFromCache() bool {
+func (u *requestOwner) loadSessionFromCache() bool {
 	if u.cache == nil {
 		return false
 	}
@@ -120,7 +248,7 @@ func (u *UnaryAPI) loadSessionFromCache() bool {
 }
 
 // saveSessionToCache persists the current cookies and crumb to the shared cache.
-func (u *UnaryAPI) saveSessionToCache() {
+func (u *requestOwner) saveSessionToCache() {
 	if u.cache == nil {
 		return
 	}
@@ -134,29 +262,54 @@ func (u *UnaryAPI) saveSessionToCache() {
 }
 
 // GetAssetQuotes issues a HTTP request to retrieve quotes from the API and process the response
-func (u *UnaryAPI) GetAssetQuotes(symbols []string) ([]c.AssetQuote, map[string]*c.AssetQuote, error) {
+func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.AssetQuote, map[string]*c.AssetQuote, error) {
 	if len(symbols) == 0 {
 		return []c.AssetQuote{}, make(map[string]*c.AssetQuote), nil
 	}
-
-	result, err := u.getQuotes(symbols, []string{"shortName", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
-
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get quotes: %w", err)
+	result := u.submit(ctx, request{kind: quotesRequest, symbols: symbols})
+	if result.err != nil {
+		return nil, nil, result.err
 	}
-
-	quotes, quotesBySymbol := transformResponseQuotes(result.QuoteResponse.Quotes)
-
+	quotes := make([]c.AssetQuote, len(result.quotes))
+	quotesBySymbol := make(map[string]*c.AssetQuote, len(result.quotes))
+	for i, update := range result.quotes {
+		quote, ok := update.ToAssetQuote(nil)
+		if !ok {
+			return nil, nil, errors.New("Yahoo request returned a quote without a price")
+		}
+		quotes[i] = quote
+		quoteCopy := quote
+		quotesBySymbol[quote.Symbol] = &quoteCopy
+	}
 	return quotes, quotesBySymbol, nil
 }
 
+func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
+	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get quotes: %w", err)
+	}
+
+	quotes, _ := transformResponseQuotes(result.QuoteResponse.Quotes)
+	updates := make([]c.QuoteUpdate, len(quotes))
+	for i, quote := range quotes {
+		updates[i] = c.NewQuoteUpdate(quote, 0, 0)
+	}
+	return updates, nil
+}
+
 // GetCurrencyMap retrieves the currency which the price quote will be denominated in for the given symbols
-func (u *UnaryAPI) GetCurrencyMap(symbols []string) (map[string]SymbolToCurrency, error) {
+func (u *UnaryAPI) GetCurrencyMap(ctx context.Context, symbols []string) (map[string]SymbolToCurrency, error) {
 	if len(symbols) == 0 {
 		return map[string]SymbolToCurrency{}, nil
 	}
+	result := u.submit(ctx, request{kind: currencyMapRequest, symbols: symbols})
+	return result.currencyMap, result.err
+}
 
-	result, err := u.getQuotes(symbols, []string{"regularMarketPrice", "currency"})
+func (u *requestOwner) getCurrencyMap(ctx context.Context, symbols []string) (map[string]SymbolToCurrency, error) {
+	result, err := u.getQuotes(ctx, symbols, []string{"regularMarketPrice", "currency"})
 
 	if err != nil {
 		return map[string]SymbolToCurrency{}, err
@@ -175,13 +328,21 @@ func (u *UnaryAPI) GetCurrencyMap(symbols []string) (map[string]SymbolToCurrency
 }
 
 // GetCurrencyRates accepts an array of ISO 4217 currency codes and a target ISO 4217 currency code and returns a conversion rate for each of the input currencies to the target currency
-func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) (c.CurrencyRates, error) {
+func (u *UnaryAPI) GetCurrencyRates(ctx context.Context, fromCurrencies []string, toCurrency string) (c.CurrencyRates, error) {
 	if toCurrency == "" {
 		toCurrency = "USD"
 	}
 
 	if len(fromCurrencies) == 0 {
 		return c.CurrencyRates{}, nil
+	}
+	result := u.submit(ctx, request{kind: currencyRatesRequest, symbols: fromCurrencies, targetCurrency: toCurrency})
+	return result.currencyRates, result.err
+}
+
+func (u *requestOwner) getCurrencyRates(ctx context.Context, fromCurrencies []string, toCurrency string) (c.CurrencyRates, error) {
+	if toCurrency == "" {
+		toCurrency = "USD"
 	}
 
 	// Create currency pair symbols in format "FROMTO=X" (e.g., "EURUSD=X")
@@ -211,7 +372,7 @@ func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) 
 	}
 
 	// Get quotes for currency pairs
-	result, err := u.getQuotes(currencyPairSymbols, []string{"currency", "regularMarketPrice", "regularMarketPreviousClose"})
+	result, err := u.getQuotes(ctx, currencyPairSymbols, []string{"currency", "regularMarketPrice", "regularMarketPreviousClose"})
 	if err != nil {
 		return c.CurrencyRates{}, fmt.Errorf("failed to get currency rates: %w", err)
 	}
@@ -244,7 +405,7 @@ func (u *UnaryAPI) GetCurrencyRates(fromCurrencies []string, toCurrency string) 
 	return currencyRates, nil
 }
 
-func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error) {
+func (u *requestOwner) getQuotes(ctx context.Context, symbols []string, fields []string) (Response, error) {
 	if u.randomMktData {
 		return randomResponse(symbols), nil
 	}
@@ -255,79 +416,70 @@ func (u *UnaryAPI) getQuotes(symbols []string, fields []string) (Response, error
 		u.loadSessionFromCache()
 	}
 
-	// Build URL with query parameters
-	reqURL, err := url.Parse(u.baseURL + "/v7/finance/quote")
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to create request: %w", err)
-	}
+	for attempt := 0; attempt < 2; attempt++ {
+		reqURL, err := url.Parse(u.baseURL + "/v7/finance/quote")
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to create request: %w", err)
+		}
+		q := reqURL.Query()
+		q.Set("fields", strings.Join(fields, ","))
+		q.Set("symbols", strings.Join(symbols, ","))
+		q.Set("formatted", "true")
+		q.Set("lang", "en-US")
+		q.Set("region", "US")
+		q.Set("corsDomain", "finance.yahoo.com")
+		if u.crumb != "" {
+			q.Set("crumb", u.crumb)
+		}
+		reqURL.RawQuery = q.Encode()
 
-	q := reqURL.Query()
-	q.Set("fields", strings.Join(fields, ","))
-	q.Set("symbols", strings.Join(symbols, ","))
-
-	// Add common Yahoo Finance query parameters
-	q.Set("formatted", "true")
-	q.Set("lang", "en-US")
-	q.Set("region", "US")
-	q.Set("corsDomain", "finance.yahoo.com")
-
-	// Add crumb if available
-	if u.crumb != "" {
-		q.Set("crumb", u.crumb)
-	}
-
-	reqURL.RawQuery = q.Encode()
-
-	// Create request
-	req, _ := http.NewRequest(http.MethodGet, reqURL.String(), nil)
-
-	// Set common headers
-	req.Header.Set("Authority", "query1.finance.yahoo.com")
-	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", defaultAcceptLang)
-	req.Header.Set("Origin", u.baseURL)
-	req.Header.Set("User-Agent", defaultUserAgent)
-
-	// Add cookies if available
-	if len(u.cookies) > 0 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Authority", "query1.finance.yahoo.com")
+		req.Header.Set("Accept", "*/*")
+		req.Header.Set("Accept-Language", defaultAcceptLang)
+		req.Header.Set("Origin", u.baseURL)
+		req.Header.Set("User-Agent", defaultUserAgent)
 		for _, cookie := range u.cookies {
 			req.AddCookie(cookie)
 		}
-	}
 
-	// Make request
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return Response{}, fmt.Errorf("failed to make request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Handle not ok responses
-	if resp.StatusCode >= 400 {
-		// Try to refresh session and retry once
-		if err := u.refreshSession(); err != nil {
-			return Response{}, fmt.Errorf("session refresh failed: %w", err)
+		resp, err := u.client.Do(req)
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to make request: %w", err)
 		}
 
-		// Persist the freshly established session so other instances can reuse it
-		u.saveSessionToCache()
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			status := resp.StatusCode
+			_ = resp.Body.Close()
+			if attempt == 1 {
+				return Response{}, fmt.Errorf("Yahoo authentication rejected after session refresh: %d", status)
+			}
+			if err := u.refreshSession(ctx); err != nil {
+				return Response{}, fmt.Errorf("session refresh failed: %w", err)
+			}
+			u.saveSessionToCache()
+			continue
+		}
 
-		// Retry request with refreshed session
-		return u.getQuotes(symbols, fields)
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return Response{}, fmt.Errorf("unexpected response: %d", resp.StatusCode)
+		}
+		var result Response
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		_ = resp.Body.Close()
+		if err != nil {
+			return Response{}, fmt.Errorf("failed to decode response: %w", err)
+		}
+		if result.QuoteResponse.Error != nil {
+			return Response{}, fmt.Errorf("Yahoo API returned an error: %v", result.QuoteResponse.Error)
+		}
+		return result, nil
 	}
-
-	// Handle unexpected responses
-	if resp.StatusCode != http.StatusOK && resp.StatusCode < 400 {
-		return Response{}, fmt.Errorf("unexpected response: %d", resp.StatusCode)
-	}
-
-	// Decode response
-	var result Response
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return Response{}, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return result, nil
+	return Response{}, errors.New("Yahoo request attempts exhausted")
 }
 
 func randomResponse(symbols []string) Response {

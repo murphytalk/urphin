@@ -113,7 +113,7 @@ func (m *MonitorCurrencyRateYahoo) SetTargetCurrency(targetCurrency string) {
 	}
 	m.mu.RUnlock()
 
-	rates, err := m.unaryAPI.GetCurrencyRates(fromCurrencies, targetCurrency)
+	rates, err := m.unaryAPI.GetCurrencyRates(m.ctx, fromCurrencies, targetCurrency)
 
 	if err != nil {
 		select {
@@ -177,7 +177,7 @@ func (m *MonitorCurrencyRateYahoo) handleRequestCurrencyRates() {
 
 			if len(currenciesToFetch) > 0 {
 				// Get currency rates from Yahoo unary API
-				rates, err := m.unaryAPI.GetCurrencyRates(currenciesToFetch, targetCurrency)
+				rates, err := m.unaryAPI.GetCurrencyRates(m.ctx, currenciesToFetch, targetCurrency)
 				if err != nil {
 					select {
 					case <-m.ctx.Done():

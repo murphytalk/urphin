@@ -36,9 +36,11 @@ func TestRequestHandlerCancelsBlockedSends(t *testing.T) {
 			defer cancel()
 			requests := make(chan []string, 1)
 			requests <- []string{"EUR"}
+			api := unary.NewUnaryAPI(unary.Config{RandomMktData: !fail, BaseURL: "://invalid"})
+			t.Cleanup(api.Close)
 			m := NewMonitorCurrencyRateYahoo(Config{
 				Ctx: ctx, ChanRequestCurrencyRates: requests,
-				UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: !fail, BaseURL: "://invalid"}),
+				UnaryAPI: api,
 			})
 			selects := make(chan struct{}, 10)
 			m.ctx = observedContext{m.ctx, selects}
@@ -56,11 +58,13 @@ func TestRequestHandlerCancelsBlockedSends(t *testing.T) {
 func TestSetTargetCurrencyCancelsBlockedError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	api := unary.NewUnaryAPI(unary.Config{BaseURL: "://invalid"})
+	t.Cleanup(api.Close)
 	m := NewMonitorCurrencyRateYahoo(Config{
-		Ctx: ctx, UnaryAPI: unary.NewUnaryAPI(unary.Config{BaseURL: "://invalid"}),
+		Ctx: ctx, UnaryAPI: api,
 	})
 	m.currencyRateCache["EUR"] = c.CurrencyRate{}
-	selects := make(chan struct{}, 1)
+	selects := make(chan struct{}, 10)
 	m.ctx = observedContext{m.ctx, selects}
 	done := make(chan struct{})
 	go func() { m.SetTargetCurrency("USD"); close(done) }()
@@ -72,9 +76,11 @@ func TestSetTargetCurrencyCancelsBlockedError(t *testing.T) {
 func TestForwardedRatesAreIndependentSnapshots(t *testing.T) {
 	requests := make(chan []string, 1)
 	updates := make(chan c.CurrencyRates, 1)
+	api := unary.NewUnaryAPI(unary.Config{RandomMktData: true})
+	t.Cleanup(api.Close)
 	m := NewMonitorCurrencyRateYahoo(Config{
 		Ctx: context.Background(), ChanRequestCurrencyRates: requests, ChanUpdateCurrencyRates: updates,
-		UnaryAPI: unary.NewUnaryAPI(unary.Config{RandomMktData: true}),
+		UnaryAPI: api,
 	})
 	defer m.cancel()
 	m.targetCurrency = "USD"
