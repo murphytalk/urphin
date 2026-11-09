@@ -38,6 +38,19 @@ func TestFXQuotesInvertPreviousCloseWithRate(t *testing.T) {
 	}
 }
 
+func TestLocalDetachAcknowledgementSurvivesProviderCleanupFailure(t *testing.T) {
+	cleanupErr := errors.New("provider unsubscribe failed")
+	command := newMktDataCommand(context.Background(), mktDataDetach)
+	command.operationID = 19
+	if !command.complete(mktDataResult{localDetached: true, err: cleanupErr}) {
+		t.Fatal("detach result was not delivered")
+	}
+	result := <-command.reply
+	if result.operationID != 19 || !result.localDetached || !errors.Is(result.err, cleanupErr) {
+		t.Fatalf("detach result = %+v", result)
+	}
+}
+
 func TestYahooAPIConfigUsesFinanceSessionRootAndConsentHost(t *testing.T) {
 	config := yahooAPIConfig(nil, true)
 	if config.SessionRootURL != yahooSessionRootURL {

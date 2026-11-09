@@ -46,6 +46,62 @@ type MktData interface {
 
 type MktFeedFactoryMap = mktfeed.MktFeedFactoryMap
 
+type mktDataCommandKind uint8
+
+const (
+	mktDataStart mktDataCommandKind = iota
+	mktDataSubscribe
+	mktDataDetach
+	mktDataRegisterFeed
+	mktDataStop
+)
+
+// mktDataCommand is the unified owner's typed caller boundary. The owner assigns
+// operationID after accepting the command and completes reply without blocking.
+type mktDataCommand struct {
+	operationID uint64
+	kind        mktDataCommandKind
+	ctx         context.Context
+	config      mktfeed.MktDataConfig
+	subscriber  string
+	symbols     []string
+	updates     chan<- c.QuoteUpdate
+	source      c.QuoteSource
+	feed        mktfeed.MktDataFeed
+	reply       chan mktDataResult
+}
+
+// mktDataResult is immutable after publication. LocalDetached is the guarantee
+// that no future sends target the subscriber; Err may still report provider
+// cleanup failure without undoing that local detach.
+type mktDataResult struct {
+	operationID   uint64
+	localDetached bool
+	err           error
+}
+
+func newMktDataCommand(ctx context.Context, kind mktDataCommandKind) mktDataCommand {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return mktDataCommand{kind: kind, ctx: ctx, reply: make(chan mktDataResult, 1)}
+}
+
+func (command mktDataCommand) complete(result mktDataResult) bool {
+	select {
+	case <-command.ctx.Done():
+		return false
+	default:
+	}
+	result.operationID = command.operationID
+	select {
+	case command.reply <- result:
+		return true
+	default:
+		return false
+	}
+}
+
 // NewMktData creates an independent market-data service instance.
 func NewMktData() MktData {
 	return &mktDataImpl{
