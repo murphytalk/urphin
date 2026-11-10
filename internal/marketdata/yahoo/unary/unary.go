@@ -275,7 +275,7 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 }
 
 func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
-	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
+	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "marketState", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get quotes: %w", err)

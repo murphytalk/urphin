@@ -50,7 +50,7 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 			SymbolInSourceAPI:   responseQuote.Symbol,
 		},
 	}
-	if responseQuote.MarketState == "PRE" {
+	if responseQuote.MarketState != "" && responseQuote.MarketState != "REGULAR" && responseQuote.RegularMarketPrice.Raw > 0 {
 		assetQuote.QuotePrice.PricePrevClose = responseQuote.RegularMarketPrice.Raw
 	}
 
