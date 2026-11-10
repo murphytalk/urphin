@@ -1,9 +1,12 @@
 package alpaca
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
+	"net/http"
 	"slices"
 	"time"
 
@@ -12,15 +15,21 @@ import (
 )
 
 type snapshotClient interface {
-	GetSnapshots([]string, marketdata.GetSnapshotRequest) (map[string]*marketdata.Snapshot, error)
+	GetSnapshots(context.Context, []string, marketdata.GetSnapshotRequest) (map[string]*marketdata.Snapshot, error)
 }
 
-func newSnapshotClient(credentials c.KeySecretCfg) *marketdata.Client {
-	return marketdata.NewClient(marketdata.ClientOpts{
-		APIKey:    credentials.Key,
-		APISecret: credentials.Secret,
-		Feed:      marketdata.IEX,
+type alpacaSnapshotClient struct{ credentials c.KeySecretCfg }
+
+func (client alpacaSnapshotClient) GetSnapshots(ctx context.Context, symbols []string, request marketdata.GetSnapshotRequest) (map[string]*marketdata.Snapshot, error) {
+	api := marketdata.NewClient(marketdata.ClientOpts{
+		APIKey:     client.credentials.Key,
+		APISecret:  client.credentials.Secret,
+		Feed:       marketdata.IEX,
+		RetryLimit: 1,
+		RetryDelay: 100 * time.Millisecond,
+		HTTPClient: &http.Client{Timeout: 10 * time.Second, Transport: contextRoundTripper{ctx: ctx, base: http.DefaultTransport}},
 	})
+	return api.GetSnapshots(symbols, request)
 }
 
 // GetPrices fetches one batch of Alpaca snapshots without starting a stream.
@@ -33,7 +42,7 @@ func GetPrices(symbols []string, credentials c.KeySecretCfg) (map[string]float64
 	}
 
 	slog.Info("Connecting to Alpaca market-data feed for one-shot snapshots", "feed", "IEX", "symbols", uniqueSymbols(symbols))
-	prices, err := getPrices(newSnapshotClient(credentials), symbols)
+	prices, err := getPrices(context.Background(), alpacaSnapshotClient{credentials}, symbols)
 	if err != nil {
 		slog.Error("Alpaca one-shot market-data snapshot request failed", "error", err)
 		return nil, err
@@ -42,8 +51,8 @@ func GetPrices(symbols []string, credentials c.KeySecretCfg) (map[string]float64
 	return prices, nil
 }
 
-func getPrices(client snapshotClient, symbols []string) (map[string]float64, error) {
-	quotes, err := getAssetQuotes(client, symbols)
+func getPrices(ctx context.Context, client snapshotClient, symbols []string) (map[string]float64, error) {
+	quotes, err := getAssetQuotes(ctx, client, symbols)
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +63,8 @@ func getPrices(client snapshotClient, symbols []string) (map[string]float64, err
 	return prices, nil
 }
 
-func getAssetQuotes(client snapshotClient, symbols []string) (map[string]c.AssetQuote, error) {
-	entries, err := getQuoteEntries(client, symbols)
+func getAssetQuotes(ctx context.Context, client snapshotClient, symbols []string) (map[string]c.AssetQuote, error) {
+	entries, err := getQuoteEntries(ctx, client, symbols)
 	if err != nil {
 		return nil, err
 	}
@@ -66,13 +75,13 @@ func getAssetQuotes(client snapshotClient, symbols []string) (map[string]c.Asset
 	return quotes, nil
 }
 
-func getQuoteEntries(client snapshotClient, symbols []string) (map[string]quoteEntry, error) {
+func getQuoteEntries(ctx context.Context, client snapshotClient, symbols []string) (map[string]quoteEntry, error) {
 	requested := uniqueSymbols(symbols)
 	if len(requested) == 0 {
 		return map[string]quoteEntry{}, nil
 	}
 
-	snapshots, err := client.GetSnapshots(requested, marketdata.GetSnapshotRequest{Feed: marketdata.IEX})
+	snapshots, err := client.GetSnapshots(ctx, requested, marketdata.GetSnapshotRequest{Feed: marketdata.IEX})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Alpaca snapshots: %w", err)
 	}
@@ -90,6 +99,43 @@ func getQuoteEntries(client snapshotClient, symbols []string) (map[string]quoteE
 		quotes[symbol] = quoteEntry{quote: quote, timestamp: timestamp}
 	}
 	return quotes, nil
+}
+
+type contextRoundTripper struct {
+	ctx  context.Context
+	base http.RoundTripper
+}
+
+func (transport contextRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(request.Context())
+	stop := context.AfterFunc(transport.ctx, cancel)
+	response, err := transport.base.RoundTrip(request.WithContext(ctx))
+	if err != nil {
+		stop()
+		cancel()
+		return nil, err
+	}
+	if response.Body != nil {
+		response.Body = &cancelOnCloseBody{ReadCloser: response.Body, cancel: func() {
+			stop()
+			cancel()
+		}}
+	} else {
+		stop()
+		cancel()
+	}
+	return response, nil
+}
+
+type cancelOnCloseBody struct {
+	io.ReadCloser
+	cancel func()
+}
+
+func (body *cancelOnCloseBody) Close() error {
+	err := body.ReadCloser.Close()
+	body.cancel()
+	return err
 }
 
 func uniqueSymbols(symbols []string) []string {

@@ -1,8 +1,11 @@
 package alpaca
 
 import (
+	"context"
 	"errors"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,19 +15,6 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 )
 
-type fakeSnapshotClient struct {
-	snapshots map[string]*marketdata.Snapshot
-	err       error
-	symbols   []string
-	request   marketdata.GetSnapshotRequest
-}
-
-func (f *fakeSnapshotClient) GetSnapshots(symbols []string, request marketdata.GetSnapshotRequest) (map[string]*marketdata.Snapshot, error) {
-	f.symbols = append([]string(nil), symbols...)
-	f.request = request
-	return f.snapshots, f.err
-}
-
 func TestGetPricesUsesOneIEXSnapshotBatch(t *testing.T) {
 	client := &fakeSnapshotClient{
 		snapshots: map[string]*marketdata.Snapshot{
@@ -33,15 +23,18 @@ func TestGetPricesUsesOneIEXSnapshotBatch(t *testing.T) {
 		},
 	}
 
-	got, err := getPrices(client, []string{"MSFT", "AAPL", "AAPL"})
+	got, err := getPrices(context.Background(), client, []string{"MSFT", "AAPL", "AAPL"})
 	if err != nil {
 		t.Fatalf("getPrices() error = %v", err)
 	}
-	if !reflect.DeepEqual(client.symbols, []string{"AAPL", "MSFT"}) {
-		t.Errorf("requested symbols = %v, want [AAPL MSFT]", client.symbols)
+	if calls := client.callsSnapshot(); !reflect.DeepEqual(calls, [][]string{{"AAPL", "MSFT"}}) {
+		t.Errorf("requested symbols = %v, want [[AAPL MSFT]]", calls)
 	}
-	if client.request.Feed != marketdata.IEX {
-		t.Errorf("snapshot feed = %q, want %q", client.request.Feed, marketdata.IEX)
+	client.mu.Lock()
+	request := client.request
+	client.mu.Unlock()
+	if request.Feed != marketdata.IEX {
+		t.Errorf("snapshot feed = %q, want %q", request.Feed, marketdata.IEX)
 	}
 	want := map[string]float64{"AAPL": 100, "MSFT": 200}
 	if !reflect.DeepEqual(got, want) {
@@ -97,7 +90,7 @@ func TestGetPricesFailsWhenTickerHasNoUsableSnapshot(t *testing.T) {
 		},
 	}
 
-	got, err := getPrices(client, []string{"AAPL", "GOOG"})
+	got, err := getPrices(context.Background(), client, []string{"AAPL", "GOOG"})
 	if err == nil || !strings.Contains(err.Error(), `"GOOG"`) {
 		t.Fatalf("getPrices() error = %v, want unusable GOOG snapshot error", err)
 	}
@@ -108,7 +101,7 @@ func TestGetPricesFailsWhenTickerHasNoUsableSnapshot(t *testing.T) {
 
 func TestGetPricesPropagatesSnapshotFailure(t *testing.T) {
 	snapshotErr := errors.New("request failed")
-	got, err := getPrices(&fakeSnapshotClient{err: snapshotErr}, []string{"AAPL"})
+	got, err := getPrices(context.Background(), &fakeSnapshotClient{err: snapshotErr}, []string{"AAPL"})
 	if !errors.Is(err, snapshotErr) {
 		t.Fatalf("getPrices() error = %v, want wrapped snapshot error", err)
 	}
@@ -130,5 +123,43 @@ func TestValidQuoteRejectsInvalidMarkets(t *testing.T) {
 		if validQuote(test.bid, test.ask) {
 			t.Errorf("validQuote(%v, %v) = true, want false", test.bid, test.ask)
 		}
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (roundTripper roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTripper(request)
+}
+
+func TestSnapshotTransportCancelsWhenOperationContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	transport := contextRoundTripper{
+		ctx: ctx,
+		base: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			close(entered)
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}),
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := transport.RoundTrip(httptest.NewRequest(http.MethodGet, "https://example.test", nil))
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot request did not enter transport")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("RoundTrip() error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("snapshot transport did not cancel")
 	}
 }
