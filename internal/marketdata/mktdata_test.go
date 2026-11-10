@@ -44,13 +44,19 @@ func TestLocalDetachAcknowledgementSurvivesProviderCleanupFailure(t *testing.T) 
 	}
 }
 
-func TestFailedStartClosesCacheOwner(t *testing.T) {
+func TestUnregisteredFeedFallsBackToYahoo(t *testing.T) {
 	service := newTestService(t)
 	if err := service.Start(MktDataConfig{
 		CachePath: filepath.Join(t.TempDir(), "cache.json"),
 		Cfg:       &c.Config{App: c.AppCfg{MktDataFeed: "unregistered"}},
-	}); err == nil {
-		t.Fatal("Start() accepted an unregistered provider")
+	}); err != nil {
+		t.Fatalf("Start() with an unregistered provider: %v", err)
+	}
+	if _, ok := service.inspect().feeds[c.QuoteSourceYahoo]; !ok {
+		t.Fatal("Yahoo fallback feed was not registered")
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatalf("Stop(): %v", err)
 	}
 	owner, ok := service.mktCache.(*cache.Cache)
 	if !ok {
@@ -59,12 +65,12 @@ func TestFailedStartClosesCacheOwner(t *testing.T) {
 	select {
 	case <-owner.Done():
 	default:
-		t.Fatal("failed Start() leaked cache owner")
+		t.Fatal("Stop() leaked cache owner")
 	}
 	select {
 	case <-service.yahooAPI.Done():
 	default:
-		t.Fatal("failed Start() leaked Yahoo request owner")
+		t.Fatal("Stop() leaked Yahoo request owner")
 	}
 }
 
@@ -361,6 +367,28 @@ func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
 	}
 	wantQuote(t, updates, live)
 	wantNoQuote(t, updates)
+}
+
+func TestLatestProviderQuoteKeepsYahooNameFromSnapshot(t *testing.T) {
+	yahooQuote := c.AssetQuote{
+		Symbol: "AAPL", Name: "Apple Inc.", Class: c.AssetClassStock,
+		QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100},
+	}
+	service := newTestMktData(t, map[c.QuoteSource]mktDataFeed{
+		c.QuoteSourceYahoo:  &testMktDataFeed{quotes: []c.AssetQuote{yahooQuote}},
+		c.QuoteSourceAlpaca: &testMktDataFeed{},
+	})
+	updates := make(chan c.QuoteUpdate, 2)
+	subscribeQuotes(t, service, "home", updates, "AAPL")
+	wantQuote(t, updates, yahooQuote)
+
+	latest := c.AssetQuote{
+		Symbol: "AAPL", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca,
+		QuotePrice: c.QuotePrice{Price: 101}, Exchange: c.Exchange{Name: "Alpaca"},
+	}
+	service.routeQuote(c.QuoteSourceAlpaca, latest)
+	latest.Name = "Apple Inc."
+	wantQuote(t, updates, latest)
 }
 
 type stalledSnapshotFeed struct {

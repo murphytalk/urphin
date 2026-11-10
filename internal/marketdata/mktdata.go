@@ -256,6 +256,7 @@ type mktDataOwner struct {
 	factories      MktFeedFactoryMap
 	fxPairSet      map[string]struct{}
 	fxQuotes       map[string]c.AssetQuote
+	yahooNames     map[string]string
 	fxRequests     chan []string
 	targetCurrency string
 	ctx            context.Context
@@ -295,7 +296,7 @@ func newMktDataImpl(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycle
 		service: m, state: state,
 		subscribers: make(map[string]*subscriber), feeds: make(map[c.QuoteSource]*providerRuntime),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
-		fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote),
+		fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote), yahooNames: make(map[string]string),
 		pendingCalls: make(map[uint64]*pendingCall), quoteVersions: make(map[c.QuoteSource]map[string]quoteVersion),
 	}
 	o.workerCtx, o.workerCancel = context.WithCancel(context.Background())
@@ -551,9 +552,6 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	o.yahooAPI = newYahooAPI(o.mktCache, config.RandomMktData)
 	o.service.mktCache, o.service.yahooAPI = o.mktCache, o.yahooAPI
 
-	if o.feeds[c.QuoteSourceYahoo] == nil {
-		o.addProvider(c.QuoteSourceYahoo, newYahooPriceFeed(config, o.ctx, o.yahooAPI, o.chanError, o.chanQuotes, o.fxRequests))
-	}
 	o.currencyRates = newYahooCurrencyRateMonitor(config, o.ctx, o.yahooAPI, o.mktCache, o.chanError, o.chanRates, o.fxRequests)
 	if config.RandomMktData {
 		slog.Warn("Only random market-data feed is enabled")
@@ -564,19 +562,22 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 			if _, exists := o.feeds[source]; !exists {
 				factory, found := o.factories[source]
 				if !found {
-					o.beginCleanup(errors.New("Market-data feed not registered; using Yahoo only"))
-					return
+					slog.Warn("Market-data feed not registered; using Yahoo only")
+				} else {
+					feed, err := factory(config, o.ctx, o.chanError, o.chanQuotes)
+					if err != nil {
+						o.beginCleanup(fmt.Errorf("failed to create market-data feed: %w", err))
+						return
+					}
+					o.addProvider(source, feed)
 				}
-				feed, err := factory(config, o.ctx, o.chanError, o.chanQuotes)
-				if err != nil {
-					o.beginCleanup(fmt.Errorf("failed to create market-data feed: %w", err))
-					return
-				}
-				o.addProvider(source, feed)
 			}
 		} else {
 			slog.Warn("Yahoo market feed only")
 		}
+	}
+	if o.feeds[c.QuoteSourceYahoo] == nil {
+		o.addProvider(c.QuoteSourceYahoo, newYahooPriceFeed(config, o.ctx, o.yahooAPI, o.chanError, o.chanQuotes, o.fxRequests))
 	}
 	if err := o.currencyRates.Start(); err != nil {
 		o.beginCleanup(fmt.Errorf("start Yahoo currency-rate monitor: %w", err))
@@ -1108,6 +1109,9 @@ func (o *mktDataOwner) applySeeds(source c.QuoteSource, updates []c.QuoteUpdate,
 			if sub == nil || sub.symbolEpochs[symbol] != epoch {
 				continue
 			}
+			if !delivered {
+				update = o.preserveYahooName(source, update)
+			}
 			deliverQuote(sub, update, sub.symbols)
 			delivered = true
 		}
@@ -1143,6 +1147,7 @@ func (o *mktDataOwner) handleQuote(source c.QuoteSource, update c.QuoteUpdate) {
 	if current.generation == update.Generation && update.Revision > 0 && current.revision > update.Revision {
 		return
 	}
+	update = o.preserveYahooName(source, update)
 	o.recordQuoteVersion(source, symbol, update)
 	for _, sub := range o.subscribers {
 		deliverQuote(sub, update, sub.symbols)
@@ -1154,6 +1159,23 @@ func quoteSymbol(update c.QuoteUpdate) string {
 		return update.Symbol
 	}
 	return update.Meta.SymbolInSourceAPI
+}
+
+func (o *mktDataOwner) preserveYahooName(source c.QuoteSource, update c.QuoteUpdate) c.QuoteUpdate {
+	symbol := quoteSymbol(update)
+	if symbol == "" {
+		return update
+	}
+	if source == c.QuoteSourceYahoo && update.Name != "" {
+		if o.yahooNames == nil {
+			o.yahooNames = make(map[string]string)
+		}
+		o.yahooNames[symbol] = update.Name
+	}
+	if name := o.yahooNames[symbol]; name != "" {
+		update.Name = name
+	}
+	return update
 }
 
 func (o *mktDataOwner) recordQuoteVersion(source c.QuoteSource, symbol string, update c.QuoteUpdate) {
