@@ -8,7 +8,7 @@ This guide describes the implemented home screen, not the old fake-monitor UI. I
 flowchart TD
     App["Application owner: feed Start/Stop, backend Close"] --> Run["ui.Run: program and session lifetime"]
     Run --> Home["Home Model: sole portfolio and layout owner"]
-    Run --> Session["quoteSession: channel, receiver, startup and detach"]
+    Run --> Session["quoteSession owner: subscription, retry, detach and channel lifetime"]
     Home --> Summary["summary.Model: native totals renderer"]
     Home --> Viewport["viewport: watchlist clipping and scrolling"]
     Viewport --> Watchlist["watchlist.Model: visible assets, sort, shared widths"]
@@ -21,7 +21,7 @@ flowchart TD
 | Boundary | Implementation and responsibility |
 |---|---|
 | Application → UI | [tui/main.go](../tui/main.go): starts market data, calls `ui.Run`, then stops feeds and closes the backend. |
-| Receiver → home event loop | [tui/ui/session.go](../tui/ui/session.go): owns the caller-supplied quote channel and produces `QuoteBatchMsg`; never mutates portfolio maps. |
+| Session owner → home event loop | [tui/ui/session.go](../tui/ui/session.go): owns subscription/retry/detach ordering and closes its quote channel after local detach. Receiver commands coalesce owned updates into `QuoteBatchMsg`; they never mutate portfolio maps. |
 | Home → child renderers | [tui/ui/home-screen.go](../tui/ui/home-screen.go) and [tui/ui/portfolio.go](../tui/ui/portfolio.go): cache quotes and FX rates, derive visible assets and summary values, manage keys and layout. |
 | Watchlist → rows | [internal/watchlist/watchlist.go](../internal/watchlist/watchlist.go): sorts, retains rows by symbol, measures shared columns, dispatches row messages. |
 | Row → text | [internal/watchlist/row/row.go](../internal/watchlist/row/row.go) and [internal/watchlist/row/render.go](../internal/watchlist/row/render.go): format cells and animate known price changes. |
@@ -46,7 +46,7 @@ flowchart LR
     Totals --> Summary["SetCurrencySummariesMsg → summary"]
 ```
 
-- `Init()` batches the receiver and startup subscription commands. The subscription waits for the receiver-readiness gate before calling `Subscribe`, so snapshots delivered during that call have a consumer ready.
+- `Init()` batches the receiver and startup request. The receiver signals readiness to the session owner before reading; the owner starts `Subscribe` only after that signal, so startup snapshots have a consumer ready.
 - One logical subscription (`"home"`, the same channel and complete union) lasts until exit. Startup makes at most **three attempts**, retrying `Subscribe` errors after cancellable **1 s / 2 s** waits. Partial failure can still deliver quotes; exhaustion is logged and leaves the UI running. Empty symbol sets start neither command. Navigation, sorting and summary toggles never resubscribe.
 - [The service contract](../internal/marketdata/mktdata.go) is nonblocking delivery: a full channel drops updates. The session capacity is `max(64, 2*len(symbols))`, enough to buffer one snapshot per symbol from both Yahoo and Alpaca, but not a lossless guarantee under concurrent traffic.
 - Each receiver command waits for one quote, then drains immediately available quotes, bounded to at most the channel capacity in additional reads. It normalizes an empty `Symbol` from `Meta.SymbolInSourceAPI` and keeps the last received quote per symbol. Batch order across different symbols is unspecified. There is **no flush timer or periodic render tick**; only row animations use recurring UI ticks (startup backoff has separate timers).
@@ -64,16 +64,16 @@ flowchart LR
 
 ## 3. Lifecycle and safe shutdown
 
-The **application** owns `marketData.Start()`, `marketData.Stop()` and backend `Close()`. `ui.Run` owns the Bubble Tea program and `quoteSession.Close()`, joining its cleanup error with the program error. The UI does not stop a shared feed or close the backend.
+The **application** owns `marketData.Start()`, `marketData.Stop()` and backend `Close()`. `ui.Run` owns the Bubble Tea program and `quoteSession.Close()`, joining its cleanup error with the program error. The supplied parent context is attached to both Bubble Tea and the session. The UI does not stop a shared feed or close the backend.
 
 Shutdown order is deliberate:
 
-1. Cancel the session context, releasing blocked receivers, readiness waits and retry delays. F10/Ctrl+C cancel immediately before returning `tea.Quit`; deferred session cleanup also covers program errors.
-2. Acquire the session operation mutex, waiting for any in-flight `Subscribe` to return. Mark the session closed so no late startup attempt can attach.
-3. If any nonempty subscription was attempted, call `Unsubscribe("home")` under that same lock, including after a partially failed startup.
-4. Close the caller-owned channel only after successful detach (or if no attachment was attempted), and only if it has not already been observed closed. `Close()` is idempotent. On detach error, return that error and **leave the channel open** for application-owned feed shutdown: closing while a sender may remain attached is unsafe.
+1. F10/Ctrl+C request shutdown from the session owner before returning `tea.Quit`. Parent-context cancellation follows the same owner path. Both cancel the receiver and retry timer.
+2. The owner waits for any in-flight `Subscribe` call to return, so a late acceptance cannot attach after detach.
+3. If a nonempty subscription was attempted, the owner calls `Unsubscribe("home")`, including after a partial startup failure. Concurrent `Close()` calls wait for the same terminal result.
+4. `Unsubscribe` returns after the service has removed the subscriber locally, even when its error reports provider reconciliation failure. The session owner then closes the caller-owned channel exactly once. With no attempted subscription, the owner closes it directly.
 
-The market-data sender holds its subscriber read lock during delivery; removal takes the write lock. Successful detach therefore orders channel closure after sends. Cancellation is **not a network-abort guarantee**: `MktData.Subscribe` has no context argument. A pending provider operation can delay `Subscribe`, serialized `Unsubscribe`, and cleanup even after the UI receiver/retry waits are cancelled. Do not bypass that ordering to force-close the channel.
+The service owner removes the subscriber before asynchronous provider reconciliation, so no later send can target its channel after `Unsubscribe` returns. Cancellation does not interrupt the synchronous `MktData.Subscribe` API; a pending provider operation can delay its return and the following detach. The session owner waits for that ordering instead of force-closing the channel.
 
 ## 4. Native portfolio summary and cost rows
 
@@ -141,13 +141,13 @@ Sort and scope changes are session-local; they do not persist settings. Renderin
 - **Whole UI:** supply `setup.AppCtx` with backend, settings and populated styles, start your `MktData` implementation, then call `ui.Run(app, feed)`. After it returns, stop the feed and close the backend in the application owner, including on errors. `NewModel` alone loads state but does not attach the private quote session; `Run` supplies that wiring.
 - **Custom host/event loop:** `NewModel` is the v2 root model; deliver `QuoteBatchMsg` through the host event loop and manage your own receiver/subscription lifetime if not using `Run`. Never mutate its portfolio state from a feed goroutine or run multiple outstanding receivers against the same channel.
 - **Rendering only:** feed derived `c.Asset` snapshots into `watchlist.SetAssetsMsg`; `UpdateAssetsMsg` updates displayed symbols only and ignores others. Supply both per-share costs and availability flags. Feed precomputed `CurrencySummary` values into `SetCurrencySummariesMsg`. Child `Update` methods return a child pointer plus `tea.Cmd`, and child `View()` returns a string; the host composes them, forwards resize/frame messages, runs returned commands, and owns clipping. They are not standalone v2 root models. The rendering packages are `internal`, so reuse them within this module or deliberately relocate/export them.
-- **Feed contract:** reuse the same nonnil channel for repeated subscriptions with an ID, send snapshots/live updates nonblockingly, never close the caller's channel, and make successful `Unsubscribe` guarantee no later send to it. Keep startup retries and shutdown serialization outside portfolio/rendering state.
+- **Feed contract:** reuse the same nonnil channel for repeated subscriptions with an ID, send snapshots/live updates nonblockingly, and never close the caller's channel. `Unsubscribe` guarantees no future send after return; its error may report provider reconciliation failure after local detach. A feed registered directly with `MktData` can implement `mktfeed.QuoteUpdatePublisher` to receive the service-owned quote channel; factory-created feeds already receive it in their configuration.
 
 ## 7. Tests and recommended checks
 
 | Tests | Coverage to consult |
 |---|---|
-| [tui/ui/session_test.go](../tui/ui/session_test.go) | Receiver gate, buffer capacity, same-ID retries/exhaustion, cancellable backoff, in-flight Subscribe ordering, detach errors, idempotent Close, coalescing/channel closure, headless Bubble Tea lifecycle/navigation/quit. |
+| [tui/ui/session_test.go](../tui/ui/session_test.go) | Receiver gate, buffer capacity, same-ID retries/exhaustion, cancellable backoff, in-flight Subscribe ordering, parent cancellation, idempotent Close, no post-detach delivery, coalescing/channel closure, and headless Bubble Tea lifecycle/navigation/quit. The integrated service/session/UI test checks a delayed stale seed and provider recovery. |
 | [tui/ui/home_screen_test.go](../tui/ui/home_screen_test.go) | Deduplicated backend loads, quote ownership/offscreen cache, no navigation subscription, reserved letters, sort, scrolling, resize/summary reservation, footer and frame dispatch. |
 | [tui/ui/portfolio_test.go](../tui/ui/portfolio_test.go) | Native totals, fees once, both P&L bases, previous-close day denominator, scoped/shared symbols, missing quotes, currency precedence/mismatch recovery, nonfinite inputs and native weights. |
 | [internal/summary/currency_test.go](../internal/summary/currency_test.go) | Currency ordering, $3N+2$ height including empty scope, N/A flags/percentages, profit color, average-cost underline, narrowing, ANSI/UTF-8 safety and legacy switching. |

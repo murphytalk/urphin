@@ -24,6 +24,12 @@ type MktDataFeed interface {
 	Stop() error
 }
 
+// QuoteUpdatePublisher is optional for feeds registered directly with MktData.
+// Factory-created feeds receive the same service-owned channel in their config.
+type QuoteUpdatePublisher interface {
+	SetQuoteUpdates(chan<- c.QuoteUpdate)
+}
+
 type MktFeedFactory func(mktCfg MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.QuoteUpdate) (MktDataFeed, error)
 
 type MktFeedFactoryMap map[c.QuoteSource]MktFeedFactory

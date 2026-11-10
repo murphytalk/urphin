@@ -425,6 +425,41 @@ func BenchmarkQuoteDelivery(b *testing.B) {
 	}
 }
 
+type benchmarkQuotePublisher struct{ updates chan<- c.QuoteUpdate }
+
+func (*benchmarkQuotePublisher) Start() error                                    { return nil }
+func (*benchmarkQuotePublisher) GetAssetQuotes(...bool) ([]c.QuoteUpdate, error) { return nil, nil }
+func (*benchmarkQuotePublisher) SetSymbols([]string, int) error                  { return nil }
+func (*benchmarkQuotePublisher) Stop() error                                     { return nil }
+func (f *benchmarkQuotePublisher) SetQuoteUpdates(updates chan<- c.QuoteUpdate) {
+	f.updates = updates
+}
+
+func BenchmarkQuoteIngressDelivery(b *testing.B) {
+	feed := &benchmarkQuotePublisher{}
+	service := NewMktData()
+	service.RegisterMktDataFeed(c.QuoteSourceYahoo, feed)
+	if err := service.Start(MktDataConfig{RandomMktData: true}); err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if err := service.Stop(); err != nil {
+			b.Errorf("Stop() during benchmark cleanup: %v", err)
+		}
+	})
+	updates := make(chan c.QuoteUpdate, 1)
+	if err := service.Subscribe("benchmark", []string{"AAPL"}, updates); err != nil {
+		b.Fatal(err)
+	}
+	quote := c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		feed.updates <- c.NewQuoteUpdate(quote, 0, 0)
+		<-updates
+	}
+}
+
 type stalledSetSymbolsFeed struct {
 	testMktDataFeed
 	entered    chan struct{}

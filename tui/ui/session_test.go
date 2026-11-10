@@ -40,6 +40,82 @@ type sessionTestFeed struct {
 	unsubscribeFn func(string) error
 }
 
+type sessionIntegrationFeed struct {
+	mu              sync.Mutex
+	updates         chan<- c.QuoteUpdate
+	setCalls        int
+	snapshotCalls   int
+	snapshotEntered chan struct{}
+	releaseSnapshot chan struct{}
+	snapshotGate    sync.Once
+	stopped         chan struct{}
+	stopGate        sync.Once
+	subscribeErr    error
+	unsubscribeErr  error
+}
+
+func (f *sessionIntegrationFeed) SetQuoteUpdates(updates chan<- c.QuoteUpdate) {
+	f.mu.Lock()
+	f.updates = updates
+	f.mu.Unlock()
+}
+
+func (f *sessionIntegrationFeed) Start() error { return nil }
+
+func (f *sessionIntegrationFeed) GetAssetQuotes(...bool) ([]c.QuoteUpdate, error) {
+	f.mu.Lock()
+	f.snapshotCalls++
+	call := f.snapshotCalls
+	f.mu.Unlock()
+	if call == 2 {
+		f.snapshotGate.Do(func() { close(f.snapshotEntered) })
+		<-f.releaseSnapshot
+	}
+	old := c.AssetQuote{Symbol: "A", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
+	return []c.QuoteUpdate{c.NewQuoteUpdate(old, 0, 0)}, nil
+}
+
+func (f *sessionIntegrationFeed) SetSymbols(symbols []string, _ int) error {
+	f.mu.Lock()
+	f.setCalls++
+	call := f.setCalls
+	if len(symbols) > 0 {
+		f.mu.Unlock()
+		if call == 1 {
+			return f.subscribeErr
+		}
+		return nil
+	}
+	updates := f.updates
+	f.mu.Unlock()
+	if updates != nil {
+		final := c.NewQuoteUpdate(c.AssetQuote{Symbol: "A", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 102}}, 0, 0)
+		updates <- final
+	}
+	return f.unsubscribeErr
+}
+
+func (f *sessionIntegrationFeed) Stop() error {
+	f.stopGate.Do(func() { close(f.stopped) })
+	return nil
+}
+
+func (f *sessionIntegrationFeed) publish(update c.QuoteUpdate) {
+	f.mu.Lock()
+	updates := f.updates
+	f.mu.Unlock()
+	if updates == nil {
+		panic("service did not bind the registered feed quote channel")
+	}
+	updates <- update
+}
+
+func (f *sessionIntegrationFeed) counts() (setCalls, snapshotCalls int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.setCalls, f.snapshotCalls
+}
+
 func newSessionTestFeed() *sessionTestFeed {
 	return &sessionTestFeed{notify: make(chan sessionTestSubscription, 64)}
 }
@@ -311,7 +387,7 @@ func TestSessionCloseCancelsFirstAndSecondBackoffWithoutLateRetry(t *testing.T) 
 			for range attempt {
 				sessionTestAwait(t, feed.notify, "failed subscription attempt")
 			}
-			// The operation lock is a barrier proving Subscribe returned, not a timed guess.
+			// Close handles either an in-flight result or an already scheduled retry.
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -812,4 +888,88 @@ func TestBubbleTeaParentCancellationJoinsSession(t *testing.T) {
 	if _, open := <-model.session.updates; open {
 		t.Fatal("parent-canceled Bubble Tea left the session output channel open")
 	}
+}
+
+func TestMarketDataServiceSessionAndUIRejectDelayedSeed(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	feedErr, unsubscribeErr := errors.New("temporary provider error"), errors.New("provider cleanup failed")
+	provider := &sessionIntegrationFeed{
+		snapshotEntered: make(chan struct{}), releaseSnapshot: make(chan struct{}), stopped: make(chan struct{}),
+		subscribeErr: feedErr, unsubscribeErr: unsubscribeErr,
+	}
+	service := mktdata.NewMktData()
+	service.RegisterMktDataFeed(c.QuoteSourceYahoo, provider)
+	if err := service.Start(mktdata.MktDataConfig{RandomMktData: true}); err != nil {
+		t.Fatal(err)
+	}
+	model := uiTestModel(t, []databackend.Watchlist{{Name: "Holdings", Tickers: []string{"A"}}}, map[string]databackend.Position{"A": {Shares: 1, Ccy: "USD"}})
+	model.ctx = parent
+	model.session = newQuoteSession(parent, service, model.symbols)
+	model.session.delays = []time.Duration{0, 0}
+	observed := &sessionProgramModel{Model: model, ready: make(chan struct{}), events: make(chan tea.Msg, 16), completed: make(chan tea.Msg, 16)}
+	program := tea.NewProgram(observed, tea.WithContext(parent), tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithWindowSize(120, 20), tea.WithoutSignalHandler())
+	result, finished := make(chan error, 1), make(chan struct{})
+	go func() {
+		_, runErr := program.Run()
+		result <- errors.Join(runErr, model.session.Close())
+		close(finished)
+	}()
+	releaseSnapshot := sync.OnceFunc(func() { close(provider.releaseSnapshot) })
+	t.Cleanup(func() {
+		cancel()
+		releaseSnapshot()
+		program.Kill()
+		_ = model.session.Close()
+		_ = service.Stop()
+		sessionTestAwait(t, finished, "integrated service/session cleanup")
+	})
+	sessionTestAwait(t, observed.ready, "integrated UI readiness")
+	sessionTestAwait(t, provider.snapshotEntered, "delayed provider seed")
+
+	live := c.NewQuoteUpdate(c.AssetQuote{Symbol: "A", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 101}}, 0, 1)
+	provider.publish(live)
+	for {
+		msg := sessionTestAwait(t, observed.events, "live quote through the service and UI")
+		batch, ok := msg.(QuoteBatchMsg)
+		if !ok {
+			continue
+		}
+		quotes := sessionTestBatch(t, batch)
+		if quote := quotes["A"]; quote.QuotePrice == nil || quote.QuotePrice.Price != 101 {
+			t.Fatalf("UI received quote %+v, want newer live price 101", quote)
+		}
+		break
+	}
+	if state := sessionTestProgramState(t, program); state.quotes["A"].QuotePrice.Price != 101 {
+		t.Fatalf("UI state after live quote = %+v, want 101", state.quotes["A"])
+	}
+	cancel()
+	sessionTestAwait(t, model.session.ctx.Done(), "integrated cancellation during Subscribe")
+	if setCalls, snapshotCalls := provider.counts(); setCalls != 2 || snapshotCalls != 2 {
+		t.Fatalf("detach overlapped the pending Subscribe: SetSymbols=%d snapshots=%d", setCalls, snapshotCalls)
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("Close returned before delayed Subscribe resolved: %v", err)
+	default:
+	}
+	releaseSnapshot()
+	if err := sessionTestAwait(t, result, "integrated cancellation and local detach"); !errors.Is(err, tea.ErrProgramKilled) || !errors.Is(err, unsubscribeErr) {
+		t.Fatalf("integrated close error %v, want program cancellation and provider cleanup error", err)
+	}
+	if setCalls, snapshotCalls := provider.counts(); setCalls != 3 || snapshotCalls != 2 {
+		t.Fatalf("provider operations: SetSymbols=%d snapshots=%d; want retry, detach, and two snapshots", setCalls, snapshotCalls)
+	}
+	for update, open := <-model.session.updates; open; update, open = <-model.session.updates {
+		if update.QuotePrice == nil || update.QuotePrice.Price != 101 {
+			t.Fatalf("post-detach update reached the session: %+v", update)
+		}
+	}
+	if quote := model.quotes["A"]; quote.QuotePrice.Price != 101 {
+		t.Fatalf("final UI quote regressed after delayed seed: %+v", quote)
+	}
+	if err := service.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	sessionTestAwait(t, provider.stopped, "fake provider shutdown")
 }

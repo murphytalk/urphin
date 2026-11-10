@@ -489,8 +489,18 @@ func (o *mktDataOwner) addProvider(source c.QuoteSource, feed mktfeed.MktDataFee
 		pendingQuotes: make(map[int][]c.QuoteUpdate),
 	}
 	o.feeds[source] = provider
+	o.bindQuotePublisher(feed)
 	o.workers.Add(1)
 	go o.runProviderWorker(source, provider)
+}
+
+func (o *mktDataOwner) bindQuotePublisher(feed mktfeed.MktDataFeed) {
+	if o.chanQuotes == nil {
+		return
+	}
+	if publisher, ok := feed.(mktfeed.QuoteUpdatePublisher); ok {
+		publisher.SetQuoteUpdates(o.chanQuotes)
+	}
 }
 
 func (o *mktDataOwner) start(command mktDataCommand) {
@@ -518,6 +528,9 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	o.chanQuotes = make(chan c.QuoteUpdate, quoteChanSize)
 	o.chanRates = make(chan c.CurrencyRates, quoteChanSize)
 	o.fxRequests = make(chan []string, quoteChanSize)
+	for _, provider := range o.feeds {
+		o.bindQuotePublisher(provider.feed)
+	}
 	o.fxPairSet = make(map[string]struct{}, len(config.FxPairs))
 	o.fxQuotes = make(map[string]c.AssetQuote, len(config.FxPairs))
 	for _, pair := range config.FxPairs {

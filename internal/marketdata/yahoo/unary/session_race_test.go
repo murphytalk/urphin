@@ -311,6 +311,85 @@ func TestCancelledQueuedRequestIsSkipped(t *testing.T) {
 	}
 }
 
+type signaledCancelContext struct {
+	context.Context
+	done    chan struct{}
+	entered chan struct{}
+	once    sync.Once
+}
+
+func (c *signaledCancelContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.entered) })
+	return c.done
+}
+
+func (c *signaledCancelContext) Err() error {
+	select {
+	case <-c.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func TestFullYahooRequestMailboxCancellationAndCloseJoin(t *testing.T) {
+	transportEntered := make(chan struct{})
+	api := NewUnaryAPI(Config{
+		BaseURL:         "https://example.invalid",
+		SessionRootURL:  "https://example.invalid/cookie",
+		SessionCrumbURL: "https://example.invalid",
+		HTTPClient: &http.Client{Transport: currencyRoundTrip(func(req *http.Request) (*http.Response, error) {
+			close(transportEntered)
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})},
+	})
+	active := make(chan error, 1)
+	go func() {
+		_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
+		active <- err
+	}()
+	select {
+	case <-transportEntered:
+	case <-time.After(time.Second):
+		t.Fatal("active request did not reach the blocking transport")
+	}
+	for range requestQueueSize {
+		api.commands <- request{ctx: context.Background(), reply: make(chan response, 1)}
+	}
+	overflow := &signaledCancelContext{Context: context.Background(), done: make(chan struct{}), entered: make(chan struct{})}
+	queued := make(chan error, 1)
+	go func() {
+		_, _, err := api.GetAssetQuotes(overflow, []string{"MSFT"})
+		queued <- err
+	}()
+	<-overflow.entered
+	close(overflow.done)
+	var queuedErr error
+	select {
+	case queuedErr = <-queued:
+	case <-time.After(time.Second):
+		t.Fatal("full-mailbox caller did not return after cancellation")
+	}
+	if !errors.Is(queuedErr, context.Canceled) {
+		t.Fatalf("full-mailbox request error = %v, want context.Canceled", queuedErr)
+	}
+	api.Close()
+	select {
+	case err := <-active:
+		if err == nil {
+			t.Fatal("Close left the stalled request successful")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stalled caller did not return after Close")
+	}
+	select {
+	case <-api.Done():
+	default:
+		t.Fatal("Close returned before the request owner stopped")
+	}
+}
+
 type stalledBody struct{ ctx context.Context }
 
 func (b stalledBody) Read([]byte) (int, error) {
