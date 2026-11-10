@@ -67,6 +67,7 @@ type Config struct {
 	Postgres map[string]string `yaml:"postgres"`
 	Alpaca   KeySecretCfg      `yaml:"alpaca"`
 	Longport KeySecretCfg      `yaml:"longport"`
+	//EXT_CFG1
 }
 
 type CurrencyRates map[string]CurrencyRate
