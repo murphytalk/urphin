@@ -125,6 +125,7 @@ func (s *quoteSession) subscribe() tea.Cmd {
 }
 
 func (s *quoteSession) requestStop() {
+	slog.Debug("quote session stop requested")
 	select {
 	case s.stop <- struct{}{}:
 	default:
@@ -133,8 +134,11 @@ func (s *quoteSession) requestStop() {
 
 // Close joins subscription startup and detach before releasing the output channel.
 func (s *quoteSession) Close() error {
+	started := time.Now()
+	slog.Debug("quote session close waiting")
 	s.requestStop()
 	<-s.done
+	slog.Debug("quote session close completed", "duration", time.Since(started), "error", s.closeErr)
 	return s.closeErr
 }
 
@@ -173,15 +177,37 @@ func (s *quoteSession) run() {
 	startAttempt := func() {
 		attempted, subscribePending = true, true
 		attempts++
-		go func() { s.subscribed <- sessionOperationResult{err: s.feed.Subscribe("home", s.symbols, s.updates)} }()
+		slog.Debug("quote session subscribe started", "attempt", attempts, "symbols", s.symbols)
+		go func() {
+			started := time.Now()
+			err := s.feed.Subscribe("home", s.symbols, s.updates)
+			slog.Debug("quote session subscribe completed", "attempt", attempts, "duration", time.Since(started), "error", err)
+			s.subscribed <- sessionOperationResult{err: err}
+		}()
 	}
 	startDetach := func() {
 		if attempted {
 			detachPending = true
-			go func() { s.detached <- sessionOperationResult{err: s.feed.Unsubscribe("home")} }()
+			slog.Debug("quote session unsubscribe started", "symbols", s.symbols)
+			go func() {
+				started := time.Now()
+				err := s.feed.Unsubscribe("home")
+				slog.Debug("quote session unsubscribe completed", "duration", time.Since(started), "error", err)
+				s.detached <- sessionOperationResult{err: err}
+			}()
 			return
 		}
+		slog.Debug("quote session closed without subscription")
 		close(s.updates)
+	}
+	beginClose := func(reason string) {
+		if closing {
+			return
+		}
+		closing = true
+		slog.Debug("quote session shutdown started", "reason", reason, "subscribe_pending", subscribePending, "detach_pending", detachPending, "subscription_attempted", attempted)
+		s.cancel()
+		stopRetry()
 	}
 
 	for {
@@ -201,17 +227,9 @@ func (s *quoteSession) run() {
 		select {
 		case <-parentDone:
 			parentDone = nil
-			if !closing {
-				closing = true
-				s.cancel()
-				stopRetry()
-			}
+			beginClose("parent context")
 		case <-s.stop:
-			if !closing {
-				closing = true
-				s.cancel()
-				stopRetry()
-			}
+			beginClose("stop request")
 		case <-ready:
 			ready = nil
 			receiverReady = true

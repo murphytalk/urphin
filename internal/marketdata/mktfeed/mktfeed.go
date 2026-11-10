@@ -24,6 +24,11 @@ type MktDataFeed interface {
 	Stop() error
 }
 
+// TickerConvention maps an app ticker and currency to a provider ticker.
+type TickerConvention interface {
+	Ticker(currency, ticker string) (string, error)
+}
+
 // QuoteUpdatePublisher is optional for feeds registered directly with MktData.
 // Factory-created feeds receive the same service-owned channel in their config.
 type QuoteUpdatePublisher interface {

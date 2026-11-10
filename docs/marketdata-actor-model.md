@@ -14,6 +14,7 @@ An owner is the goroutine that serializes one component's mutable state. Public 
 | Unified service ([`mktdata.go`](../internal/marketdata/mktdata.go), `mktDataOwner`) | Subscribers, requested-symbol union, provider handles and generations, FX quote cache, quote versions, service lifecycle | Accepts API commands, dispatches provider tasks, accepts snapshots/live updates, and fans out subscriber quotes. |
 | Service provider worker | One provider's serialized operations | Runs `SetSymbols`, `Start`, and snapshot requests outside the service owner; returns `providerResult` messages. |
 | Alpaca feed owner ([`feed.go`](../internal/marketdata/mktfeed/alpaca/feed.go)) | Desired/applied symbols, quote cache, timestamps, generations, feed lifecycle | Handles feed commands and callback events. Snapshot and stream workers do blocking work; callbacks only enqueue events. |
+| Longport feed owner ([`longport.go`](../extension/mktfeed/longport/longport.go)) | Desired symbols, quote cache, revisions, feed lifecycle | Handles feed commands and quote events. One API worker serializes subscriptions and snapshots; SDK callbacks only enqueue events. |
 | Yahoo price owner ([`monitor.go`](../internal/marketdata/yahoo/monitor-price/monitor.go)) | Symbols, quote cache, revisions, polling timer, request state | Coalesces refresh work, calls the Yahoo request owner, and publishes quote updates and currency requests. |
 | Yahoo FX owner ([`monitor.go`](../internal/marketdata/yahoo/monitor-currency-rates/monitor.go)) | Target currency, requested currencies, cached rates, request state | Coalesces rate requests, uses the Yahoo request owner and cache, and publishes rate maps. |
 | Yahoo request owner ([`unary.go`](../internal/marketdata/yahoo/unary/unary.go)) | HTTP client, cookies, crumb, serialized request state | Executes context-bound Yahoo HTTP requests serially for price and FX owners. |
@@ -30,8 +31,10 @@ flowchart LR
 
     Service -->|bounded provider tasks| Worker[Service provider workers]
     Worker -->|feed commands| Alpaca[Alpaca feed owner]
+    Worker -->|feed commands| Longport[Longport feed owner]
     Worker -->|feed commands| YahooPrice[Yahoo price owner]
     Alpaca -->|live QuoteUpdate| Service
+    Longport -->|live QuoteUpdate| Service
     YahooPrice -->|live QuoteUpdate| Service
     Worker -->|snapshot results| Service
 
@@ -52,7 +55,7 @@ flowchart LR
 1. The application calls `Start` with a cloned configuration. The service owner creates its bounded quote, error, rate, and FX-request channels, the cache, Yahoo request owner, and Yahoo FX owner. It creates the default Yahoo price owner when no Yahoo feed is already registered, then creates enabled provider feeds and their service workers.
 2. `Subscribe` registers an ID and caller-owned update channel, adds symbols to that subscriber, and recomputes the union requested from providers. Reusing an ID requires the same channel.
 3. The service owner captures subscriber membership epochs and quote-sequence markers for seed results. It queues `SetSymbols`, `Start`, and snapshot tasks on each provider worker. Workers call the provider facade and return results to the service owner; the owner loop remains available for commands and live updates.
-4. Providers publish live `QuoteUpdate` values to the service quote channel. The Alpaca SDK callback only enqueues a feed event; the Alpaca owner validates and caches it before publishing. The Yahoo price owner accepts fetch results, increments per-symbol revisions, and publishes updates. FX results arrive as rate maps; the service owner converts them to FX quotes and caches those local values.
+4. Providers publish live `QuoteUpdate` values to the service quote channel. Alpaca and Longport SDK callbacks only enqueue feed events; each feed owner validates and caches data before publishing. Longport maps Yahoo-style app tickers to provider tickers, such as `AAPL` to `AAPL.US`, and retains provider symbols in `Meta.SymbolInSourceAPI`. The Yahoo price owner accepts fetch results, increments per-symbol revisions, and publishes updates. FX results arrive as rate maps; the service owner converts them to FX quotes and caches those local values.
 
 ### Quote acceptance and delivery
 

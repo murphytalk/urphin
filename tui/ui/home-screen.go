@@ -289,6 +289,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.Keystroke() {
 		case "f10", "ctrl+c":
+			slog.Debug("UI quit key received", "key", msg.Keystroke())
 			if m.session != nil {
 				m.session.requestStop()
 			}

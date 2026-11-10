@@ -363,7 +363,11 @@ func (m *mktDataImpl) RegisterMktDataFeed(source c.QuoteSource, feed mktfeed.Mkt
 }
 
 func (m *mktDataImpl) Stop() error {
-	return m.call(newMktDataCommand(context.Background(), mktDataStop)).err
+	started := time.Now()
+	slog.Debug("market data stop requested")
+	err := m.call(newMktDataCommand(context.Background(), mktDataStop)).err
+	slog.Debug("market data stop completed", "duration", time.Since(started), "error", err)
+	return err
 }
 
 func (m *mktDataImpl) routeQuote(source c.QuoteSource, quote c.AssetQuote) {
@@ -793,6 +797,8 @@ func (o *mktDataOwner) beginCleanup(cause error) {
 	o.cleanupStarted = true
 	o.cleanupCause = cause
 	o.state = lifecycleStopping
+	cleanupStarted := time.Now()
+	slog.Debug("market data cleanup started", "feeds", len(o.feeds), "error", cause)
 	if o.cancel != nil {
 		o.cancel()
 	}
@@ -806,27 +812,42 @@ func (o *mktDataOwner) beginCleanup(cause error) {
 	}
 	rates, api, mktCache := o.currencyRates, o.yahooAPI, o.mktCache
 	go func() {
+		workersStarted := time.Now()
+		slog.Debug("market data cleanup waiting for provider workers")
 		o.workers.Wait()
+		slog.Debug("market data provider workers stopped", "duration", time.Since(workersStarted))
 		var errs []error
 		for _, feed := range feeds {
+			feedStarted := time.Now()
+			slog.Debug("stopping market data provider feed", "feed_type", fmt.Sprintf("%T", feed))
 			if err := feed.Stop(); err != nil {
 				errs = append(errs, fmt.Errorf("stop market-data feed: %w", err))
 			}
+			slog.Debug("market data provider feed stopped", "feed_type", fmt.Sprintf("%T", feed), "duration", time.Since(feedStarted))
 		}
 		if rates != nil {
+			ratesStarted := time.Now()
+			slog.Debug("stopping Yahoo currency-rate monitor")
 			if err := rates.Stop(); err != nil {
 				errs = append(errs, fmt.Errorf("stop Yahoo currency-rate monitor: %w", err))
 			}
+			slog.Debug("Yahoo currency-rate monitor stopped", "duration", time.Since(ratesStarted))
 		}
 		if api != nil {
+			slog.Debug("closing Yahoo HTTP client")
 			api.Close()
 		}
 		if mktCache != nil {
+			cacheStarted := time.Now()
+			slog.Debug("closing market data cache")
 			if err := mktCache.Close(); err != nil {
 				errs = append(errs, err)
 			}
+			slog.Debug("market data cache closed", "duration", time.Since(cacheStarted))
 		}
-		o.service.cleanup <- cleanupResult{err: errors.Join(errs...)}
+		cleanupErr := errors.Join(errs...)
+		slog.Debug("market data cleanup completed", "duration", time.Since(cleanupStarted), "error", cleanupErr)
+		o.service.cleanup <- cleanupResult{err: cleanupErr}
 	}()
 }
 
