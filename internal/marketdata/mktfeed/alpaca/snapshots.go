@@ -162,10 +162,14 @@ func assetQuoteFromSnapshot(symbol string, snapshot *marketdata.Snapshot) (c.Ass
 	if trade := snapshot.LatestTrade; trade != nil && validPositivePrice(trade.Price) {
 		price = trade.Price
 		timestamp = trade.Timestamp
-	} else if quote := snapshot.LatestQuote; quote != nil && validQuote(quote.BidPrice, quote.AskPrice) {
-		price = midpoint(quote.BidPrice, quote.AskPrice)
-		timestamp = quote.Timestamp
-	} else {
+	}
+	if quote := snapshot.LatestQuote; quote != nil && validQuote(quote.BidPrice, quote.AskPrice) {
+		if price == 0 || quote.Timestamp.After(timestamp) {
+			price = midpoint(quote.BidPrice, quote.AskPrice)
+			timestamp = quote.Timestamp
+		}
+	}
+	if price == 0 {
 		return c.AssetQuote{}, time.Time{}, fmt.Errorf("Alpaca returned no valid latest trade or quote for ticker %q", symbol)
 	}
 
@@ -197,9 +201,31 @@ func assetQuoteFromSnapshot(symbol string, snapshot *marketdata.Snapshot) (c.Ass
 	if snapshot.PrevDailyBar != nil {
 		assetQuote.QuotePrice.PricePrevClose = snapshot.PrevDailyBar.Close
 	}
+	if snapshot.DailyBar != nil && !isRegularSession(time.Now(), snapshot.DailyBar) && validPositivePrice(snapshot.DailyBar.Close) {
+		assetQuote.QuotePrice.PricePrevClose = snapshot.DailyBar.Close
+	}
 	setPriceChange(&assetQuote, price)
 
 	return assetQuote, timestamp, nil
+}
+
+// shortcut: assumes weekdays with a 9:30–16:00 ET session; use Alpaca's market clock for early-close accuracy.
+func isRegularSession(now time.Time, dailyBar *marketdata.Bar) bool {
+	if dailyBar == nil || dailyBar.Timestamp.IsZero() {
+		return false
+	}
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		return false
+	}
+	now = now.In(location)
+	barTime := dailyBar.Timestamp.In(location)
+	if now.Year() != barTime.Year() || now.YearDay() != barTime.YearDay() ||
+		now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
+		return false
+	}
+	minute := now.Hour()*60 + now.Minute()
+	return minute >= 9*60+30 && minute < 16*60
 }
 
 func validPositivePrice(price float64) bool {
