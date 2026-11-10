@@ -238,7 +238,7 @@ func TestModelInitCommandsRequireSessionAndSymbols(t *testing.T) {
 				m := uiTestModel(t, lists, nil)
 				feed := newSessionTestFeed()
 				if hasSession {
-					m.session = newQuoteSession(feed, m.symbols)
+					m.session = newQuoteSession(context.Background(), feed, m.symbols)
 					t.Cleanup(func() { _ = m.session.Close() })
 				}
 				cmd := m.Init()
@@ -294,7 +294,7 @@ func TestModelWatchlistNavigationWrapsInBothDirectionsWithoutFeedCalls(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Name: "A", Tickers: []string{"A"}}, {Name: "B", Tickers: []string{"B"}}, {Name: "C"}}, nil)
 			feed := newSessionTestFeed()
-			m.session = newQuoteSession(feed, m.symbols)
+			m.session = newQuoteSession(context.Background(), feed, m.symbols)
 			t.Cleanup(func() { _ = m.session.Close() })
 			for _, want := range tc.want {
 				uiTestUpdate(t, m, tc.key)
@@ -323,7 +323,7 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: []string{"Z", "A"}}}, nil)
 			m.currentSort = start
 			feed := newSessionTestFeed()
-			m.session = newQuoteSession(feed, m.symbols)
+			m.session = newQuoteSession(context.Background(), feed, m.symbols)
 			t.Cleanup(func() { _ = m.session.Close() })
 			modes := []string{"ticker", "value", "change", "user"}
 			index := slices.Index(modes, start)
@@ -529,7 +529,7 @@ func TestModelQuitKeysCancelSessionEvenDuringResizeNotice(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/session=%t", key.Keystroke(), hasSession), func(t *testing.T) {
 				m := uiTestModel(t, nil, nil)
 				if hasSession {
-					m.session = newQuoteSession(newSessionTestFeed(), nil)
+					m.session = newQuoteSession(context.Background(), newSessionTestFeed(), nil)
 					t.Cleanup(func() { _ = m.session.Close() })
 				}
 				uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 8, Height: 1})
@@ -540,8 +540,8 @@ func TestModelQuitKeysCancelSessionEvenDuringResizeNotice(t *testing.T) {
 				if _, ok := cmd().(tea.QuitMsg); !ok {
 					t.Fatal("quit command returned a different message")
 				}
-				if hasSession && m.session.ctx.Err() == nil {
-					t.Fatal("quit did not cancel blocked market-data commands")
+				if hasSession {
+					sessionTestAwait(t, m.session.ctx.Done(), "quit session cancellation")
 				}
 			})
 		}

@@ -5,8 +5,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,42 +14,56 @@ import (
 
 type subscriptionMsg struct{ err error }
 
-// quoteSession owns the sole subscriber channel, including startup and shutdown ordering.
+type sessionStartRequest struct{ reply chan tea.Msg }
+
+type sessionOperationResult struct{ err error }
+
+// quoteSession owns subscription attempts, detach ordering, and its output channel.
 type quoteSession struct {
-	feed          mktdata.MktData
-	symbols       []string
-	updates       chan c.QuoteUpdate
-	ctx           context.Context
-	cancel        context.CancelFunc
-	receiving     chan struct{}
-	readyOnce     sync.Once
-	opMu          sync.Mutex
-	closed        bool
-	attempted     bool
-	closeErr      error
-	channelClosed atomic.Bool
-	delays        []time.Duration
+	feed       mktdata.MktData
+	symbols    []string
+	updates    chan c.QuoteUpdate
+	ctx        context.Context
+	cancel     context.CancelFunc
+	receiving  chan struct{}
+	starts     chan sessionStartRequest
+	ready      chan struct{}
+	stop       chan struct{}
+	subscribed chan sessionOperationResult
+	detached   chan sessionOperationResult
+	done       chan struct{}
+	delays     []time.Duration
+	closeErr   error
 }
 
-func newQuoteSession(feed mktdata.MktData, symbols []string) *quoteSession {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &quoteSession{
+func newQuoteSession(parent context.Context, feed mktdata.MktData, symbols []string) *quoteSession {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s := &quoteSession{
 		feed: feed, symbols: slices.Clone(symbols), ctx: ctx, cancel: cancel,
 		updates: make(chan c.QuoteUpdate, max(64, 2*len(symbols))), receiving: make(chan struct{}),
+		starts: make(chan sessionStartRequest, 1), ready: make(chan struct{}, 1), stop: make(chan struct{}, 1),
+		subscribed: make(chan sessionOperationResult, 1), detached: make(chan sessionOperationResult, 1), done: make(chan struct{}),
 		delays: []time.Duration{time.Second, 2 * time.Second},
 	}
+	go s.run()
+	return s
 }
 
-// receive consumes market-data snapshots/live quotes and emits one batch to the UI event loop.
+// receive transfers owned updates to one coalesced UI batch.
 func (s *quoteSession) receive() tea.Cmd {
 	return func() tea.Msg {
-		s.readyOnce.Do(func() { close(s.receiving) })
+		select {
+		case s.ready <- struct{}{}:
+		default:
+		}
 		select {
 		case <-s.ctx.Done():
 			return nil
 		case quote, ok := <-s.updates:
-			if !ok {
-				s.channelClosed.Store(true)
+			if !ok || s.ctx.Err() != nil {
 				return nil
 			}
 			latest := make(map[string]c.QuoteUpdate)
@@ -69,74 +81,176 @@ func (s *quoteSession) receive() tea.Cmd {
 					return nil
 				case quote, ok := <-s.updates:
 					if !ok {
-						s.channelClosed.Store(true)
+						if s.ctx.Err() != nil {
+							return nil
+						}
 						return QuoteBatchMsg(slices.Collect(maps.Values(latest)))
 					}
 					add(quote)
 				default:
+					if s.ctx.Err() != nil {
+						return nil
+					}
 					return QuoteBatchMsg(slices.Collect(maps.Values(latest)))
 				}
+			}
+			if s.ctx.Err() != nil {
+				return nil
 			}
 			return QuoteBatchMsg(slices.Collect(maps.Values(latest)))
 		}
 	}
 }
 
-// subscribe consumes receiver readiness and reports startup completion to the UI event loop.
+// subscribe asks the session owner to start and reports its single startup outcome.
 func (s *quoteSession) subscribe() tea.Cmd {
 	return func() tea.Msg {
+		reply := make(chan tea.Msg, 1)
 		select {
+		case s.starts <- sessionStartRequest{reply: reply}:
+		case <-s.done:
+			return nil
 		case <-s.ctx.Done():
 			return nil
-		case <-s.receiving:
 		}
-		var err error
-		for attempt := 0; attempt <= len(s.delays); attempt++ {
-			s.opMu.Lock()
-			if s.closed || s.ctx.Err() != nil {
-				s.opMu.Unlock()
-				return nil
-			}
-			s.attempted = len(s.symbols) > 0
-			if s.attempted {
-				err = s.feed.Subscribe("home", s.symbols, s.updates)
-			}
-			s.opMu.Unlock()
-			if err == nil {
-				return subscriptionMsg{}
-			}
-			slog.Error("Startup quote subscription failed", "attempt", attempt+1, "error", err)
-			if attempt == len(s.delays) {
-				break
-			}
-			timer := time.NewTimer(s.delays[attempt])
-			select {
-			case <-s.ctx.Done():
-				timer.Stop()
-				return nil
-			case <-timer.C:
-			}
+		select {
+		case msg := <-reply:
+			return msg
+		case <-s.done:
+			return nil
+		case <-s.ctx.Done():
+			return nil
 		}
-		return subscriptionMsg{err: err}
 	}
 }
 
-// Close cancels quote/retry consumers, waits for the subscription producer, then detaches it.
+func (s *quoteSession) requestStop() {
+	select {
+	case s.stop <- struct{}{}:
+	default:
+	}
+}
+
+// Close joins subscription startup and detach before releasing the output channel.
 func (s *quoteSession) Close() error {
-	s.cancel()
-	s.opMu.Lock()
-	defer s.opMu.Unlock()
-	if s.closed {
-		return s.closeErr
-	}
-	s.closed = true
-	if s.attempted {
-		s.closeErr = s.feed.Unsubscribe("home")
-	}
-	if s.closeErr == nil && !s.channelClosed.Load() {
-		close(s.updates)
-		s.channelClosed.Store(true)
-	}
-	// An unsuccessful detach cannot guarantee no sends; leave the channel for feed shutdown.
+	s.requestStop()
+	<-s.done
 	return s.closeErr
+}
+
+func (s *quoteSession) run() {
+	defer close(s.done)
+	parentDone := s.ctx.Done()
+	ready := (<-chan struct{})(s.ready)
+	starts := (<-chan sessionStartRequest)(s.starts)
+	var retry <-chan time.Time
+	var timer *time.Timer
+	var waiters []chan tea.Msg
+	var startRequested, receiverReady, startComplete bool
+	var attempted, subscribePending, detachPending, closing bool
+	var attempts int
+	var startResult subscriptionMsg
+
+	stopRetry := func() {
+		if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer = nil
+			retry = nil
+		}
+	}
+	completeStart := func(result subscriptionMsg) {
+		startComplete, startResult = true, result
+		for _, reply := range waiters {
+			reply <- result
+		}
+		waiters = nil
+	}
+	startAttempt := func() {
+		attempted, subscribePending = true, true
+		attempts++
+		go func() { s.subscribed <- sessionOperationResult{err: s.feed.Subscribe("home", s.symbols, s.updates)} }()
+	}
+	startDetach := func() {
+		if attempted {
+			detachPending = true
+			go func() { s.detached <- sessionOperationResult{err: s.feed.Unsubscribe("home")} }()
+			return
+		}
+		close(s.updates)
+	}
+
+	for {
+		if !closing && startRequested && (receiverReady || len(s.symbols) == 0) && !startComplete && !subscribePending && retry == nil {
+			if len(s.symbols) == 0 {
+				completeStart(subscriptionMsg{})
+			} else {
+				startAttempt()
+			}
+		}
+		if closing && !subscribePending && !detachPending {
+			startDetach()
+			if !attempted {
+				return
+			}
+		}
+		select {
+		case <-parentDone:
+			parentDone = nil
+			if !closing {
+				closing = true
+				s.cancel()
+				stopRetry()
+			}
+		case <-s.stop:
+			if !closing {
+				closing = true
+				s.cancel()
+				stopRetry()
+			}
+		case <-ready:
+			ready = nil
+			receiverReady = true
+			close(s.receiving)
+		case request := <-starts:
+			if closing {
+				request.reply <- nil
+				continue
+			}
+			if startComplete {
+				request.reply <- startResult
+				continue
+			}
+			startRequested = true
+			waiters = append(waiters, request.reply)
+		case <-retry:
+			timer, retry = nil, nil
+		case result := <-s.subscribed:
+			subscribePending = false
+			if closing {
+				continue
+			}
+			if result.err == nil {
+				completeStart(subscriptionMsg{})
+				continue
+			}
+			slog.Error("Startup quote subscription failed", "attempt", attempts, "error", result.err)
+			if attempts > len(s.delays) {
+				completeStart(subscriptionMsg{err: result.err})
+				continue
+			}
+			timer = time.NewTimer(s.delays[attempts-1])
+			retry = timer.C
+		case result := <-s.detached:
+			detachPending = false
+			s.closeErr = result.err
+			// Unsubscribe returns after local detach, even when provider reconciliation failed.
+			close(s.updates)
+			return
+		}
+	}
 }

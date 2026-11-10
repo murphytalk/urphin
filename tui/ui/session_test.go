@@ -123,7 +123,7 @@ func sessionTestCommand(cmd tea.Cmd) <-chan tea.Msg {
 
 func sessionTestNew(t *testing.T, feed *sessionTestFeed, symbols []string) *quoteSession {
 	t.Helper()
-	s := newQuoteSession(feed, symbols)
+	s := newQuoteSession(context.Background(), feed, symbols)
 	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
@@ -312,8 +312,6 @@ func TestSessionCloseCancelsFirstAndSecondBackoffWithoutLateRetry(t *testing.T) 
 				sessionTestAwait(t, feed.notify, "failed subscription attempt")
 			}
 			// The operation lock is a barrier proving Subscribe returned, not a timed guess.
-			s.opMu.Lock()
-			s.opMu.Unlock()
 			if err := s.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -393,6 +391,102 @@ func TestSessionCloseWaitsForInflightSubscribeBeforeUnsubscribeAndChannelClose(t
 	}
 }
 
+func TestSessionParentCancellationWaitsForLateSubscribeAndDetaches(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	feed := newSessionTestFeed()
+	s := newQuoteSession(parent, feed, []string{"A"})
+	t.Cleanup(func() { _ = s.Close() })
+	release, exited := make(chan struct{}), make(chan struct{})
+	feed.subscribeFn = func(sessionTestSubscription) error {
+		<-release
+		close(exited)
+		return nil
+	}
+	feed.unsubscribeFn = func(string) error {
+		select {
+		case <-exited:
+		default:
+			return errors.New("BUG: parent cancellation detached before late Subscribe returned")
+		}
+		s.updates <- uiTestQuote("A", "USD", 10, 9)
+		return nil
+	}
+	received := sessionTestCommand(s.receive())
+	sessionTestAwait(t, s.receiving, "parent-cancel receiver readiness")
+	producer := sessionTestCommand(s.subscribe())
+	sessionTestAwait(t, feed.notify, "parent-cancel stalled Subscribe")
+	cancel()
+	sessionTestAwait(t, s.ctx.Done(), "parent context propagation")
+	select {
+	case <-s.done:
+		t.Fatal("parent cancellation completed before the accepted Subscribe was resolved")
+	default:
+	}
+	close(release)
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if sessionTestAwait(t, producer, "canceled subscription command") != nil || sessionTestAwait(t, received, "canceled receiver") != nil {
+		t.Fatal("parent cancellation returned a late UI message")
+	}
+	if calls := feed.snapshot(); len(calls.subscriptions) != 1 || !slices.Equal(calls.unsubscriptions, []string{"home"}) {
+		t.Fatal("parent cancellation did not join the accepted subscription and detach once")
+	}
+	if quote, open := <-s.updates; !open || quote.Symbol != "A" {
+		t.Fatal("final detach-time update was lost")
+	}
+	if _, open := <-s.updates; open {
+		t.Fatal("parent-canceled session did not close its output after detach")
+	}
+}
+
+func TestSessionCloseCompletesBlockedReceiverWithoutLateBatch(t *testing.T) {
+	s := sessionTestNew(t, newSessionTestFeed(), []string{"A"})
+	received := sessionTestCommand(s.receive())
+	sessionTestAwait(t, s.receiving, "blocked receiver readiness")
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if msg := sessionTestAwait(t, received, "receiver completion after session done"); msg != nil {
+		t.Fatalf("receiver returned %T after Close completed", msg)
+	}
+}
+
+func TestUIQuitDuringStalledSubscribeWaitsForDetach(t *testing.T) {
+	feed := newSessionTestFeed()
+	release := make(chan struct{})
+	feed.subscribeFn = func(sessionTestSubscription) error {
+		<-release
+		return nil
+	}
+	m := uiTestModel(t, nil, nil)
+	m.session = newQuoteSession(context.Background(), feed, []string{"A"})
+	t.Cleanup(func() { _ = m.session.Close() })
+	received := sessionTestCommand(m.session.receive())
+	sessionTestAwait(t, m.session.receiving, "quit receiver readiness")
+	producer := sessionTestCommand(m.session.subscribe())
+	sessionTestAwait(t, feed.notify, "quit stalled Subscribe")
+	quit := uiTestUpdate(t, m, uiTestKey(tea.KeyF10))
+	if _, ok := quit().(tea.QuitMsg); !ok {
+		t.Fatal("quit key did not return tea.Quit")
+	}
+	sessionTestAwait(t, m.session.ctx.Done(), "quit cancellation")
+	if len(feed.snapshot().unsubscriptions) != 0 {
+		t.Fatal("quit detached before the in-flight Subscribe resolved")
+	}
+	close(release)
+	if err := m.session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if sessionTestAwait(t, producer, "quit subscription completion") != nil || sessionTestAwait(t, received, "quit receiver completion") != nil {
+		t.Fatal("quit returned a late session message")
+	}
+	if calls := feed.snapshot(); len(calls.subscriptions) != 1 || !slices.Equal(calls.unsubscriptions, []string{"home"}) {
+		t.Fatal("quit allowed a late attachment or skipped local detach")
+	}
+}
+
 func TestSessionConcurrentCloseIsIdempotentAndReturnsSameDetachError(t *testing.T) {
 	for _, failed := range []bool{false, true} {
 		t.Run(fmt.Sprint(failed), func(t *testing.T) {
@@ -416,16 +510,16 @@ func TestSessionConcurrentCloseIsIdempotentAndReturnsSameDetachError(t *testing.
 			if !slices.Equal(feed.snapshot().unsubscriptions, []string{"home"}) {
 				t.Fatal("concurrent Close detached more than once")
 			}
-			if failed {
-				close(s.updates) // Mock providers are now stopped; production must leave this open.
+			if _, open := <-s.updates; open {
+				t.Fatal("completed local detach did not close the session-owned output channel")
 			}
 		})
 	}
 }
 
-func TestSessionDetachErrorLeavesChannelOpenForProviderShutdown(t *testing.T) {
+func TestSessionProviderReconciliationErrorStillClosesAfterLocalDetach(t *testing.T) {
 	feed := newSessionTestFeed()
-	feed.unsubErr = errors.New("cannot guarantee detach")
+	feed.unsubErr = errors.New("provider reconciliation failed")
 	s := sessionTestNew(t, feed, []string{"A"})
 	s.updates <- uiTestQuote("A", "USD", 1, 1)
 	sessionTestAwait(t, sessionTestCommand(s.receive()), "readiness batch")
@@ -435,11 +529,9 @@ func TestSessionDetachErrorLeavesChannelOpenForProviderShutdown(t *testing.T) {
 			t.Fatalf("detach error lost: %v", err)
 		}
 	}
-	s.updates <- uiTestQuote("A", "USD", 2, 1)
-	if quote, open := <-s.updates; !open || quote.QuotePrice.Price != 2 || s.ctx.Err() == nil || !slices.Equal(feed.snapshot().unsubscriptions, []string{"home"}) {
-		t.Fatal("detach failure closed a still-provider-owned channel or lost cancellation/idempotency")
+	if _, open := <-s.updates; open || s.ctx.Err() == nil || !slices.Equal(feed.snapshot().unsubscriptions, []string{"home"}) {
+		t.Fatal("provider reconciliation failure lost local detach, channel closure, or idempotency")
 	}
-	close(s.updates)
 }
 
 func TestSessionBurstCoalescesLatestPerSymbolAndUsesMetaFallback(t *testing.T) {
@@ -481,37 +573,23 @@ func TestReceiveDropsSupersededQueuedQuoteForSameSymbol(t *testing.T) {
 	}
 }
 
-func TestSessionClosedBufferDrainsLatestBatchThenStopsReceiving(t *testing.T) {
-	s := newQuoteSession(newSessionTestFeed(), []string{"A", "B"})
-	defer s.cancel()
+func TestSessionBufferedUpdatesDrainLatestThenStopOnClose(t *testing.T) {
+	s := newQuoteSession(context.Background(), newSessionTestFeed(), []string{"A", "B"})
+	defer s.Close()
 	s.updates <- uiTestQuote("A", "USD", 1, 1)
 	s.updates <- uiTestQuote("B", "USD", 2, 1)
 	s.updates <- uiTestQuote("A", "USD", 3, 2)
-	close(s.updates)
 	quotes := sessionTestBatch(t, sessionTestAwait(t, sessionTestCommand(s.receive()), "closed-buffer drain"))
 	if len(quotes) != 2 || quotes["A"].QuotePrice.Price != 3 || quotes["B"].QuotePrice.Price != 2 {
 		t.Fatal("closing a buffered channel lost its final latest-per-symbol batch")
 	}
-	if msg := sessionTestAwait(t, sessionTestCommand(s.receive()), "closed-buffer termination"); msg != nil {
-		t.Fatal("closed receiver should stop rather than emit zero quotes forever")
+	next := sessionTestCommand(s.receive())
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	if msg := sessionTestAwait(t, next, "closed-buffer termination"); msg != nil {
+		t.Fatal("canceled receiver should stop rather than emit zero quotes forever")
 	}
-}
-
-func TestSessionUnexpectedChannelCloseStopsReceiveAndCloseMustNotPanic(t *testing.T) {
-	s := newQuoteSession(newSessionTestFeed(), []string{"A"})
-	defer s.cancel()
-	received := sessionTestCommand(s.receive())
-	sessionTestAwait(t, s.receiving, "unexpected-close receiver readiness")
-	close(s.updates)
-	if sessionTestAwait(t, received, "unexpected-close termination") != nil || sessionTestAwait(t, sessionTestCommand(s.receive()), "repeated closed receive") != nil {
-		t.Fatal("unexpected channel closure did not terminate receive cleanly")
-	}
-	defer func() {
-		if value := recover(); value != nil {
-			t.Errorf("BUG: Close panics after an unexpected provider channel close: %v", value)
-		}
-	}()
-	if err := s.Close(); err != nil {
+	if err := sessionTestAwait(t, closed, "buffered session shutdown"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -603,7 +681,7 @@ func TestSessionHeadlessBubbleTeaLifecycleQuoteOwnershipNavigationAndQuit(t *tes
 				t.Fatal(err)
 			}
 			feed := newSessionTestFeed()
-			model.session = newQuoteSession(feed, model.symbols)
+			model.session = newQuoteSession(context.Background(), feed, model.symbols)
 			feed.subscribeFn = func(call sessionTestSubscription) error {
 				select {
 				case <-model.session.receiving:
@@ -622,7 +700,7 @@ func TestSessionHeadlessBubbleTeaLifecycleQuoteOwnershipNavigationAndQuit(t *tes
 				close(finished)
 			}()
 			t.Cleanup(func() {
-				model.session.cancel()
+				_ = model.session.Close()
 				program.Kill()
 				sessionTestAwait(t, finished, "headless program/goroutine cleanup")
 			})
@@ -678,7 +756,7 @@ func TestSessionHeadlessBubbleTeaLifecycleQuoteOwnershipNavigationAndQuit(t *tes
 func TestSessionHeadlessBubbleTeaEmptyPortfolioHasNoFeedCommands(t *testing.T) {
 	model := uiTestModel(t, nil, nil)
 	feed := newSessionTestFeed()
-	model.session = newQuoteSession(feed, nil)
+	model.session = newQuoteSession(context.Background(), feed, nil)
 	observed := &sessionProgramModel{Model: model, ready: make(chan struct{}), events: make(chan tea.Msg, 4), completed: make(chan tea.Msg, 4)}
 	program := tea.NewProgram(observed, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithWindowSize(100, 10), tea.WithoutSignalHandler())
 	result, finished := make(chan error, 1), make(chan struct{})
@@ -688,7 +766,7 @@ func TestSessionHeadlessBubbleTeaEmptyPortfolioHasNoFeedCommands(t *testing.T) {
 		close(finished)
 	}()
 	t.Cleanup(func() {
-		model.session.cancel()
+		_ = model.session.Close()
 		program.Kill()
 		sessionTestAwait(t, finished, "empty program cleanup")
 	})
@@ -699,5 +777,39 @@ func TestSessionHeadlessBubbleTeaEmptyPortfolioHasNoFeedCommands(t *testing.T) {
 	}
 	if calls := feed.snapshot(); len(calls.subscriptions) != 0 || len(calls.unsubscriptions) != 0 || calls.starts != 0 || calls.stops != 0 || len(observed.completed) != 0 {
 		t.Fatal("empty actual program launched market-data commands")
+	}
+}
+
+func TestBubbleTeaParentCancellationJoinsSession(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	model := uiTestModel(t, nil, nil)
+	model.symbols = []string{"A"}
+	feed := newSessionTestFeed()
+	model.session = newQuoteSession(parent, feed, model.symbols)
+	observed := &sessionProgramModel{Model: model, ready: make(chan struct{}), events: make(chan tea.Msg, 4), completed: make(chan tea.Msg, 4)}
+	program := tea.NewProgram(observed, tea.WithContext(parent), tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithWindowSize(100, 10), tea.WithoutSignalHandler())
+	result, finished := make(chan error, 1), make(chan struct{})
+	go func() {
+		_, runErr := program.Run()
+		result <- errors.Join(runErr, model.session.Close())
+		close(finished)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		program.Kill()
+		_ = model.session.Close()
+		sessionTestAwait(t, finished, "parent-canceled Bubble Tea cleanup")
+	})
+	sessionTestAwait(t, observed.ready, "parent-cancel program readiness")
+	sessionTestAwait(t, feed.notify, "parent-cancel startup subscription")
+	cancel()
+	if err := sessionTestAwait(t, result, "parent-canceled Bubble Tea and session"); !errors.Is(err, tea.ErrProgramKilled) {
+		t.Fatalf("parent cancellation result %v, want ErrProgramKilled", err)
+	}
+	if calls := feed.snapshot(); len(calls.subscriptions) != 1 || !slices.Equal(calls.unsubscriptions, []string{"home"}) {
+		t.Fatal("parent-canceled Bubble Tea did not join and detach its one session subscription")
+	}
+	if _, open := <-model.session.updates; open {
+		t.Fatal("parent-canceled Bubble Tea left the session output channel open")
 	}
 }

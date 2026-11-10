@@ -174,14 +174,14 @@ func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err
 	} else {
 		slog.Warn("command history disabled", "error", homeErr)
 	}
-	m.session = newQuoteSession(marketData, m.subscriptionSymbols())
+	m.session = newQuoteSession(ctx, marketData, m.subscriptionSymbols())
 	defer func() {
 		err = errors.Join(err, m.session.Close())
 		if m.commandHistory != nil {
 			err = errors.Join(err, m.commandHistory.Persist())
 		}
 	}()
-	_, err = tea.NewProgram(m).Run()
+	_, err = tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }
 
@@ -290,7 +290,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Keystroke() {
 		case "f10", "ctrl+c":
 			if m.session != nil {
-				m.session.cancel()
+				m.session.requestStop()
 			}
 			return m, tea.Quit
 		case "tab":

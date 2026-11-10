@@ -39,7 +39,8 @@ type MktData interface {
 	// Delivery is nonblocking: updates are skipped when the channel cannot accept them.
 	// The caller owns the channel and must unsubscribe before closing it.
 	Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error
-	// Unsubscribe removes all symbols for id without closing its channel.
+	// For a non-empty id, Unsubscribe returns only after no future sends can target
+	// it. An error may report failed provider reconciliation after local detach.
 	Unsubscribe(id string) error
 	RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed)
 }
