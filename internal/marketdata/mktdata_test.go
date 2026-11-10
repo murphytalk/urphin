@@ -412,19 +412,6 @@ func TestDelayedSnapshotCannotAttachAfterUnsubscribeAndResubscribe(t *testing.T)
 	wantNoQuote(t, updates)
 }
 
-func BenchmarkQuoteDelivery(b *testing.B) {
-	updates := make(chan c.QuoteUpdate, 1)
-	service := newTestMktData(b, map[c.QuoteSource]mktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}})
-	subscribeQuotes(b, service, "benchmark", updates, "AAPL")
-	quote := c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for range b.N {
-		service.routeQuote(c.QuoteSourceYahoo, quote)
-		<-updates
-	}
-}
-
 type benchmarkQuotePublisher struct{ updates chan<- c.QuoteUpdate }
 
 func (*benchmarkQuotePublisher) Start() error                                    { return nil }
@@ -435,7 +422,10 @@ func (f *benchmarkQuotePublisher) SetQuoteUpdates(updates chan<- c.QuoteUpdate) 
 	f.updates = updates
 }
 
-func BenchmarkQuoteIngressDelivery(b *testing.B) {
+// BenchmarkMarketDataProviderIngress measures a serial quote handoff through
+// the provider publisher, service owner, and one subscriber. Setup and cleanup
+// are excluded; each iteration waits for its delivered quote before continuing.
+func BenchmarkMarketDataProviderIngress(b *testing.B) {
 	feed := &benchmarkQuotePublisher{}
 	service := NewMktData()
 	service.RegisterMktDataFeed(c.QuoteSourceYahoo, feed)

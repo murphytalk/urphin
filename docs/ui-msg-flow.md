@@ -2,6 +2,8 @@
 
 This guide describes the implemented home screen, not the old fake-monitor UI. It uses Bubble Tea v2 (`KeyPressMsg`, `View() tea.View`), Bubbles v2 and Lip Gloss v2; dependency versions are in [go.mod](../go.mod).
 
+Market-data actor ownership and quote wiring are documented in the [market-data actor model](marketdata-actor-model.md).
+
 ## 1. Roles and component tree
 
 ```mermaid
