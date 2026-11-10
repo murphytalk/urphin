@@ -6,7 +6,7 @@ import (
 
 //nolint:gochecknoglobals
 var (
-	postMarketStatuses = map[string]bool{"POST": true, "POSTPOST": true}
+	postMarketQuoteStates = map[string]bool{"PREPRE": true, "POST": true, "POSTPOST": true}
 )
 
 // transformResponseQuote transforms a single quote returned by the API into an AssetQuote
@@ -58,7 +58,7 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 		return assetQuote
 	}
 
-	if _, exists := postMarketStatuses[responseQuote.MarketState]; exists && responseQuote.PostMarketPrice.Raw == 0.0 {
+	if _, exists := postMarketQuoteStates[responseQuote.MarketState]; exists && responseQuote.PostMarketPrice.Raw == 0.0 {
 		assetQuote.Exchange.IsRegularTradingSession = false
 
 		return assetQuote
@@ -71,10 +71,10 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 		return assetQuote
 	}
 
-	if _, exists := postMarketStatuses[responseQuote.MarketState]; exists {
+	if _, exists := postMarketQuoteStates[responseQuote.MarketState]; exists {
 		assetQuote.QuotePrice.Price = responseQuote.PostMarketPrice.Raw
-		assetQuote.QuotePrice.Change = (responseQuote.PostMarketChange.Raw + responseQuote.RegularMarketChange.Raw)
-		assetQuote.QuotePrice.ChangePercent = responseQuote.PostMarketChangePercent.Raw + responseQuote.RegularMarketChangePercent.Raw
+		assetQuote.QuotePrice.Change = responseQuote.PostMarketChange.Raw
+		assetQuote.QuotePrice.ChangePercent = responseQuote.PostMarketChangePercent.Raw
 		assetQuote.Exchange.IsRegularTradingSession = false
 
 		return assetQuote
@@ -91,8 +91,8 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 
 	if responseQuote.PostMarketPrice.Raw != 0.0 {
 		assetQuote.QuotePrice.Price = responseQuote.PostMarketPrice.Raw
-		assetQuote.QuotePrice.Change = (responseQuote.PostMarketChange.Raw + responseQuote.RegularMarketChange.Raw)
-		assetQuote.QuotePrice.ChangePercent = responseQuote.PostMarketChangePercent.Raw + responseQuote.RegularMarketChangePercent.Raw
+		assetQuote.QuotePrice.Change = responseQuote.PostMarketChange.Raw
+		assetQuote.QuotePrice.ChangePercent = responseQuote.PostMarketChangePercent.Raw
 		assetQuote.Exchange.IsActive = false
 		assetQuote.Exchange.IsRegularTradingSession = false
 
