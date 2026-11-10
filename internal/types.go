@@ -59,12 +59,14 @@ type Settings struct {
 type KeySecretCfg struct {
 	Key    string `yaml:"key"`
 	Secret string `yaml:"secret"`
+	Token  string `yaml:"token"`
 }
 
 type Config struct {
 	App      AppCfg            `yaml:"app"`
 	Postgres map[string]string `yaml:"postgres"`
 	Alpaca   KeySecretCfg      `yaml:"alpaca"`
+	Longport KeySecretCfg      `yaml:"longport"`
 }
 
 type CurrencyRates map[string]CurrencyRate
