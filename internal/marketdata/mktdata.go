@@ -39,6 +39,9 @@ type MktData interface {
 	// Delivery is nonblocking: updates are skipped when the channel cannot accept them.
 	// The caller owns the channel and must unsubscribe before closing it.
 	Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error
+	// SubscribeOption merges contracts for id and uses a separate channel. Repeat calls must use
+	// the same non-nil channel. Delivery is nonblocking; unsubscribe before closing the channel.
+	SubscribeOption(id string, options []c.Option, updates chan<- c.OptionQuote) error
 	// For a non-empty id, Unsubscribe returns only after no future sends can target
 	// it. An error may report failed provider reconciliation after local detach.
 	Unsubscribe(id string) error
@@ -52,6 +55,7 @@ type mktDataCommandKind uint8
 const (
 	mktDataStart mktDataCommandKind = iota
 	mktDataSubscribe
+	mktDataSubscribeOption
 	mktDataDetach
 	mktDataRegisterFeed
 	mktDataStop
@@ -62,17 +66,19 @@ const (
 // mktDataCommand is the unified owner's typed caller boundary. The owner assigns
 // operationID after accepting the command and completes reply without blocking.
 type mktDataCommand struct {
-	operationID uint64
-	kind        mktDataCommandKind
-	ctx         context.Context
-	config      mktfeed.MktDataConfig
-	subscriber  string
-	symbols     []string
-	updates     chan<- c.QuoteUpdate
-	source      c.QuoteSource
-	feed        mktfeed.MktDataFeed
-	update      c.QuoteUpdate
-	reply       chan mktDataResult
+	operationID   uint64
+	kind          mktDataCommandKind
+	ctx           context.Context
+	config        mktfeed.MktDataConfig
+	subscriber    string
+	symbols       []string
+	updates       chan<- c.QuoteUpdate
+	options       []c.Option
+	optionUpdates chan<- c.OptionQuote
+	source        c.QuoteSource
+	feed          mktfeed.MktDataFeed
+	update        c.QuoteUpdate
+	reply         chan mktDataResult
 }
 
 // mktDataResult is immutable after publication. LocalDetached is the guarantee
@@ -180,6 +186,15 @@ type subscriber struct {
 	updates      chan<- c.QuoteUpdate
 }
 
+type optionSubscriber struct {
+	options map[c.Option]struct{}
+	updates chan<- c.OptionQuote
+}
+
+type optionSubscriptionFeed interface {
+	SetOptions([]c.Option) error
+}
+
 type ownerSnapshot struct {
 	state       lifecycleState
 	subscribers map[string]subscriber
@@ -250,25 +265,27 @@ type quoteVersion struct {
 type mktDataOwner struct {
 	service *mktDataImpl
 
-	state          lifecycleState
-	subscribers    map[string]*subscriber
-	feeds          map[c.QuoteSource]*providerRuntime
-	factories      MktFeedFactoryMap
-	fxPairSet      map[string]struct{}
-	fxQuotes       map[string]c.AssetQuote
-	yahooNames     map[string]string
-	fxRequests     chan []string
-	targetCurrency string
-	ctx            context.Context
-	cancel         context.CancelFunc
-	workerCtx      context.Context
-	workerCancel   context.CancelFunc
-	chanError      chan error
-	chanQuotes     chan c.QuoteUpdate
-	chanRates      chan c.CurrencyRates
-	currencyRates  c.MonitorCurrencyRate
-	mktCache       c.Cache
-	yahooAPI       *unaryClientYahoo.UnaryAPI
+	state             lifecycleState
+	subscribers       map[string]*subscriber
+	optionSubscribers map[string]*optionSubscriber
+	feeds             map[c.QuoteSource]*providerRuntime
+	factories         MktFeedFactoryMap
+	fxPairSet         map[string]struct{}
+	fxQuotes          map[string]c.AssetQuote
+	yahooNames        map[string]string
+	fxRequests        chan []string
+	targetCurrency    string
+	ctx               context.Context
+	cancel            context.CancelFunc
+	workerCtx         context.Context
+	workerCancel      context.CancelFunc
+	chanError         chan error
+	chanQuotes        chan c.QuoteUpdate
+	chanOptionQuotes  chan c.OptionQuote
+	chanRates         chan c.CurrencyRates
+	currencyRates     c.MonitorCurrencyRate
+	mktCache          c.Cache
+	yahooAPI          *unaryClientYahoo.UnaryAPI
 
 	pendingCalls       map[uint64]*pendingCall
 	nextCallID         uint64
@@ -294,7 +311,8 @@ func newMktDataImpl(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycle
 	}
 	o := &mktDataOwner{
 		service: m, state: state,
-		subscribers: make(map[string]*subscriber), feeds: make(map[c.QuoteSource]*providerRuntime),
+		subscribers: make(map[string]*subscriber), optionSubscribers: make(map[string]*optionSubscriber),
+		feeds:     make(map[c.QuoteSource]*providerRuntime),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote), yahooNames: make(map[string]string),
 		pendingCalls: make(map[uint64]*pendingCall), quoteVersions: make(map[c.QuoteSource]map[string]quoteVersion),
@@ -349,6 +367,12 @@ func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.Qu
 	return m.call(command).err
 }
 
+func (m *mktDataImpl) SubscribeOption(id string, options []c.Option, updates chan<- c.OptionQuote) error {
+	command := newMktDataCommand(context.Background(), mktDataSubscribeOption)
+	command.subscriber, command.options, command.optionUpdates = id, slices.Clone(options), updates
+	return m.call(command).err
+}
+
 func (m *mktDataImpl) Unsubscribe(id string) error {
 	command := newMktDataCommand(context.Background(), mktDataDetach)
 	command.subscriber = id
@@ -388,12 +412,13 @@ func cloneMktDataConfig(config mktfeed.MktDataConfig) mktfeed.MktDataConfig {
 	return config
 }
 
-func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, errors chan error, quotes chan c.QuoteUpdate, requests chan []string) MktDataFeed {
+func newYahooPriceFeed(config mktfeed.MktDataConfig, ctx context.Context, api *unaryClientYahoo.UnaryAPI, errors chan error, quotes chan c.QuoteUpdate, optionQuotes chan c.OptionQuote, requests chan []string) MktDataFeed {
 	return price.NewMonitorPriceYahoo(price.Config{
 		Ctx:                      ctx,
 		UnaryAPI:                 api,
 		ChanError:                errors,
 		ChanUpdateAssetQuote:     quotes,
+		ChanUpdateOptionQuote:    optionQuotes,
 		ChanRequestCurrencyRates: requests,
 	}, price.WithRefreshInterval(config.RefreshInterval))
 }
@@ -453,6 +478,8 @@ func (o *mktDataOwner) run() {
 			o.finishCleanup(result.err)
 		case update := <-o.chanQuotes:
 			o.handleQuote(update.QuoteSource, update)
+		case update := <-o.chanOptionQuotes:
+			o.handleOptionQuote(update)
 		case rates := <-o.chanRates:
 			o.handleRates(rates)
 		case err := <-o.chanError:
@@ -473,6 +500,8 @@ func (o *mktDataOwner) handleCommand(command mktDataCommand) {
 		o.start(command)
 	case mktDataSubscribe:
 		o.subscribe(command)
+	case mktDataSubscribeOption:
+		o.subscribeOption(command)
 	case mktDataDetach:
 		o.detach(command)
 	case mktDataRegisterFeed:
@@ -531,6 +560,7 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	o.ctx, o.cancel = context.WithCancel(o.workerCtx)
 	o.chanError = make(chan error, errChanSize)
 	o.chanQuotes = make(chan c.QuoteUpdate, quoteChanSize)
+	o.chanOptionQuotes = make(chan c.OptionQuote, quoteChanSize)
 	o.chanRates = make(chan c.CurrencyRates, quoteChanSize)
 	o.fxRequests = make(chan []string, quoteChanSize)
 	for _, provider := range o.feeds {
@@ -577,7 +607,12 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 		}
 	}
 	if o.feeds[c.QuoteSourceYahoo] == nil {
-		o.addProvider(c.QuoteSourceYahoo, newYahooPriceFeed(config, o.ctx, o.yahooAPI, o.chanError, o.chanQuotes, o.fxRequests))
+		o.addProvider(c.QuoteSourceYahoo, newYahooPriceFeed(config, o.ctx, o.yahooAPI, o.chanError, o.chanQuotes, o.chanOptionQuotes, o.fxRequests))
+	}
+	if options := o.optionUnion(); len(options) > 0 {
+		if err := o.subscribeOptionFeeds(options); err != nil {
+			o.reportOptionError(err)
+		}
 	}
 	if err := o.currencyRates.Start(); err != nil {
 		o.beginCleanup(fmt.Errorf("start Yahoo currency-rate monitor: %w", err))
@@ -633,6 +668,11 @@ func (o *mktDataOwner) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFe
 			start: true, snapshot: true,
 			seeds: o.captureSeedTargets(source, "", union),
 		})
+		if options := o.optionUnion(); len(options) > 0 {
+			if err := o.subscribeOptionsToFeed(source, options); err != nil {
+				o.reportOptionError(err)
+			}
+		}
 	}
 }
 
@@ -731,6 +771,203 @@ func (o *mktDataOwner) subscribe(command mktDataCommand) {
 	}
 }
 
+func (o *mktDataOwner) subscribeOption(command mktDataCommand) {
+	if o.state == lifecycleStopping || o.state == lifecycleStopped {
+		command.complete(mktDataResult{err: errors.New("market data service is stopped")})
+		return
+	}
+	if command.subscriber == "" || command.optionUpdates == nil {
+		command.complete(mktDataResult{err: errors.New("subscriber ID and option update channel are required")})
+		return
+	}
+	sub := o.optionSubscribers[command.subscriber]
+	if sub != nil && sub.updates != command.optionUpdates {
+		command.complete(mktDataResult{err: fmt.Errorf("subscriber %q already uses a different option channel", command.subscriber)})
+		return
+	}
+	if sub == nil {
+		sub = &optionSubscriber{options: make(map[c.Option]struct{}), updates: command.optionUpdates}
+		o.optionSubscribers[command.subscriber] = sub
+	}
+	var errs []error
+	changed := false
+	for _, option := range command.options {
+		option, err := normalizeOption(option)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if _, exists := sub.options[option]; !exists {
+			sub.options[option] = struct{}{}
+			changed = true
+		}
+	}
+	if o.state != lifecycleNew {
+		if options := o.optionUnion(); len(options) > 0 {
+			var err error
+			if changed {
+				err = o.subscribeOptionFeeds(options)
+			} else {
+				err = o.optionSubscriptionProviderErrors()
+			}
+			if err != nil {
+				errs = append(errs, err)
+			}
+		}
+	}
+	command.complete(mktDataResult{err: errors.Join(errs...)})
+}
+
+func (o *mktDataOwner) subscribeOptionFeeds(options []c.Option) error {
+	var errs []error
+	for _, source := range o.sources() {
+		if err := o.subscribeOptionsToFeed(source, options); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if o.feeds[c.QuoteSourceYahoo] == nil {
+		errs = append(errs, errors.New("Yahoo option poller is not available"))
+	}
+	return errors.Join(errs...)
+}
+
+func (o *mktDataOwner) optionSubscriptionProviderErrors() error {
+	var errs []error
+	for _, source := range o.sources() {
+		if _, ok := o.feeds[source].feed.(optionSubscriptionFeed); !ok {
+			errs = append(errs, fmt.Errorf("%s option subscriptions: not implemented", source))
+		}
+	}
+	if o.feeds[c.QuoteSourceYahoo] == nil {
+		errs = append(errs, errors.New("Yahoo option poller is not available"))
+	}
+	return errors.Join(errs...)
+}
+
+func (o *mktDataOwner) subscribeOptionsToFeed(source c.QuoteSource, options []c.Option) error {
+	provider := o.feeds[source]
+	if provider == nil {
+		return nil
+	}
+	feed, ok := provider.feed.(optionSubscriptionFeed)
+	if !ok {
+		return fmt.Errorf("%s option subscriptions: not implemented", source)
+	}
+	if err := feed.SetOptions(options); err != nil {
+		return fmt.Errorf("%s option subscriptions: %w", source, err)
+	}
+	return nil
+}
+
+func (o *mktDataOwner) updateYahooOptions(options []c.Option) error {
+	provider := o.feeds[c.QuoteSourceYahoo]
+	if provider == nil {
+		return nil
+	}
+	feed, ok := provider.feed.(optionSubscriptionFeed)
+	if !ok {
+		return errors.New("Yahoo option poller: not implemented")
+	}
+	return feed.SetOptions(options)
+}
+
+func (o *mktDataOwner) reportOptionError(err error) {
+	if err == nil {
+		return
+	}
+	if o.chanError != nil {
+		select {
+		case o.chanError <- err:
+			return
+		default:
+		}
+	}
+	slog.Error("Option subscription provider error", "error", err)
+}
+
+func (o *mktDataOwner) optionUnion() []c.Option {
+	unique := make(map[c.Option]struct{})
+	for _, sub := range o.optionSubscribers {
+		for option := range sub.options {
+			unique[option] = struct{}{}
+		}
+	}
+	options := make([]c.Option, 0, len(unique))
+	for option := range unique {
+		options = append(options, option)
+	}
+	slices.SortFunc(options, func(a, b c.Option) int {
+		if a.Ticker < b.Ticker {
+			return -1
+		}
+		if a.Ticker > b.Ticker {
+			return 1
+		}
+		if a.Expiry < b.Expiry {
+			return -1
+		}
+		if a.Expiry > b.Expiry {
+			return 1
+		}
+		if a.CP < b.CP {
+			return -1
+		}
+		if a.CP > b.CP {
+			return 1
+		}
+		if a.Strike < b.Strike {
+			return -1
+		}
+		if a.Strike > b.Strike {
+			return 1
+		}
+		return 0
+	})
+	return options
+}
+
+func normalizeOption(option c.Option) (c.Option, error) {
+	option.Ticker = strings.ToUpper(strings.TrimSpace(option.Ticker))
+	if option.Ticker == "" {
+		return c.Option{}, errors.New("option ticker is required")
+	}
+	expiry := strings.TrimSpace(option.Expiry)
+	expiration, err := time.Parse("2006-01-02", expiry)
+	if err != nil || expiration.Format("2006-01-02") != expiry {
+		return c.Option{}, fmt.Errorf("invalid option expiration %q: use YYYY-MM-DD", option.Expiry)
+	}
+	option.Expiry = expiry
+	if option.Strike <= 0 || math.IsNaN(option.Strike) || math.IsInf(option.Strike, 0) {
+		return c.Option{}, fmt.Errorf("invalid option strike %v", option.Strike)
+	}
+	switch strings.ToUpper(strings.TrimSpace(option.CP)) {
+	case "C", "CALL":
+		option.CP = "C"
+	case "P", "PUT":
+		option.CP = "P"
+	default:
+		return c.Option{}, fmt.Errorf("invalid option type %q: use C, P, CALL, or PUT", option.CP)
+	}
+	return option, nil
+}
+
+func (o *mktDataOwner) handleOptionQuote(update c.OptionQuote) {
+	option, err := normalizeOption(update.Option)
+	if err != nil || update.Price <= 0 || math.IsNaN(update.Price) || math.IsInf(update.Price, 0) {
+		return
+	}
+	update.Option = option
+	for _, sub := range o.optionSubscribers {
+		if _, subscribed := sub.options[option]; !subscribed {
+			continue
+		}
+		select {
+		case sub.updates <- update:
+		default:
+		}
+	}
+}
+
 func (o *mktDataOwner) detach(command mktDataCommand) {
 	if o.state == lifecycleStopping || o.state == lifecycleStopped {
 		command.complete(mktDataResult{err: errors.New("market data service is stopped")})
@@ -742,11 +979,19 @@ func (o *mktDataOwner) detach(command mktDataCommand) {
 	}
 	oldUnion := o.symbolUnion()
 	delete(o.subscribers, command.subscriber)
+	_, hadOptions := o.optionSubscribers[command.subscriber]
+	delete(o.optionSubscribers, command.subscriber)
+	var errs []error
+	if hadOptions {
+		if err := o.updateYahooOptions(o.optionUnion()); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	newUnion := o.symbolUnion()
 	oldSymbols, newSymbolsSorted := cloneSymbols(oldUnion), cloneSymbols(newUnion)
 	unionChanged := !slices.Equal(oldSymbols, newSymbolsSorted)
 	callID := o.newCallID()
-	call := &pendingCall{command: command, localDetached: true}
+	call := &pendingCall{command: command, localDetached: true, errs: errs}
 	tasks := make([]struct {
 		source c.QuoteSource
 		task   *providerTask
@@ -768,7 +1013,7 @@ func (o *mktDataOwner) detach(command mktDataCommand) {
 	}
 	call.remaining = len(tasks)
 	if call.remaining == 0 {
-		command.complete(mktDataResult{localDetached: true})
+		command.complete(mktDataResult{localDetached: true, err: errors.Join(call.errs...)})
 		return
 	}
 	o.pendingCalls[callID] = call

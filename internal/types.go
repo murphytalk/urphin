@@ -188,6 +188,18 @@ type QuoteUpdate struct {
 	Revision      int64
 }
 
+type Option struct {
+	Ticker string
+	Expiry string //YYYY-MM-DD
+	Strike float64
+	CP     string // "C" or "P"
+}
+
+type OptionQuote struct {
+	Option
+	Price float64
+}
+
 // NewQuoteUpdate copies quote data and gives the transport its own price object.
 func NewQuoteUpdate(quote AssetQuote, generation int, revision int64) QuoteUpdate {
 	price := quote.QuotePrice

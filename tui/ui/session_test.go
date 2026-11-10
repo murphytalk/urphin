@@ -160,6 +160,10 @@ func (f *sessionTestFeed) Unsubscribe(id string) error {
 	return f.unsubErr
 }
 
+func (*sessionTestFeed) SubscribeOption(string, []c.Option, chan<- c.OptionQuote) error {
+	return nil
+}
+
 func (f *sessionTestFeed) RegisterMktDataFeed(_ c.QuoteSource, _ mktdata.MktDataFeed) {}
 
 func (f *sessionTestFeed) snapshot() sessionTestCalls {

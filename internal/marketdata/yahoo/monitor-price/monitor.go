@@ -3,8 +3,10 @@ package monitorPriceYahoo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ type commandKind uint8
 const (
 	startCommand commandKind = iota
 	setSymbolsCommand
+	setOptionsCommand
 	getSnapshotCommand
 	getFreshSnapshotCommand
 	stopCommand
@@ -29,6 +32,7 @@ const (
 type command struct {
 	kind       commandKind
 	symbols    []string
+	options    []c.Option
 	generation int
 	reply      chan commandResult
 }
@@ -42,6 +46,13 @@ type fetchResult struct {
 	id       uint64
 	configID uint64
 	quotes   []c.AssetQuote
+	err      error
+}
+
+type optionFetchResult struct {
+	id       uint64
+	configID uint64
+	quotes   []c.OptionQuote
 	err      error
 }
 
@@ -66,6 +77,7 @@ type ownerConfig struct {
 	unaryAPI                 *unary.UnaryAPI
 	chanError                chan error
 	chanUpdateAssetQuote     chan c.QuoteUpdate
+	chanUpdateOptionQuote    chan c.OptionQuote
 	chanRequestCurrencyRates chan []string
 	refreshInterval          time.Duration
 }
@@ -89,6 +101,7 @@ type Config struct {
 	UnaryAPI                 *unary.UnaryAPI
 	ChanError                chan error
 	ChanUpdateAssetQuote     chan c.QuoteUpdate
+	ChanUpdateOptionQuote    chan c.OptionQuote
 	ChanRequestCurrencyRates chan []string
 }
 
@@ -112,6 +125,7 @@ func NewMonitorPriceYahoo(config Config, opts ...Option) *MonitorPriceYahoo {
 		config: ownerConfig{
 			unaryAPI: config.UnaryAPI, chanError: config.ChanError,
 			chanUpdateAssetQuote:     config.ChanUpdateAssetQuote,
+			chanUpdateOptionQuote:    config.ChanUpdateOptionQuote,
 			chanRequestCurrencyRates: config.ChanRequestCurrencyRates,
 			refreshInterval:          options.refreshInterval,
 		},
@@ -138,6 +152,12 @@ func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate
 // SetSymbols replaces the monitored symbol set and waits for its initial snapshot.
 func (m *MonitorPriceYahoo) SetSymbols(symbols []string, generation int) error {
 	result := m.call(command{kind: setSymbolsCommand, symbols: slices.Clone(symbols), generation: generation})
+	return result.err
+}
+
+// SetOptions replaces the option contracts polled by Yahoo.
+func (m *MonitorPriceYahoo) SetOptions(options []c.Option) error {
+	result := m.call(command{kind: setOptionsCommand, options: slices.Clone(options)})
 	return result.err
 }
 
@@ -194,6 +214,12 @@ type priceOwner struct {
 	configID            uint64
 	generation          int
 	symbols             []string
+	options             []c.Option
+	optionConfigID      uint64
+	activeOptionID      uint64
+	nextOptionID        uint64
+	optionActive        bool
+	optionPending       bool
 	quotes              map[string]c.AssetQuote
 	quoteOrder          []string
 	revisions           map[string]int64
@@ -204,9 +230,11 @@ type priceOwner struct {
 	pending             *quoteFetch
 	nextID              uint64
 	results             chan fetchResult
+	optionResults       chan optionFetchResult
 	workers             sync.WaitGroup
 	pendingUpdates      map[string]c.QuoteUpdate
 	updateOrder         []string
+	lastOptionPrices    map[c.Option]float64
 	pendingErrors       []error
 	pendingCurrencies   map[string]struct{}
 	requestedCurrencies map[string]struct{}
@@ -216,7 +244,8 @@ func (m *MonitorPriceYahoo) run() {
 	defer close(m.done)
 	owner := &priceOwner{
 		monitor: m, quotes: make(map[string]c.AssetQuote), revisions: make(map[string]int64),
-		results: make(chan fetchResult, 1), pendingUpdates: make(map[string]c.QuoteUpdate),
+		results: make(chan fetchResult, 1), optionResults: make(chan optionFetchResult, 1),
+		pendingUpdates: make(map[string]c.QuoteUpdate), lastOptionPrices: make(map[c.Option]float64),
 		pendingCurrencies: make(map[string]struct{}), requestedCurrencies: make(map[string]struct{}),
 	}
 	for {
@@ -257,8 +286,11 @@ func (m *MonitorPriceYahoo) run() {
 			}
 		case result := <-owner.results:
 			owner.finishFetch(result)
+		case result := <-owner.optionResults:
+			owner.finishOptionFetch(result)
 		case <-ticks:
 			owner.refresh()
+			owner.refreshOptions()
 		case updates <- nextUpdate:
 			owner.sentUpdate()
 		case currencyRequests <- nextCurrencies:
@@ -278,6 +310,8 @@ func (owner *priceOwner) handle(cmd command) bool {
 			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
 	case setSymbolsCommand:
 		owner.setSymbols(cmd)
+	case setOptionsCommand:
+		owner.setOptions(cmd)
 	case startCommand:
 		if owner.started || owner.startPending {
 			owner.reply(cmd.reply, nil, errors.New("monitor already started"))
@@ -327,6 +361,26 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	waiters = append(waiters, fetchWaiter{kind: cmd.kind, reply: cmd.reply})
 	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation, symbols: symbols,
 		publish: publish, reportErrors: reportErrors, waiters: waiters})
+}
+
+func (owner *priceOwner) setOptions(cmd command) {
+	options := slices.Clone(cmd.options)
+	if slices.Equal(owner.options, options) {
+		if owner.started {
+			owner.lastOptionPrices = make(map[c.Option]float64, len(options))
+			owner.refreshOptions()
+		}
+		owner.reply(cmd.reply, nil, nil)
+		return
+	}
+	owner.optionConfigID++
+	owner.options = options
+	owner.lastOptionPrices = make(map[c.Option]float64, len(options))
+	owner.optionPending = false
+	if owner.started {
+		owner.refreshOptions()
+	}
+	owner.reply(cmd.reply, nil, nil)
 }
 
 func (owner *priceOwner) enqueue(fetch *quoteFetch) {
@@ -380,6 +434,7 @@ func (owner *priceOwner) finishFetch(result fetchResult) {
 		return
 	}
 	owner.active = nil
+	startedNow := false
 	if fetch.configID == owner.configID && result.configID == owner.configID {
 		if result.err != nil {
 			if fetch.reportErrors && owner.monitor.config.chanError != nil {
@@ -396,6 +451,7 @@ func (owner *priceOwner) finishFetch(result fetchResult) {
 					owner.started = true
 					owner.startPending = false
 					owner.ticker = time.NewTicker(owner.monitor.config.refreshInterval)
+					startedNow = true
 				}
 				if waiter.kind == getFreshSnapshotCommand {
 					owner.reply(waiter.reply, owner.snapshot(), nil)
@@ -408,6 +464,9 @@ func (owner *priceOwner) finishFetch(result fetchResult) {
 		for _, waiter := range fetch.waiters {
 			owner.reply(waiter.reply, nil, errMonitorStopped)
 		}
+	}
+	if startedNow {
+		owner.refreshOptions()
 	}
 	if owner.pending != nil {
 		pending := owner.pending
@@ -455,6 +514,78 @@ func (owner *priceOwner) refresh() {
 	}
 	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
 		symbols: slices.Clone(owner.symbols), publish: true, reportErrors: true})
+}
+
+func (owner *priceOwner) refreshOptions() {
+	if !owner.started || len(owner.options) == 0 {
+		return
+	}
+	if owner.optionActive {
+		owner.optionPending = true
+		return
+	}
+	owner.nextOptionID++
+	fetch := optionFetchResult{id: owner.nextOptionID, configID: owner.optionConfigID}
+	owner.activeOptionID = fetch.id
+	owner.optionActive = true
+	options := slices.Clone(owner.options)
+	owner.workers.Add(1)
+	go func() {
+		defer owner.workers.Done()
+		if owner.monitor.config.unaryAPI == nil {
+			fetch.err = errors.New("Yahoo API is required")
+		} else {
+			var errs []error
+			for _, option := range options {
+				optionType := strings.ToLower(strings.TrimSpace(option.CP))
+				switch optionType {
+				case "c":
+					optionType = "call"
+				case "p":
+					optionType = "put"
+				}
+				snapshot, err := owner.monitor.config.unaryAPI.GetOptionLastPrice(
+					owner.monitor.ctx, option.Ticker, optionType, option.Expiry, option.Strike,
+				)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("%s %s %s %.8g: %w", option.Ticker, option.CP, option.Expiry, option.Strike, err))
+					continue
+				}
+				fetch.quotes = append(fetch.quotes, c.OptionQuote{Option: option, Price: snapshot.Price})
+			}
+			fetch.err = errors.Join(errs...)
+		}
+		select {
+		case owner.optionResults <- fetch:
+		case <-owner.monitor.ctx.Done():
+		}
+	}()
+}
+
+func (owner *priceOwner) finishOptionFetch(result optionFetchResult) {
+	if !owner.optionActive || result.id != owner.activeOptionID {
+		return
+	}
+	owner.optionActive = false
+	if result.configID == owner.optionConfigID {
+		for _, quote := range result.quotes {
+			if previous, exists := owner.lastOptionPrices[quote.Option]; exists && previous == quote.Price {
+				continue
+			}
+			owner.lastOptionPrices[quote.Option] = quote.Price
+			select {
+			case owner.monitor.config.chanUpdateOptionQuote <- quote:
+			default:
+			}
+		}
+		if result.err != nil && owner.monitor.config.chanError != nil {
+			owner.pendingErrors = append(owner.pendingErrors, result.err)
+		}
+	}
+	if owner.optionPending {
+		owner.optionPending = false
+		owner.refreshOptions()
+	}
 }
 
 func (owner *priceOwner) snapshot() []c.QuoteUpdate {

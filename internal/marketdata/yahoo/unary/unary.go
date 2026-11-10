@@ -66,19 +66,25 @@ type requestKind uint8
 const (
 	quotesRequest requestKind = iota
 	currencyRatesRequest
+	optionLastPriceRequest
 )
 
 type request struct {
 	ctx            context.Context
 	kind           requestKind
 	symbols        []string
+	ticker         string
 	targetCurrency string
+	optionType     string
+	expiration     string
+	strike         float64
 	reply          chan response
 }
 
 type response struct {
 	quotes        []c.QuoteUpdate
 	currencyRates c.CurrencyRates
+	optionPrice   OptionPriceSnapshot
 	err           error
 }
 
@@ -208,6 +214,9 @@ func (u *requestOwner) execute(ctx context.Context, req request) response {
 	case currencyRatesRequest:
 		rates, err := u.getCurrencyRates(ctx, req.symbols, req.targetCurrency)
 		return response{currencyRates: rates, err: err}
+	case optionLastPriceRequest:
+		price, err := u.getOptionLastPrice(ctx, req.ticker, req.optionType, req.expiration, req.strike)
+		return response{optionPrice: price, err: err}
 	default:
 		return response{err: errors.New("unknown Yahoo request")}
 	}
@@ -272,6 +281,15 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 		quotesBySymbol[quote.Symbol] = &quoteCopy
 	}
 	return quotes, quotesBySymbol, nil
+}
+
+// GetOptionLastPrice returns Yahoo's last-traded price for one option contract.
+func (u *UnaryAPI) GetOptionLastPrice(ctx context.Context, ticker, optionType, expiration string, strike float64) (OptionPriceSnapshot, error) {
+	result := u.submit(ctx, request{
+		kind: optionLastPriceRequest, ticker: ticker, optionType: optionType,
+		expiration: expiration, strike: strike,
+	})
+	return result.optionPrice, result.err
 }
 
 func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
@@ -371,33 +389,48 @@ func (u *requestOwner) getQuotes(ctx context.Context, symbols []string, fields [
 	if u.randomMktData {
 		return randomResponse(symbols), nil
 	}
+	query := url.Values{
+		"fields":     {strings.Join(fields, ",")},
+		"symbols":    {strings.Join(symbols, ",")},
+		"formatted":  {"true"},
+		"lang":       {"en-US"},
+		"region":     {"US"},
+		"corsDomain": {"finance.yahoo.com"},
+	}
+	var result Response
+	if err := u.getJSON(ctx, "/v7/finance/quote", query, &result); err != nil {
+		return Response{}, err
+	}
+	if result.QuoteResponse.Error != nil {
+		return Response{}, fmt.Errorf("Yahoo API returned an error: %v", result.QuoteResponse.Error)
+	}
+	return result, nil
+}
 
-	// Reuse a session shared by other instances when one is cached, so the first
-	// request is authenticated and the session handshake can be skipped.
+func (u *requestOwner) getJSON(ctx context.Context, path string, query url.Values, result any) error {
 	if u.crumb == "" && len(u.cookies) == 0 {
 		u.loadSessionFromCache()
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
-		reqURL, err := url.Parse(u.baseURL + "/v7/finance/quote")
+		reqURL, err := url.Parse(u.baseURL + path)
 		if err != nil {
-			return Response{}, fmt.Errorf("failed to create request: %w", err)
+			return fmt.Errorf("failed to create request: %w", err)
 		}
-		q := reqURL.Query()
-		q.Set("fields", strings.Join(fields, ","))
-		q.Set("symbols", strings.Join(symbols, ","))
-		q.Set("formatted", "true")
-		q.Set("lang", "en-US")
-		q.Set("region", "US")
-		q.Set("corsDomain", "finance.yahoo.com")
+		values := reqURL.Query()
+		for key, entries := range query {
+			for _, value := range entries {
+				values.Add(key, value)
+			}
+		}
 		if u.crumb != "" {
-			q.Set("crumb", u.crumb)
+			values.Set("crumb", u.crumb)
 		}
-		reqURL.RawQuery = q.Encode()
+		reqURL.RawQuery = values.Encode()
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 		if err != nil {
-			return Response{}, fmt.Errorf("failed to create request: %w", err)
+			return fmt.Errorf("failed to create request: %w", err)
 		}
 		req.Header.Set("Authority", "query1.finance.yahoo.com")
 		req.Header.Set("Accept", "*/*")
@@ -410,38 +443,32 @@ func (u *requestOwner) getQuotes(ctx context.Context, symbols []string, fields [
 
 		resp, err := u.client.Do(req)
 		if err != nil {
-			return Response{}, fmt.Errorf("failed to make request: %w", err)
+			return fmt.Errorf("failed to make request: %w", err)
 		}
-
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			status := resp.StatusCode
 			_ = resp.Body.Close()
 			if attempt == 1 {
-				return Response{}, fmt.Errorf("Yahoo authentication rejected after session refresh: %d", status)
+				return fmt.Errorf("Yahoo authentication rejected after session refresh: %d", status)
 			}
 			if err := u.refreshSession(ctx); err != nil {
-				return Response{}, fmt.Errorf("session refresh failed: %w", err)
+				return fmt.Errorf("session refresh failed: %w", err)
 			}
 			u.saveSessionToCache()
 			continue
 		}
-
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			return Response{}, fmt.Errorf("unexpected response: %d", resp.StatusCode)
+			return fmt.Errorf("unexpected response: %d", resp.StatusCode)
 		}
-		var result Response
-		err = json.NewDecoder(resp.Body).Decode(&result)
+		err = json.NewDecoder(resp.Body).Decode(result)
 		_ = resp.Body.Close()
 		if err != nil {
-			return Response{}, fmt.Errorf("failed to decode response: %w", err)
+			return fmt.Errorf("failed to decode response: %w", err)
 		}
-		if result.QuoteResponse.Error != nil {
-			return Response{}, fmt.Errorf("Yahoo API returned an error: %v", result.QuoteResponse.Error)
-		}
-		return result, nil
+		return nil
 	}
-	return Response{}, errors.New("Yahoo request attempts exhausted")
+	return errors.New("Yahoo request attempts exhausted")
 }
 
 func randomResponse(symbols []string) Response {
