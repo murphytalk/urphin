@@ -25,6 +25,9 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
+
+//EXT REPLACE
+
 require (
 	cloud.google.com/go v0.118.0 // indirect
 	github.com/Allenxuxu/ringbuffer v0.0.11 // indirect
@@ -60,6 +63,7 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
