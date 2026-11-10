@@ -94,13 +94,9 @@ func TestSetupRotatesBySizeAndCompresses(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Archives are named "<prefix>-<timestamp>.log"; compression runs in the
-	// logger's background miller, so the archive may settle after Close.
-	archives := waitForFiles(t, "urphin-*", dir)
-	if len(archives) == 0 {
-		t.Fatalf("no rotated archive, files: %v", dirFiles(t, dir))
-	}
-	compressed := waitForFiles(t, "urphin-*.log.gz", dir)
+	// Compression runs asynchronously. Wait until each source archive is gone
+	// before TempDir cleanup can race with the background worker.
+	compressed := waitForCompression(t, dir)
 	if len(compressed) == 0 {
 		t.Fatalf("rotated archive was not compressed, files: %v", dirFiles(t, dir))
 	}
@@ -121,17 +117,24 @@ func TestSetupRotatesBySizeAndCompresses(t *testing.T) {
 	}
 }
 
-// waitForFiles polls a glob until it matches or the deadline passes.
-func waitForFiles(t *testing.T, pattern, dir string) []string {
+// waitForCompression polls until every rotated source archive is compressed.
+func waitForCompression(t *testing.T, dir string) []string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		compressed, err := filepath.Glob(filepath.Join(dir, "urphin-*.log.gz"))
 		if err != nil {
-			t.Fatalf("glob %q: %v", pattern, err)
+			t.Fatalf("glob compressed archives: %v", err)
 		}
-		if len(matches) > 0 || time.Now().After(deadline) {
-			return matches
+		archives, err := filepath.Glob(filepath.Join(dir, "urphin-*.log"))
+		if err != nil {
+			t.Fatalf("glob uncompressed archives: %v", err)
+		}
+		if len(compressed) > 0 && len(archives) == 0 {
+			return compressed
+		}
+		if time.Now().After(deadline) {
+			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
