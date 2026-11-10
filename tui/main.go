@@ -248,6 +248,11 @@ func run() int {
 	selectedTheme := resolveThemeSelector(ctx.Cfg.App.Theme, themeOverride, themeOverrideProvided)
 	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.PriceColors)
 
+	if mktDataFeedOverride != "" {
+		slog.Info("Overriding market-data feed", "from", ctx.Cfg.App.MktDataFeed, "to", mktDataFeedOverride)
+		ctx.Cfg.App.MktDataFeed = c.QuoteSource(mktDataFeedOverride)
+	}
+
 	marketData := mktdata.NewMktData()
 	err := marketData.Start(mktdata.MktDataConfig{
 		CachePath:       ctx.Cfg.App.Cache,
