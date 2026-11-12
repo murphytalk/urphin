@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -443,6 +444,16 @@ func (u *requestOwner) getJSON(ctx context.Context, path string, query url.Value
 
 		resp, err := u.client.Do(req)
 		if err != nil {
+			var timeout net.Error
+			if ctx.Err() == nil && errors.As(err, &timeout) && timeout.Timeout() {
+				resp, err = u.client.Do(req.Clone(ctx))
+			}
+		}
+		if err != nil {
+			var requestError *url.Error
+			if errors.As(err, &requestError) {
+				err = requestError.Err // The URL contains the session crumb.
+			}
 			return fmt.Errorf("failed to make request: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {

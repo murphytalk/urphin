@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/murphytalk/urphin/internal/marketdata/cache"
 )
 
 func TestConcurrentPriceAndFXRequestsShareYahooSession(t *testing.T) {
@@ -184,6 +188,36 @@ func TestStalledYahooHeadersAndBodyRespectRequestDeadline(t *testing.T) {
 				t.Fatalf("GetAssetQuotes() error = %v, want deadline exceeded", err)
 			}
 		})
+	}
+}
+
+func TestYahooHandshakeTimeoutRetriesWithoutLoggingCrumb(t *testing.T) {
+	var calls int
+	stored := cache.New(filepath.Join(t.TempDir(), "cache.json"))
+	t.Cleanup(func() { _ = stored.Close() })
+	stored.Set(cacheKeySession, sessionCache{Crumb: "private-crumb", Cookies: []sessionCookie{{Name: "A3", Value: "fixture"}}}, time.Hour)
+	owner := requestOwner{baseURL: "https://example.invalid", cache: stored}
+	owner.client = &http.Client{Transport: currencyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if r.URL.Query().Get("crumb") != "private-crumb" {
+			t.Error("cached session was not loaded")
+		}
+		if calls == 1 {
+			return nil, &net.DNSError{Err: "TLS handshake timeout", IsTimeout: true}
+		}
+		return sessionRaceResponse(http.StatusOK, `{"ok":true}`), nil
+	})}
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if err := owner.getJSON(context.Background(), "/quote", url.Values{}, &result); err != nil || !result.OK || calls != 2 {
+		t.Fatalf("retry result=%+v calls=%d error=%v", result, calls, err)
+	}
+	owner.client.Transport = currencyRoundTrip(func(*http.Request) (*http.Response, error) {
+		return nil, &net.DNSError{Err: "TLS handshake timeout", IsTimeout: true}
+	})
+	if err := owner.getJSON(context.Background(), "/quote", url.Values{}, &result); err == nil || strings.Contains(err.Error(), "private-crumb") {
+		t.Fatalf("network error exposed crumb: %v", err)
 	}
 }
 
