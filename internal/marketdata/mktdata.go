@@ -269,6 +269,7 @@ type mktDataOwner struct {
 	subscribers       map[string]*subscriber
 	optionSubscribers map[string]*optionSubscriber
 	feeds             map[c.QuoteSource]*providerRuntime
+	optionProvider    c.QuoteSource
 	factories         MktFeedFactoryMap
 	fxPairSet         map[string]struct{}
 	fxQuotes          map[string]c.AssetQuote
@@ -535,6 +536,9 @@ func (o *mktDataOwner) bindQuotePublisher(feed mktfeed.MktDataFeed) {
 	if publisher, ok := feed.(mktfeed.QuoteUpdatePublisher); ok {
 		publisher.SetQuoteUpdates(o.chanQuotes)
 	}
+	if publisher, ok := feed.(mktfeed.OptionQuotePublisher); ok {
+		publisher.SetOptionQuotes(o.chanOptionQuotes)
+	}
 }
 
 func (o *mktDataOwner) start(command mktDataCommand) {
@@ -608,6 +612,14 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	}
 	if o.feeds[c.QuoteSourceYahoo] == nil {
 		o.addProvider(c.QuoteSourceYahoo, newYahooPriceFeed(config, o.ctx, o.yahooAPI, o.chanError, o.chanQuotes, o.chanOptionQuotes, o.fxRequests))
+	}
+	o.optionProvider = c.QuoteSourceYahoo
+	if config.Cfg != nil {
+		if provider := o.feeds[config.Cfg.App.MktDataFeed]; provider != nil {
+			if _, ok := provider.feed.(optionSubscriptionFeed); ok {
+				o.optionProvider = config.Cfg.App.MktDataFeed
+			}
+		}
 	}
 	if options := o.optionUnion(); len(options) > 0 {
 		if err := o.subscribeOptionFeeds(options); err != nil {
@@ -819,29 +831,18 @@ func (o *mktDataOwner) subscribeOption(command mktDataCommand) {
 }
 
 func (o *mktDataOwner) subscribeOptionFeeds(options []c.Option) error {
-	var errs []error
-	for _, source := range o.sources() {
-		if err := o.subscribeOptionsToFeed(source, options); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	if o.feeds[c.QuoteSourceYahoo] == nil {
-		errs = append(errs, errors.New("Yahoo option poller is not available"))
-	}
-	return errors.Join(errs...)
+	return o.subscribeOptionsToFeed(o.optionProvider, options)
 }
 
 func (o *mktDataOwner) optionSubscriptionProviderErrors() error {
-	var errs []error
-	for _, source := range o.sources() {
-		if _, ok := o.feeds[source].feed.(optionSubscriptionFeed); !ok {
-			errs = append(errs, fmt.Errorf("%s option subscriptions: not implemented", source))
-		}
+	provider := o.feeds[o.optionProvider]
+	if provider == nil {
+		return fmt.Errorf("%s option provider is not available", o.optionProvider)
 	}
-	if o.feeds[c.QuoteSourceYahoo] == nil {
-		errs = append(errs, errors.New("Yahoo option poller is not available"))
+	if _, ok := provider.feed.(optionSubscriptionFeed); !ok {
+		return fmt.Errorf("%s option subscriptions: not implemented", o.optionProvider)
 	}
-	return errors.Join(errs...)
+	return nil
 }
 
 func (o *mktDataOwner) subscribeOptionsToFeed(source c.QuoteSource, options []c.Option) error {
@@ -983,7 +984,7 @@ func (o *mktDataOwner) detach(command mktDataCommand) {
 	delete(o.optionSubscribers, command.subscriber)
 	var errs []error
 	if hadOptions {
-		if err := o.updateYahooOptions(o.optionUnion()); err != nil {
+		if err := o.subscribeOptionFeeds(o.optionUnion()); err != nil {
 			errs = append(errs, err)
 		}
 	}

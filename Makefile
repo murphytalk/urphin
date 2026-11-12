@@ -35,11 +35,11 @@ test:
 
 # Format Go source files
 fmt:
-	gofmt -w $$(find . -type f -name '*.go' -not -path './.git/*' -not -path '*/generated/*')
+	gofmt -w $$(find . -type f -name '*.go' -not -path './.git/*' -not -path './extension/mktfeed/*/*/*' -not -path '*/generated/*')
 
 # Check formatting without modifying files
 fmt-check:
-	@test -z "$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.git/*' -not -path '*/generated/*'))" \
+	@test -z "$$(gofmt -l $$(find . -type f -name '*.go' -not -path './.git/*' -not -path './extension/mktfeed/*/*/*' -not -path '*/generated/*'))" \
 		|| (echo "Go files need formatting; run 'make fmt'"; exit 1)
 
 # Static analysis

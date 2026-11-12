@@ -160,6 +160,41 @@ func (f *testMktDataFeed) SetSymbols(symbols []string, _ int) error {
 	return nil
 }
 
+type testOptionFeed struct {
+	testMktDataFeed
+	optionSets [][]c.Option
+}
+
+func (f *testOptionFeed) SetOptions(options []c.Option) error {
+	f.optionSets = append(f.optionSets, slices.Clone(options))
+	return nil
+}
+
+func TestOptionSubscriptionsUseOnlySelectedProviderAndForwardEmptyUnion(t *testing.T) {
+	selected := &testOptionFeed{}
+	yahoo := &testOptionFeed{}
+	owner := &mktDataOwner{
+		optionProvider: "selected",
+		feeds: map[c.QuoteSource]*providerRuntime{
+			"selected":         {feed: selected},
+			c.QuoteSourceYahoo: {feed: yahoo},
+		},
+	}
+	options := []c.Option{{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}}
+	if err := owner.subscribeOptionFeeds(options); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.subscribeOptionFeeds(nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(selected.optionSets) != 2 || !slices.Equal(selected.optionSets[0], options) || len(selected.optionSets[1]) != 0 {
+		t.Fatalf("selected provider option sets = %#v", selected.optionSets)
+	}
+	if len(yahoo.optionSets) != 0 {
+		t.Fatalf("Yahoo received option sets: %#v", yahoo.optionSets)
+	}
+}
+
 func newTestMktData(t testing.TB, feeds map[c.QuoteSource]mktDataFeed) *mktDataImpl {
 	return newTestMktDataState(t, feeds, lifecycleRunning)
 }

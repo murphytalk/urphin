@@ -35,6 +35,10 @@ type QuoteUpdatePublisher interface {
 	SetQuoteUpdates(chan<- c.QuoteUpdate)
 }
 
+type OptionQuotePublisher interface {
+	SetOptionQuotes(chan<- c.OptionQuote)
+}
+
 type MktFeedFactory func(mktCfg MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.QuoteUpdate) (MktDataFeed, error)
 
 type MktFeedFactoryMap map[c.QuoteSource]MktFeedFactory
