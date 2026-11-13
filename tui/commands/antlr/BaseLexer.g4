@@ -11,7 +11,6 @@ HELP     : 'HELP'      -> pushMode(ARGS);
 MKT      : 'MKT'       -> pushMode(ARGS);
 MTX      : 'MTX'       -> pushMode(ARGS);
 MNQ      : 'MNQ'       -> pushMode(ARGS);
-NEXT0    : 'NEXT0'     -> pushMode(ARGS);
 NEXT     : 'NEXT'      -> pushMode(ARGS);
 POS      : 'POS'       -> pushMode(ARGS);
 RATIO    : 'RATIO'     -> pushMode(ARGS);
@@ -21,7 +20,6 @@ TRANS    : 'TRANS'     -> pushMode(ARGS);
 TX       : 'TX'        -> pushMode(ARGS);
 ATX      : 'ATX'       -> pushMode(ARGS);
 WATCH    : 'WATCH'     -> pushMode(ARGS);
-U        : 'U'         -> pushMode(ARGS);
 PROP     : 'PROP'      -> pushMode(PROP_MODE);
 
 UNKNOWN_WORD : [A-Z0-9_-]+ ;

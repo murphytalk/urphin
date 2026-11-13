@@ -4,10 +4,10 @@ prog: cmd EOF;
 
 cmd     : baseCmd ;
 baseCmd
-  : mkt | dtx | tx | fxtx | atx | trans | pos | mtx | mnq
-  | goal | splitCmd | next | next0 | rebalance | dbuy
+  : mkt | dtx | tx | fxtx | atx | trans | pos | mtx
+  | goal | splitCmd | next |  rebalance | dbuy
   | ratioCmd
-  | help | u
+  | help
   | prop
   | watch
   ;
@@ -32,7 +32,6 @@ mtx       : MTX (m=INT (ts=tickerList)? | ts=tickerList)? ;
 goal      : GOAL (a=number)? ;
 splitCmd  : SPLIT t=tickerArg ratio=number ;
 next      : NEXT (a=number (fo=number (fs=forceSpend)?)? | fs=forceSpend)? ;
-next0     : NEXT0 (a=number)? ;
 rebalance : REBALANCE (pct=number (fo=number)?)? ;
 dbuy      : DBUY ;
 
@@ -44,7 +43,6 @@ ratioCmd  : RATIO ;
 
 // urphin
 help      : HELP ;
-u         : U ;
 
 // PROP
 prop        : PROP (txTarget | tickerTarget)
@@ -59,5 +57,4 @@ propWord    : PROP_PATH | PROP_VALUE | TICKER | INT
 forceSpend  : TRUE_KW | BOOL_KW | INT ;
 
 watch     : WATCH (portfolio=PORTFOLIO)? ;
-mnq       : MNQ dateRange? ;
 dateRange : d=DATE (e=DATE)? ;
