@@ -3,14 +3,13 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"io"
-	"os"
 	"reflect"
 	"testing"
 	"time"
 
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type txTestBackend struct {
@@ -44,26 +43,12 @@ func TestTxCommandPrintsJSON(t *testing.T) {
 		t.Fatalf("marshal expected transactions: %v", err)
 	}
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stdout pipe: %v", err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = writer
-	execErr := (&TxCmd{}).Execute(context.Background(), txTestBackend{txs: wantTxs}, map[string]string{}, true)
-	_ = writer.Close()
-	os.Stdout = oldStdout
-
-	got, readErr := io.ReadAll(reader)
-	_ = reader.Close()
+	got, execErr := (&TxCmd{}).Execute(context.Background(), &setup.AppCtx{Db: txTestBackend{txs: wantTxs}}, map[string]string{}, true)
 	if execErr != nil {
 		t.Fatalf("Execute() error = %v", execErr)
 	}
-	if readErr != nil {
-		t.Fatalf("read command output: %v", readErr)
-	}
-	if !reflect.DeepEqual(string(got), string(append(want, '\n'))) {
-		t.Errorf("command output = %q, want %q", got, append(want, '\n'))
+	if !reflect.DeepEqual(got, string(want)) {
+		t.Errorf("command output = %q, want %q", got, want)
 	}
 }
 

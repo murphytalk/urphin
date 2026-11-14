@@ -13,7 +13,6 @@ import (
 	"time"
 
 	data "github.com/murphytalk/urphin/data"
-	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/theme"
@@ -93,12 +92,17 @@ func loadCfg() error {
 	return setup.LoadOrCreate(ctx.Cfg, cfgPath, setup.LoadConfig, nil)
 }
 
-func runOneCommand(databackend databackend.DataBackend, line string) error {
+func runOneCommand(line string) error {
 	name, args, err := commands.Parse(line)
 	if err != nil {
 		return err
 	}
-	return commands.RunCmd(context.Background(), databackend, name, args, true)
+	json, err := commands.RunCmd(context.Background(), &ctx, name, args, true)
+	if err != nil {
+		return err
+	}
+	fmt.Println(json)
+	return nil
 }
 
 func main() {
@@ -214,7 +218,7 @@ func run() int {
 		commands.SetCommandContext(getLastPrices)
 		defer commands.SetCommandContext(nil)
 
-		err = runOneCommand(databackend, cmdLine)
+		err = runOneCommand(cmdLine)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

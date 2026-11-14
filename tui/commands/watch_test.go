@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,6 +11,7 @@ import (
 
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type watchTestBackend struct {
@@ -261,24 +260,5 @@ func executeWatchWithPriceForTest(t *testing.T, backend databackend.DataBackend,
 		cmdCtx = oldCommandContext
 	}()
 
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stdout pipe: %v", err)
-	}
-	oldStdout := os.Stdout
-	os.Stdout = writer
-	execErr := (&WatchCmd{}).Execute(context.Background(), backend, args, jsonOutput)
-	if err := writer.Close(); err != nil {
-		t.Fatalf("close stdout pipe writer: %v", err)
-	}
-	os.Stdout = oldStdout
-
-	output, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatalf("read command output: %v", err)
-	}
-	if err := reader.Close(); err != nil {
-		t.Fatalf("close stdout pipe reader: %v", err)
-	}
-	return string(output), execErr
+	return (&WatchCmd{}).Execute(context.Background(), &setup.AppCtx{Db: backend}, args, jsonOutput)
 }

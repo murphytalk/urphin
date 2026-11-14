@@ -60,8 +60,10 @@ type Model struct {
 type QuoteBatchMsg []c.QuoteUpdate
 
 type commandResultMsg struct {
-	line string
-	err  error
+	line    string
+	name    string
+	content string
+	err     error
 }
 
 // NewModel loads each unique position once, independently of the visible watchlist.
@@ -281,6 +283,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshCommandSuggestions()
 		}
 		m.syncCommandPromptStyle()
+		if msg.err == nil && msg.name != "" && msg.content != "" {
+			m.showCommandResult(msg.name, msg.content)
+		}
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
@@ -350,17 +355,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.commandErr = nil
-			if name == "HELP" {
-				m.commandInput.Reset()
-				m.refreshCommandSuggestions()
-				m.syncCommandPromptStyle()
-				m.showCommandResult(name, m.helpContent())
-				return m, nil
-			}
+
 			m.syncCommandPromptStyle()
 			m.resize()
 			return m, func() tea.Msg {
-				return commandResultMsg{line: line, err: commands.RunCmd(m.ctx, m.app.Db, name, args, false)}
+				content, err := commands.RunCmd(m.ctx, &m.app, name, args, false)
+				return commandResultMsg{line: line, name: name, content: content, err: err}
 			}
 		case "esc":
 			m.commandInput.Reset()
@@ -473,15 +473,6 @@ func (m *Model) refreshContent() {
 func (m *Model) showCommandResult(header, content string) {
 	m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: sanitizeCommandDiagnostic(header), Content: content})
 	m.resize()
-}
-
-func (m *Model) helpContent() string {
-	names := commands.HelpCommands()
-	lines := make([]string, 0, len(names))
-	for _, name := range names {
-		lines = append(lines, m.app.Styles.Accent.Render(fmt.Sprintf("%-10s", name))+m.app.Styles.TextLight("| "+commands.CmdHelp(name)))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (m *Model) resize() {

@@ -7,6 +7,7 @@ import (
 
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type TxCmd struct{}
@@ -29,28 +30,26 @@ func (t *TxCmd) run(ctx context.Context, db databackend.DataBackend, args txArgs
 	return txs, nil
 }
 
-func (t *TxCmd) Execute(ctx context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error {
+func (t *TxCmd) Execute(ctx context.Context, appCtx *setup.AppCtx, args map[string]string, jsonOutput bool) (string, error) {
 	parsedArgs, err := parseTxArgs(args)
 	if err != nil {
-		return fmt.Errorf("parse TX arguments: %w", err)
+		return "", fmt.Errorf("parse TX arguments: %w", err)
 	}
 
-	txs, err := t.run(ctx, db, parsedArgs)
+	txs, err := t.run(ctx, appCtx.Db, parsedArgs)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	if jsonOutput {
 		encoded, err := json.Marshal(txs)
 		if err != nil {
-			return fmt.Errorf("marshal transactions as JSON: %w", err)
+			return "", fmt.Errorf("marshal transactions as JSON: %w", err)
 		}
-		if _, err := fmt.Println(string(encoded)); err != nil {
-			return fmt.Errorf("print transactions: %w", err)
-		}
+		return string(encoded), nil
 	}
 
-	return nil
+	return "", nil
 }
 
 func parseTxArgs(args map[string]string) (txArgs, error) {

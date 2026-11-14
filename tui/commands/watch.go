@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	databackend "github.com/murphytalk/urphin/data/backend"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type WatchCmd struct{}
@@ -30,18 +31,18 @@ func (w *WatchCmd) Name() string {
 	return "WATCH"
 }
 
-func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error {
+func (w *WatchCmd) Execute(ctx context.Context, appCtx *setup.AppCtx, args map[string]string, jsonOutput bool) (string, error) {
 	portfolio, err := parseWatchArgs(args)
 	if err != nil {
-		return fmt.Errorf("parse WATCH arguments: %w", err)
+		return "", fmt.Errorf("parse WATCH arguments: %w", err)
 	}
 	if !jsonOutput {
-		return nil
+		return "", nil
 	}
 
-	watchlists, err := db.GetWatchList(ctx, portfolio)
+	watchlists, err := appCtx.Db.GetWatchList(ctx, portfolio)
 	if err != nil {
-		return fmt.Errorf("get watchlists: %w", err)
+		return "", fmt.Errorf("get watchlists: %w", err)
 	}
 
 	// GetWatchList orders watchlists and tickers in data backend; preserve that order here.
@@ -49,9 +50,9 @@ func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args
 	tickerSet := make(map[string]struct{})
 	for _, watchlist := range watchlists {
 		for _, ticker := range watchlist.Tickers {
-			position, err := db.CalculatePositionAndVWAP(ctx, nil, ticker)
+			position, err := appCtx.Db.CalculatePositionAndVWAP(ctx, nil, ticker)
 			if err != nil {
-				return fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
+				return "", fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
 			}
 			positions = append(positions, watchPositionInput{watchlist: watchlist.Name, position: position})
 			tickerSet[ticker] = struct{}{}
@@ -67,15 +68,15 @@ func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args
 	prices := make(map[string]float64, len(tickers))
 	if len(tickers) > 0 {
 		if cmdCtx.GetLastPrice == nil {
-			return fmt.Errorf("get last prices for tickers %v: command context is not configured", tickers)
+			return "", fmt.Errorf("get last prices for tickers %v: command context is not configured", tickers)
 		}
 		prices, err = cmdCtx.GetLastPrice(ctx, tickers)
 		if err != nil {
-			return fmt.Errorf("get last prices for tickers %v: %w", tickers, err)
+			return "", fmt.Errorf("get last prices for tickers %v: %w", tickers, err)
 		}
 		for _, ticker := range tickers {
 			if _, exists := prices[ticker]; !exists {
-				return fmt.Errorf("get last price for ticker %q: no price returned", ticker)
+				return "", fmt.Errorf("get last price for ticker %q: no price returned", ticker)
 			}
 		}
 	}
@@ -99,12 +100,9 @@ func (w *WatchCmd) Execute(ctx context.Context, db databackend.DataBackend, args
 
 	encoded, err := json.Marshal(positionsByWatchlist)
 	if err != nil {
-		return fmt.Errorf("marshal WATCH positions as JSON: %w", err)
+		return "", fmt.Errorf("marshal WATCH positions as JSON: %w", err)
 	}
-	if _, err := fmt.Println(string(encoded)); err != nil {
-		return fmt.Errorf("print WATCH positions: %w", err)
-	}
-	return nil
+	return string(encoded), nil
 }
 
 func parseWatchArgs(args map[string]string) (*string, error) {

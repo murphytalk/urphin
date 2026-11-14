@@ -3,12 +3,12 @@ package registry
 import (
 	"context"
 
-	databackend "github.com/murphytalk/urphin/data/backend"
+	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type Command interface {
 	Name() string
-	Execute(ctx context.Context, db databackend.DataBackend, args map[string]string, jsonOutput bool) error
+	Execute(ctx context.Context, appCtx *setup.AppCtx, args map[string]string, jsonOutput bool) (string, error)
 }
 
 type Registry struct {

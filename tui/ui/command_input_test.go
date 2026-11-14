@@ -256,9 +256,11 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	watchlist := m.viewport.GetContent()
 	m.commandInput.SetValue("HELP")
-	if cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter)); cmd != nil {
-		t.Fatal("HELP dispatched a backend command")
+	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("HELP did not dispatch a command")
 	}
+	uiTestUpdate(t, m, cmd())
 	if !m.result.Active() || m.commandInput.Value() != "" || m.hasCommandDiagnostic() || !strings.Contains(ansi.Strip(m.View().Content), "Home Watchlist") {
 		t.Fatal("HELP did not open the help screen")
 	}
