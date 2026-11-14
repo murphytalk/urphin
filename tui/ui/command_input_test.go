@@ -208,10 +208,10 @@ func TestCommandFooterDropsWholeHelpItemsToFitInput(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	footer := ansi.Strip(m.footer())
-	if !strings.HasPrefix(footer, "F10/^C/^D Exit · Tab Nxt · ^Tab/⇧Tab Prv · F2 Sort") {
+	if !strings.HasPrefix(footer, "F10/^C/^D Exit · Tab Nxt · ^Tab/⇧Tab Prv") {
 		t.Fatalf("footer did not preserve whole ordered help items: %q", footer)
 	}
-	if strings.Contains(footer, "F3") || strings.Contains(footer, "^Home") {
+	if strings.Contains(footer, "F2") || strings.Contains(footer, "F3") || strings.Contains(footer, "^Home") {
 		t.Fatalf("footer clipped a partial help item: %q", footer)
 	}
 }
