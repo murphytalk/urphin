@@ -39,6 +39,7 @@ type Model struct {
 	fxPairs        []string
 	fxPairSet      map[string]struct{}
 	positions      map[string]databackend.Position
+	positionErrors map[string]bool
 	quotes         map[string]c.AssetQuote
 	mismatches     map[string]bool
 	selected       int
@@ -128,7 +129,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	}
 	m := &Model{
 		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
-		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
+		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), selected: selected,
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
@@ -141,7 +142,9 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
 		if err != nil {
 			if errors.Is(err, databackend.ErrUnmatchedPositionLot) {
-				slog.Error("Skipping invalid position", "symbol", symbol, "error", err)
+				slog.Error("Using zero position after calculation error", "symbol", symbol, "error", err)
+				m.positions[symbol] = databackend.Position{Sym: symbol}
+				m.positionErrors[symbol] = true
 				continue
 			}
 			return nil, fmt.Errorf("load position %q: %w", symbol, err)

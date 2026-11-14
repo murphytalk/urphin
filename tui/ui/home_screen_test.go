@@ -145,7 +145,7 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	}
 }
 
-func TestNewModelSkipsUnmatchedPositionLot(t *testing.T) {
+func TestNewModelUsesZeroForUnmatchedPositionLot(t *testing.T) {
 	backend := &uiTestBackend{
 		lists:       []databackend.Watchlist{{Name: "Main", Tickers: []string{"A", "B"}}},
 		positions:   map[string]databackend.Position{"B": {Sym: "B", Shares: 2}},
@@ -155,8 +155,15 @@ func TestNewModelSkipsUnmatchedPositionLot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := m.positions["A"]; exists || m.positions["B"].Shares != 2 || !slices.Equal(backend.positionCalls, []string{"A", "B"}) {
+	if position, exists := m.positions["A"]; !exists || position.Shares != 0 || !m.positionErrors["A"] || m.positions["B"].Shares != 2 || !slices.Equal(backend.positionCalls, []string{"A", "B"}) {
 		t.Fatalf("positions=%v, calls=%v", m.positions, backend.positionCalls)
+	}
+	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 10, 9), uiTestQuote("B", "USD", 20, 19)})
+	if asset := m.assets([]string{"A"})[0]; asset.Position.Quantity != 0 || asset.Position.Value != 0 || !asset.PositionError || asset.QuoteUnavailable {
+		t.Fatalf("failed position asset = %#v", asset)
+	}
+	if s := uiTestSummary(t, m, "USD"); s.Value != 40 || s.ValueUnavailable {
+		t.Fatalf("summary includes failed position or hides known value: %#v", s)
 	}
 }
 

@@ -318,4 +318,5 @@ type Asset struct {
 	// Portfolio/quote owners mark missing data; display consumers keep known costs.
 	QuoteUnavailable    bool
 	PositionUnavailable bool
+	PositionError       bool
 }

@@ -54,6 +54,20 @@ func rowAsset() *c.Asset {
 	}
 }
 
+func TestRowHighlightsFailedPositionAndShowsZero(t *testing.T) {
+	asset := &c.Asset{Symbol: "IJR", PositionError: true, PositionUnavailable: true, QuoteUnavailable: true}
+	styles := rowStyles(true)
+	if name := textName(asset, styles); !strings.Contains(ansi.Strip(name), "! IJR") {
+		t.Fatalf("failed ticker not highlighted: %q", name)
+	}
+	if got := ansi.Strip(textPosition(asset, styles)); got != "0.00\n" {
+		t.Fatalf("failed position value = %q", got)
+	}
+	if got := ansi.Strip(textPositionExtendedLabels(asset, styles) + "\n" + textPositionExtended(asset, styles)); !strings.Contains(got, "Qty:\n\n\n0.00") {
+		t.Fatalf("failed position quantity = %q", got)
+	}
+}
+
 func TestRowPositionExtendedLabelsAndDualCost(t *testing.T) {
 	asset := rowAsset()
 	labels := textPositionExtendedLabels(asset, rowStyles(false))

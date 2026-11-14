@@ -80,7 +80,8 @@ func (m *Model) assets(symbols []string) []c.Asset {
 			QuotePrice: quote.QuotePrice, QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
 			QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
 			QuoteUnavailable: !usable, PositionUnavailable: !usable || m.mismatches[symbol] || !finite(position.VWAP) || !finite(position.AvgCost),
-			Position: c.Position{Quantity: position.Shares, UnitCost: position.VWAP, AvgCost: position.AvgCost, Cost: position.Shares * position.VWAP},
+			PositionError: m.positionErrors[symbol],
+			Position:      c.Position{Quantity: position.Shares, UnitCost: position.VWAP, AvgCost: position.AvgCost, Cost: position.Shares * position.VWAP},
 		}
 		asset.Meta.OrderIndex = i
 		if usable {

@@ -313,8 +313,11 @@ func (m *Model) buildCells() []grid.Cell {
 }
 
 func textName(asset *c.Asset, styles theme.Styles) string {
-
-	return styles.TextBold(asset.Symbol) +
+	symbol := styles.TextBold(asset.Symbol)
+	if asset.PositionError {
+		symbol = styles.Error.Render("! " + asset.Symbol)
+	}
+	return symbol +
 		"\n" +
 		styles.TextLabel(ansi.Truncate(asset.Name, WidthName, ""))
 }
@@ -332,6 +335,9 @@ func textQuote(asset *c.Asset, styles theme.Styles, priceStyle lipgloss.Style, p
 }
 
 func textPosition(asset *c.Asset, styles theme.Styles) string {
+	if asset.PositionError {
+		return styles.Text("0.00") + "\n"
+	}
 	if asset.PositionUnavailable || (asset.QuoteUnavailable && asset.Position != (c.Position{})) {
 		return styles.TextLabel("N/A") + "\n" + styles.TextLabel("N/A")
 	}
@@ -411,6 +417,9 @@ func textQuoteExtendedLabels(asset *c.Asset, styles theme.Styles) string {
 }
 
 func textPositionExtended(asset *c.Asset, styles theme.Styles) string {
+	if asset.PositionError {
+		return "\n\n" + styles.Text("0.00")
+	}
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
@@ -440,6 +449,9 @@ func textPositionExtended(asset *c.Asset, styles theme.Styles) string {
 }
 
 func textPositionExtendedLabels(asset *c.Asset, styles theme.Styles) string {
+	if asset.PositionError {
+		return "\n\n" + styles.TextLabel("Qty:")
+	}
 
 	if asset.Position.Quantity == 0.0 {
 		return ""
