@@ -1,6 +1,7 @@
 package databackend
 
 import (
+	"errors"
 	"math"
 	"testing"
 )
@@ -63,8 +64,8 @@ func TestCalculatePositionAndVWAPRejectsOversell(t *testing.T) {
 		{Shares: 1, Price: 10, Side: SideBuy},
 		{Shares: 1.0002, Price: 12, Side: SideSell},
 	}
-	if _, err := CalculatePositionAndVWAP("AAPL", "USD", transactions); err == nil {
-		t.Fatal("CalculatePositionAndVWAP() error = nil, want oversell error")
+	if _, err := CalculatePositionAndVWAP("AAPL", "USD", transactions); !errors.Is(err, ErrUnmatchedPositionLot) {
+		t.Fatalf("CalculatePositionAndVWAP() error = %v, want unmatched lot", err)
 	}
 }
 

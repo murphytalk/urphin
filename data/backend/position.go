@@ -1,9 +1,12 @@
 package databackend
 
 import (
+	"errors"
 	"fmt"
 	"math"
 )
+
+var ErrUnmatchedPositionLot = errors.New("cannot process transaction")
 
 func CalculatePositionAndVWAP(symbol, ccy string, transactions []PositionTx) (Position, error) {
 	position := Position{Sym: symbol, Ccy: ccy}
@@ -53,7 +56,7 @@ func CalculatePositionAndVWAP(symbol, ccy string, transactions []PositionTx) (Po
 				if math.Abs(sharesToMatch) <= 1e-4 {
 					break
 				}
-				return Position{}, fmt.Errorf("cannot process transaction: %.8g shares remain without an open lot", sharesToMatch)
+				return Position{}, fmt.Errorf("%w: %.8g shares remain without an open lot", ErrUnmatchedPositionLot, sharesToMatch)
 			}
 
 			lotShares := openLots[0].Shares

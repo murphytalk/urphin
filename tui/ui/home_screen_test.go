@@ -145,6 +145,21 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	}
 }
 
+func TestNewModelSkipsUnmatchedPositionLot(t *testing.T) {
+	backend := &uiTestBackend{
+		lists:       []databackend.Watchlist{{Name: "Main", Tickers: []string{"A", "B"}}},
+		positions:   map[string]databackend.Position{"B": {Sym: "B", Shares: 2}},
+		positionErr: map[string]error{"A": fmt.Errorf("calculate position: %w: 0.99999999 shares remain without an open lot", databackend.ErrUnmatchedPositionLot)},
+	}
+	m, err := NewModel(context.Background(), uiTestApp(backend))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := m.positions["A"]; exists || m.positions["B"].Shares != 2 || !slices.Equal(backend.positionCalls, []string{"A", "B"}) {
+		t.Fatalf("positions=%v, calls=%v", m.positions, backend.positionCalls)
+	}
+}
+
 func TestNewModelValidationAndWrappedBackendErrors(t *testing.T) {
 	sentinel := errors.New("backend unavailable")
 	for _, tc := range []struct {

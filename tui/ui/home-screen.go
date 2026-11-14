@@ -140,6 +140,10 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	for _, symbol := range m.symbols {
 		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
 		if err != nil {
+			if errors.Is(err, databackend.ErrUnmatchedPositionLot) {
+				slog.Error("Skipping invalid position", "symbol", symbol, "error", err)
+				continue
+			}
 			return nil, fmt.Errorf("load position %q: %w", symbol, err)
 		}
 		m.positions[symbol] = position.Pos
