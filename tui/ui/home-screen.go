@@ -288,7 +288,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCommandPromptStyle()
 		if msg.err == nil && msg.name != "" && msg.content != "" {
 			m.showCommandResult(msg.name, msg.content)
-		} else {
+		} else if m.result.Active() {
 			m.result.Clear()
 			m.resize()
 		}
