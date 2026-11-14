@@ -578,9 +578,9 @@ func (m *Model) setCommandCursor(view *tea.View) {
 }
 
 func (m *Model) footer() string {
-	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "^Home/End Top/Bot"}
+	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot"}
 	if m.result.Active() {
-		parts = []string{"F10/^C Exit", "Home Watchlist", "↑↓/Pg Scr", "^Home/End Top/Bot"}
+		parts = []string{"F10/^C Exit", "Home Watchlist", "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot"}
 	}
 	budget := m.width
 	if m.commandVisible() {
