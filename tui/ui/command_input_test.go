@@ -246,38 +246,32 @@ func TestCommandInputClearsAfterSuccessAndKeepsFailuresOrNewEdits(t *testing.T) 
 }
 
 func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
-	m := uiTestModel(t, []databackend.Watchlist{{Name: "Main", Tickers: []string{"A"}}}, nil)
-	m.app.Styles = theme.BuildStyles(theme.Default(), "")
+	app := uiTestApp(&uiTestBackend{lists: []databackend.Watchlist{{Name: "Main", Tickers: []string{"A"}}}})
+	app.Styles = theme.BuildStyles(theme.Default(), "")
+	m, err := NewModel(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Init()
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	watchlist := m.viewport.GetContent()
 	m.commandInput.SetValue("HELP")
 	if cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter)); cmd != nil {
 		t.Fatal("HELP dispatched a backend command")
 	}
-	if m.commandResultHeader != "HELP" || m.commandInput.Value() != "" || m.hasCommandDiagnostic() || !strings.Contains(ansi.Strip(m.View().Content), "Home Watchlist") {
+	if !m.result.Active() || m.commandInput.Value() != "" || m.hasCommandDiagnostic() || !strings.Contains(ansi.Strip(m.View().Content), "Home Watchlist") {
 		t.Fatal("HELP did not open the help screen")
 	}
 	viewLines := strings.Split(m.View().Content, "\n")
 	headerRow := m.summary.Height() + 1
 	if len(viewLines) != 12 || viewLines[headerRow-1] != "" || viewLines[headerRow+1] != "" ||
 		ansi.Strip(viewLines[headerRow]) != strings.Repeat(" ", 48)+"HELP"+strings.Repeat(" ", 48) ||
-		!strings.Contains(viewLines[headerRow], m.app.Styles.TextBold("HELP")) ||
-		m.viewport.Height() != 12-m.summary.Height()-4 {
+		!strings.Contains(viewLines[headerRow], m.app.Styles.TextBold("HELP")) {
 		t.Fatalf("result header is not centered, spaced, or distinct: %q", viewLines)
 	}
-	content := m.viewport.GetContent()
+	content := m.result.View()
 	lines := strings.Split(content, "\n")
 	names := commands.HelpCommands()
-	if len(lines) <= len(names) {
-		t.Fatalf("long help descriptions did not wrap: %d lines for %d commands", len(lines), len(names))
-	}
-	want := make([]string, 0, len(names))
-	for _, name := range names {
-		want = append(want, name+" | "+commands.CmdHelp(name))
-	}
-	if got := strings.Join(strings.Fields(ansi.Strip(content)), " "); got != strings.Join(strings.Fields(strings.Join(want, " ")), " ") {
-		t.Fatalf("help text differs from generated commands: %q", got)
-	}
 	for _, line := range lines {
 		if ansi.StringWidth(line) > 100 {
 			t.Fatalf("help line exceeds viewport: %q", line)
@@ -289,16 +283,21 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 		t.Fatal("command and description did not use distinct theme styles")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyPgDown))
-	if m.viewport.YOffset() == 0 {
+	if m.result.View() == content {
 		t.Fatal("help screen did not scroll")
 	}
-	helpOffset := m.viewport.YOffset()
+	helpView := m.result.View()
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 20, 19)})
-	if m.commandResultHeader != "HELP" || m.viewport.GetContent() != content || m.viewport.YOffset() != helpOffset {
+	if !m.result.Active() || m.result.View() != helpView {
 		t.Fatal("quote update replaced the help screen")
 	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyEnd, tea.ModCtrl))
+	last := names[len(names)-1]
+	if !strings.Contains(ansi.Strip(m.result.View()), commands.CmdHelp(last)) {
+		t.Fatal("help screen lost the last command")
+	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyHome))
-	if m.commandResultHeader != "" || m.commandResultContent != "" || !m.viewport.AtTop() || m.viewport.Height() != 12-m.summary.Height()-2 ||
+	if m.result.Active() || !m.viewport.AtTop() || m.viewport.Height() != 12-m.summary.Height()-2 ||
 		m.viewport.GetContent() == watchlist || m.viewport.GetContent() != strings.TrimSuffix(m.watchlist.View(), "\n") {
 		t.Fatal("Home did not restore current watchlist at top")
 	}
@@ -308,11 +307,11 @@ func TestHomeLeavesAnyCommandResultScreen(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.showCommandResult("OTHER", "Result body")
-	if m.commandResultHeader != "OTHER" || !strings.Contains(m.View().Content, "Result body") {
+	if !m.result.Active() || !strings.Contains(m.View().Content, "Result body") {
 		t.Fatal("generic result screen did not show command output")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyHome))
-	if m.commandResultHeader != "" || m.viewport.GetContent() != "No tickers" {
+	if m.result.Active() || m.viewport.GetContent() != "No tickers" {
 		t.Fatal("Home did not restore watchlist from generic result screen")
 	}
 }

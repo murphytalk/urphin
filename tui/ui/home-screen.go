@@ -24,36 +24,36 @@ import (
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/setup"
+	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
 // Model owns portfolio state; only the UI event loop mutates it.
 type Model struct {
-	ctx                  context.Context
-	app                  setup.AppCtx
-	lists                []databackend.Watchlist
-	symbols              []string
-	fxPairs              []string
-	fxPairSet            map[string]struct{}
-	positions            map[string]databackend.Position
-	quotes               map[string]c.AssetQuote
-	mismatches           map[string]bool
-	selected             int
-	follow               bool
-	currentSort          string
-	width, height        int
-	ready                bool
-	viewport             viewport.Model
-	watchlist            *watchlist.Model
-	summary              *summary.Model
-	session              *quoteSession
-	commandInput         textinput.Model
-	commandErr           error
-	commandHint          string
-	commandHistory       textinput.TextHistory
-	commandResultHeader  string
-	commandResultContent string
+	ctx            context.Context
+	app            setup.AppCtx
+	lists          []databackend.Watchlist
+	symbols        []string
+	fxPairs        []string
+	fxPairSet      map[string]struct{}
+	positions      map[string]databackend.Position
+	quotes         map[string]c.AssetQuote
+	mismatches     map[string]bool
+	selected       int
+	follow         bool
+	currentSort    string
+	width, height  int
+	ready          bool
+	viewport       viewport.Model
+	watchlist      *watchlist.Model
+	summary        *summary.Model
+	session        *quoteSession
+	commandInput   textinput.Model
+	commandErr     error
+	commandHint    string
+	commandHistory textinput.TextHistory
+	result         *cmdview.Model
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -118,7 +118,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
 		follow:   true,
-		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs),
+		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
 			ExtraInfoExchange: app.Settings.ExtraInfoExchange, ExtraInfoFundamentals: app.Settings.ExtraInfoFundamentals,
@@ -296,8 +296,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshContent()
 		return m, cmd
 	case tea.KeyPressMsg:
-		if msg.Keystroke() == "home" && m.commandResultHeader != "" {
-			m.commandResultHeader, m.commandResultContent = "", ""
+		if msg.Keystroke() == "home" && m.result.Active() {
+			m.result.Clear()
 			m.viewport.GotoTop()
 			m.resize()
 			return m, nil
@@ -371,6 +371,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resize()
 			return m, nil
 		case "up", "down", "pgup", "pgdown", "ctrl+home", "ctrl+end":
+			if m.result.Active() {
+				var cmd tea.Cmd
+				m.result, cmd = m.result.Update(msg)
+				return m, cmd
+			}
 			if msg.Keystroke() == "ctrl+home" {
 				m.viewport.GotoTop()
 			} else if msg.Keystroke() == "ctrl+end" {
@@ -458,10 +463,6 @@ func (m *Model) setWatchlist() tea.Cmd {
 }
 
 func (m *Model) refreshContent() {
-	if m.commandResultHeader != "" {
-		m.viewport.SetContent(ansi.Wordwrap(m.commandResultContent, max(1, m.width), " "))
-		return
-	}
 	content := m.watchlist.View()
 	if len(m.visibleSymbols()) == 0 {
 		content = "No tickers"
@@ -470,8 +471,7 @@ func (m *Model) refreshContent() {
 }
 
 func (m *Model) showCommandResult(header, content string) {
-	m.commandResultHeader, m.commandResultContent = header, content
-	m.viewport.GotoTop()
+	m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: sanitizeCommandDiagnostic(header), Content: content})
 	m.resize()
 }
 
@@ -494,11 +494,8 @@ func (m *Model) resize() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		m.commandInput.SetWidth(max(1, region-3))
 	}
-	resultRows := 0
-	if m.commandResultHeader != "" {
-		resultRows = 2
-	}
-	m.viewport.SetHeight(max(0, m.height-header-2-resultRows-m.commandDiagnosticRows()))
+	m.viewport.SetHeight(max(0, m.height-header-2-m.commandDiagnosticRows()))
+	m.result, _ = m.result.Update(tea.WindowSizeMsg{Width: m.width, Height: max(0, m.height-header-1-m.commandDiagnosticRows())})
 	m.refreshContent()
 }
 
@@ -528,7 +525,7 @@ func (m *Model) View() tea.View {
 	diagnosticLine := m.commandDiagnosticLine(diagnostic)
 	extra := m.commandDiagnosticRows()
 	resultRows := 0
-	if m.commandResultHeader != "" {
+	if m.result.Active() {
 		resultRows = 2
 	}
 	if m.width < 80 || m.height < header+4+resultRows+extra {
@@ -550,15 +547,13 @@ func (m *Model) View() tea.View {
 	if m.app.Settings.ShowSummary {
 		lines = append(lines, m.summary.View())
 	}
-	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
-	if m.commandResultHeader != "" {
-		heading = m.app.Styles.TextBold(sanitizeCommandDiagnostic(m.commandResultHeader))
-		heading = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, ansi.Truncate(heading, m.width, ""))
-		lines = append(lines, "", heading, "")
+	if m.result.Active() {
+		lines = append(lines, m.result.View())
 	} else {
+		heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
 		lines = append(lines, ansi.Truncate(heading, m.width, ""))
+		lines = append(lines, m.viewport.View())
 	}
-	lines = append(lines, m.viewport.View())
 	if extra > 0 {
 		lines = append(lines, strings.Split(diagnosticLine, "\n")...)
 	}
@@ -584,7 +579,7 @@ func (m *Model) setCommandCursor(view *tea.View) {
 
 func (m *Model) footer() string {
 	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "^Home/End Top/Bot"}
-	if m.commandResultHeader != "" {
+	if m.result.Active() {
 		parts = []string{"F10/^C Exit", "Home Watchlist", "↑↓/Pg Scr", "^Home/End Top/Bot"}
 	}
 	budget := m.width
