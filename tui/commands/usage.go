@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -20,4 +22,9 @@ func Usage(name string) string {
 // CmdHelp returns the short help text for a command.
 func CmdHelp(name string) string {
 	return generatedCommandHelp(strings.ToUpper(strings.TrimSpace(name)))
+}
+
+// HelpCommands returns available command names in display order.
+func HelpCommands() []string {
+	return slices.Sorted(maps.Keys(generatedCommandUsages()))
 }

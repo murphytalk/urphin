@@ -30,34 +30,39 @@ import (
 
 // Model owns portfolio state; only the UI event loop mutates it.
 type Model struct {
-	ctx            context.Context
-	app            setup.AppCtx
-	lists          []databackend.Watchlist
-	symbols        []string
-	fxPairs        []string
-	fxPairSet      map[string]struct{}
-	positions      map[string]databackend.Position
-	quotes         map[string]c.AssetQuote
-	mismatches     map[string]bool
-	selected       int
-	follow         bool
-	currentSort    string
-	width, height  int
-	ready          bool
-	viewport       viewport.Model
-	watchlist      *watchlist.Model
-	summary        *summary.Model
-	session        *quoteSession
-	commandInput   textinput.Model
-	commandErr     error
-	commandHint    string
-	commandHistory textinput.TextHistory
+	ctx                  context.Context
+	app                  setup.AppCtx
+	lists                []databackend.Watchlist
+	symbols              []string
+	fxPairs              []string
+	fxPairSet            map[string]struct{}
+	positions            map[string]databackend.Position
+	quotes               map[string]c.AssetQuote
+	mismatches           map[string]bool
+	selected             int
+	follow               bool
+	currentSort          string
+	width, height        int
+	ready                bool
+	viewport             viewport.Model
+	watchlist            *watchlist.Model
+	summary              *summary.Model
+	session              *quoteSession
+	commandInput         textinput.Model
+	commandErr           error
+	commandHint          string
+	commandHistory       textinput.TextHistory
+	commandResultHeader  string
+	commandResultContent string
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
 type QuoteBatchMsg []c.QuoteUpdate
 
-type commandResultMsg struct{ err error }
+type commandResultMsg struct {
+	line string
+	err  error
+}
 
 // NewModel loads each unique position once, independently of the visible watchlist.
 func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
@@ -271,6 +276,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case commandResultMsg:
 		oldDiagnostic := m.commandDiagnosticRows()
 		m.commandErr = msg.err
+		if msg.err == nil && m.commandInput.Value() == msg.line {
+			m.commandInput.Reset()
+			m.refreshCommandSuggestions()
+		}
 		m.syncCommandPromptStyle()
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
@@ -287,6 +296,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshContent()
 		return m, cmd
 	case tea.KeyPressMsg:
+		if msg.Keystroke() == "home" && m.commandResultHeader != "" {
+			m.commandResultHeader, m.commandResultContent = "", ""
+			m.viewport.GotoTop()
+			m.resize()
+			return m, nil
+		}
 		switch msg.Keystroke() {
 		case "f10", "ctrl+c":
 			slog.Debug("UI quit key received", "key", msg.Keystroke())
@@ -335,10 +350,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.commandErr = nil
+			if name == "HELP" {
+				m.commandInput.Reset()
+				m.refreshCommandSuggestions()
+				m.syncCommandPromptStyle()
+				m.showCommandResult(name, m.helpContent())
+				return m, nil
+			}
 			m.syncCommandPromptStyle()
 			m.resize()
 			return m, func() tea.Msg {
-				return commandResultMsg{err: commands.RunCmd(m.ctx, m.app.Db, name, args, false)}
+				return commandResultMsg{line: line, err: commands.RunCmd(m.ctx, m.app.Db, name, args, false)}
 			}
 		case "esc":
 			m.commandInput.Reset()
@@ -436,11 +458,30 @@ func (m *Model) setWatchlist() tea.Cmd {
 }
 
 func (m *Model) refreshContent() {
+	if m.commandResultHeader != "" {
+		m.viewport.SetContent(ansi.Wordwrap(m.commandResultContent, max(1, m.width), " "))
+		return
+	}
 	content := m.watchlist.View()
 	if len(m.visibleSymbols()) == 0 {
 		content = "No tickers"
 	}
 	m.viewport.SetContent(strings.TrimSuffix(content, "\n"))
+}
+
+func (m *Model) showCommandResult(header, content string) {
+	m.commandResultHeader, m.commandResultContent = header, content
+	m.viewport.GotoTop()
+	m.resize()
+}
+
+func (m *Model) helpContent() string {
+	names := commands.HelpCommands()
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		lines = append(lines, m.app.Styles.Accent.Render(fmt.Sprintf("%-10s", name))+m.app.Styles.TextLight("| "+commands.CmdHelp(name)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m *Model) resize() {
@@ -453,7 +494,11 @@ func (m *Model) resize() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		m.commandInput.SetWidth(max(1, region-3))
 	}
-	m.viewport.SetHeight(max(0, m.height-header-2-m.commandDiagnosticRows()))
+	resultRows := 0
+	if m.commandResultHeader != "" {
+		resultRows = 2
+	}
+	m.viewport.SetHeight(max(0, m.height-header-2-resultRows-m.commandDiagnosticRows()))
 	m.refreshContent()
 }
 
@@ -482,10 +527,14 @@ func (m *Model) View() tea.View {
 	diagnostic := m.commandDiagnostic()
 	diagnosticLine := m.commandDiagnosticLine(diagnostic)
 	extra := m.commandDiagnosticRows()
-	if m.width < 80 || m.height < header+4+extra {
+	resultRows := 0
+	if m.commandResultHeader != "" {
+		resultRows = 2
+	}
+	if m.width < 80 || m.height < header+4+resultRows+extra {
 		lines := make([]string, m.height)
 		if m.height > 1 {
-			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4+extra)), m.width, "")
+			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4+resultRows+extra)), m.width, "")
 		}
 		if extra > 0 && m.height > 1 {
 			diagnosticLines := strings.Split(diagnosticLine, "\n")
@@ -502,7 +551,14 @@ func (m *Model) View() tea.View {
 		lines = append(lines, m.summary.View())
 	}
 	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
-	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View())
+	if m.commandResultHeader != "" {
+		heading = m.app.Styles.TextBold(sanitizeCommandDiagnostic(m.commandResultHeader))
+		heading = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, ansi.Truncate(heading, m.width, ""))
+		lines = append(lines, "", heading, "")
+	} else {
+		lines = append(lines, ansi.Truncate(heading, m.width, ""))
+	}
+	lines = append(lines, m.viewport.View())
 	if extra > 0 {
 		lines = append(lines, strings.Split(diagnosticLine, "\n")...)
 	}
@@ -528,6 +584,9 @@ func (m *Model) setCommandCursor(view *tea.View) {
 
 func (m *Model) footer() string {
 	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "^Home/End Top/Bot"}
+	if m.commandResultHeader != "" {
+		parts = []string{"F10/^C Exit", "Home Watchlist", "↑↓/Pg Scr", "^Home/End Top/Bot"}
+	}
 	budget := m.width
 	if m.commandVisible() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
