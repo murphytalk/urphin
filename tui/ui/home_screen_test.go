@@ -321,7 +321,7 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 	for _, start := range []string{"ticker", "alpha", "value", "change", "user", "unknown"} {
 		t.Run(start, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: []string{"Z", "A"}}}, nil)
-			m.currentSort = start
+			m.app.Settings.Sort = start
 			feed := newSessionTestFeed()
 			m.session = newQuoteSession(context.Background(), feed, m.symbols)
 			t.Cleanup(func() { _ = m.session.Close() })
@@ -333,10 +333,10 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 			for range 5 {
 				index = (index + 1) % len(modes)
 				uiTestUpdate(t, m, uiTestKey(tea.KeyF2))
-				if m.currentSort != modes[index] {
-					t.Fatalf("sort %q, want %q", m.currentSort, modes[index])
+				if m.app.Settings.Sort != modes[index] {
+					t.Fatalf("sort %q, want %q", m.app.Settings.Sort, modes[index])
 				}
-				if m.currentSort == "ticker" {
+				if m.app.Settings.Sort == "ticker" {
 					view := m.watchlist.View()
 					if strings.Index(view, "A") > strings.Index(view, "Z") {
 						t.Fatal("ticker must sort alphabetically, not by change")
@@ -350,7 +350,7 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 	}
 }
 
-func TestModelInitialSortAliasAndSettingsAreForwardedWithoutPersistence(t *testing.T) {
+func TestModelInitialSortAliasAndSettingsAreForwarded(t *testing.T) {
 	for _, sort := range []string{"ticker", "alpha"} {
 		for _, enabled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/features=%t", sort, enabled), func(t *testing.T) {
@@ -369,13 +369,13 @@ func TestModelInitialSortAliasAndSettingsAreForwardedWithoutPersistence(t *testi
 					}
 				}
 				view := m.watchlist.View()
-				if m.currentSort != sort || strings.Index(view, "A") > strings.Index(view, "Z") {
+				if m.app.Settings.Sort != sort || strings.Index(view, "A") > strings.Index(view, "Z") {
 					t.Fatal("initial ticker/alpha alias did not order the renderer alphabetically")
 				}
 				uiTestUpdate(t, m, uiTestKey(tea.KeyF2))
 				uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
-				if app.Settings.Sort != sort || !app.Settings.ShowSummary {
-					t.Fatal("UI-only sort/scope changes must not mutate persisted settings")
+				if app.Settings.Sort == sort || !app.Settings.ShowSummary {
+					t.Fatal("sort change must update app settings")
 				}
 			})
 		}
@@ -391,7 +391,7 @@ func TestModelAllLetterKeysAreReservedIncludingViewportShortcuts(t *testing.T) {
 	for _, letter := range "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		t.Run(string(letter), func(t *testing.T) {
 			before := m.View().Content
-			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.follow != follow || m.currentSort != "user" || m.View().Content != before {
+			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.follow != follow || m.app.Settings.Sort != "user" || m.View().Content != before {
 				t.Fatalf("letter %q changed UI state, scrolled, or quit", letter)
 			}
 		})

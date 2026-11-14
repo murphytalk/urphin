@@ -43,7 +43,6 @@ type Model struct {
 	mismatches     map[string]bool
 	selected       int
 	follow         bool
-	currentSort    string
 	width, height  int
 	ready          bool
 	viewport       viewport.Model
@@ -120,9 +119,9 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	m := &Model{
 		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
-		mismatches: make(map[string]bool), currentSort: app.Settings.Sort,
-		follow:   true,
-		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
+		mismatches: make(map[string]bool),
+		follow:     true,
+		viewport:   viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
 			ExtraInfoExchange: app.Settings.ExtraInfoExchange, ExtraInfoFundamentals: app.Settings.ExtraInfoFundamentals,
@@ -345,13 +344,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resize()
 		case "f2":
 			modes := []string{"ticker", "value", "change", "user"}
-			index := slices.Index(modes, m.currentSort)
-			if m.currentSort == "alpha" {
+			index := slices.Index(modes, m.app.Settings.Sort)
+			if m.app.Settings.Sort == "alpha" {
 				index = 0
 			}
-			m.currentSort = modes[(index+1)%len(modes)]
+			m.app.Settings.Sort = modes[(index+1)%len(modes)]
 			var cmd tea.Cmd
-			m.watchlist, cmd = m.watchlist.Update(watchlist.ChangeSortMsg(m.currentSort))
+			m.watchlist, cmd = m.watchlist.Update(watchlist.ChangeSortMsg(m.app.Settings.Sort))
 			m.refreshContent()
 			return m, cmd
 		case "enter":
@@ -557,7 +556,7 @@ func (m *Model) View() tea.View {
 	if m.result.Active() {
 		lines = append(lines, m.result.View())
 	} else {
-		heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
+		heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.app.Settings.Sort)
 		lines = append(lines, ansi.Truncate(heading, m.width, ""))
 		lines = append(lines, m.viewport.View())
 	}

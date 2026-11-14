@@ -130,7 +130,7 @@ func init() {
 
 }
 
-func run() int {
+func run() (code int) {
 	commandProvided := false
 	utilityProvided := false
 	importProvided := false
@@ -249,6 +249,13 @@ func run() int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	defer func() {
+		if err := setup.SaveSettings(settingsPath, ctx.Settings); err != nil {
+			slog.Error("Failed to save UI settings", "error", err)
+			fmt.Fprintln(os.Stderr, err)
+			code = 1
+		}
+	}()
 	selectedTheme := resolveThemeSelector(ctx.Cfg.App.Theme, themeOverride, themeOverrideProvided)
 	ctx.Styles = theme.BuildStyles(theme.Load(selectedTheme, cfgPath), ctx.Cfg.App.PriceColors)
 

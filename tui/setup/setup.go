@@ -54,15 +54,19 @@ func LoadSettings(path string) (*c.Settings, error) {
 func saveConfig[T any](path string, cfg *T) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("marshal default config for %q: %w", path, err)
+		return fmt.Errorf("marshal config for %q: %w", path, err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config directory for %q: %w", path, err)
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("write default config %q: %w", path, err)
+		return fmt.Errorf("write config %q: %w", path, err)
 	}
 	return nil
+}
+
+func SaveSettings(path string, settings *c.Settings) error {
+	return saveConfig(path, settings)
 }
 
 func LoadOrCreate[T any](cfg *T, path string, load func(string) (*T, error), defaultValue *T) error {

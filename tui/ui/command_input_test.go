@@ -227,7 +227,7 @@ func TestCommandInputKeepsGlobalShortcutsAndEnterPreservesInput(t *testing.T) {
 		t.Fatal("Enter changed command buffer")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF2))
-	if m.currentSort == "user" {
+	if m.app.Settings.Sort == "user" {
 		t.Fatal("F2 did not sort while input was populated")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))

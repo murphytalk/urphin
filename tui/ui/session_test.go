@@ -727,7 +727,7 @@ func (m *sessionProgramModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for symbol, quote := range m.quotes {
 			quotes[symbol] = quote
 		}
-		msg.reply <- sessionProgramState{selected: m.selected, follow: m.follow, sort: m.currentSort, scope: scope, quotes: quotes, rows: m.watchlist.View()}
+		msg.reply <- sessionProgramState{selected: m.selected, follow: m.follow, sort: m.app.Settings.Sort, scope: scope, quotes: quotes, rows: m.watchlist.View()}
 	}
 	return m, m.track(cmd)
 }
