@@ -35,3 +35,15 @@ func TestExtensionUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestExtensionCmdHelp(t *testing.T) {
+	if got := CmdHelp("AOTX"); got != "Add an option transaction" {
+		t.Fatalf("extension command help = %q", got)
+	}
+	if got := CmdHelp("ELW"); got != "List options expired last week. Optional: CLOSED to include manually closed trades." {
+		t.Fatalf("ELW help was not trimmed: %q", got)
+	}
+	if got := CmdHelp("TX"); got != "Show stock transactions" {
+		t.Fatalf("public command help in extension build = %q", got)
+	}
+}

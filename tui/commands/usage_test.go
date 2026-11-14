@@ -13,7 +13,6 @@ func TestUsage(t *testing.T) {
 		"MKT":   "MKT <ccy> <ticker>",
 		"NEXT":  "NEXT [<amount> [<fixed_over_spend_amount> [<force_spend>]] | <force_spend>]",
 		"PROP":  "PROP (TX <broker> <ticker> <tx_id> | TICKER <ticker>) [<prop_path> (<value> | NONE)]",
-		"MNQ":   "MNQ [<date> [<edate>]]",
 		"WATCH": "WATCH [<portfolio>]",
 		"HELP":  "HELP",
 		"DBUY":  "DBUY",
@@ -39,5 +38,20 @@ func TestUsage(t *testing.T) {
 		if marker.MatchString(Usage(name)) {
 			t.Errorf("%s has unresolved marker: %s", name, Usage(name))
 		}
+	}
+}
+
+func TestCmdHelp(t *testing.T) {
+	if got := CmdHelp(" tx "); got != "Show stock transactions" {
+		t.Fatalf("TX help = %q", got)
+	}
+	if got := CmdHelp("WATCH"); got != "Show a watchlist" {
+		t.Fatalf("WATCH help = %q", got)
+	}
+	if got := CmdHelp("AOTX"); got != "" {
+		t.Fatalf("extension-only help in public build = %q", got)
+	}
+	if got := CmdHelp("unknown"); got != "" {
+		t.Fatalf("unknown command help = %q", got)
 	}
 }

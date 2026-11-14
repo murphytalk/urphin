@@ -16,3 +16,8 @@ func Usage(name string) string {
 	}
 	return strings.NewReplacer(replacements...).Replace(template)
 }
+
+// CmdHelp returns the short help text for a command.
+func CmdHelp(name string) string {
+	return generatedCommandHelp(strings.ToUpper(strings.TrimSpace(name)))
+}

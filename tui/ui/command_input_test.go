@@ -84,16 +84,31 @@ func TestCommandHintStylePriorityAndLayout(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	uiTestUpdate(t, m, tea.PasteMsg{Content: "TX"})
-	want := m.app.Styles.Accent.Render("Usage: TX [<broker> [<ticker>] | <ccy> | <ticker>]")
+	want := m.app.Styles.Accent.Render("Usage: TX [<broker> [<ticker>] | <ccy> | <ticker>]") +
+		"\n" + m.app.Styles.TextLight("Help: Show stock transactions")
 	if got := m.commandDiagnostic(); got != want {
 		t.Fatalf("hint diagnostic = %q, want %q", got, want)
 	}
-	if wantHeight := 12 - m.summary.Height() - 3; m.viewport.Height() != wantHeight {
+	lines := strings.Split(m.View().Content, "\n")
+	if len(lines) != 12 || !strings.HasSuffix(ansi.Strip(lines[9]), "Usage: TX [<broker> [<ticker>] | <ccy> | <ticker>]") ||
+		!strings.HasSuffix(ansi.Strip(lines[10]), "Help: Show stock transactions") ||
+		ansi.StringWidth(lines[9]) != 100 || ansi.StringWidth(lines[10]) != 100 {
+		t.Fatalf("hint lines are not right aligned: %q", lines)
+	}
+	if wantHeight := 12 - m.summary.Height() - 4; m.viewport.Height() != wantHeight {
 		t.Fatalf("valid hint viewport height = %d, want %d", m.viewport.Height(), wantHeight)
 	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 2})
+	if small := strings.Split(m.View().Content, "\n"); len(small) != 2 || !strings.Contains(ansi.Strip(small[0]), "Usage: TX") {
+		t.Fatalf("small screen lost syntax hint: %q", m.View().Content)
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	uiTestUpdate(t, m, tea.PasteMsg{Content: " @"})
 	if strings.Contains(ansi.Strip(m.commandDiagnostic()), "Usage:") || !strings.Contains(ansi.Strip(m.commandDiagnostic()), "Error at character") {
 		t.Fatalf("parse error did not take priority: %q", m.commandDiagnostic())
+	}
+	if wantHeight := 12 - m.summary.Height() - 3; m.viewport.Height() != wantHeight {
+		t.Fatalf("error viewport height = %d, want %d", m.viewport.Height(), wantHeight)
 	}
 	uiTestUpdate(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if wantHeight := 12 - m.summary.Height() - 2; m.hasCommandDiagnostic() || m.viewport.Height() != wantHeight {

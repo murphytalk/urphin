@@ -269,10 +269,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case commandResultMsg:
-		oldDiagnostic := m.hasCommandDiagnostic()
+		oldDiagnostic := m.commandDiagnosticRows()
 		m.commandErr = msg.err
 		m.syncCommandPromptStyle()
-		if oldDiagnostic != m.hasCommandDiagnostic() {
+		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
 	case subscriptionMsg:
@@ -296,12 +296,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			if m.commandInput.CurrentSuggestion() != "" {
-				oldDiagnostic := m.hasCommandDiagnostic()
+				oldDiagnostic := m.commandDiagnosticRows()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
 				m.refreshCommandSuggestions()
 				m.syncCommandPromptStyle()
-				if oldDiagnostic != m.hasCommandDiagnostic() {
+				if oldDiagnostic != m.commandDiagnosticRows() {
 					m.resize()
 				}
 				return m, cmd
@@ -361,12 +361,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if m.commandVisible() {
-				oldDiagnostic := m.hasCommandDiagnostic()
+				oldDiagnostic := m.commandDiagnosticRows()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
 				m.refreshCommandSuggestions()
 				m.syncCommandPromptStyle()
-				if oldDiagnostic != m.hasCommandDiagnostic() {
+				if oldDiagnostic != m.commandDiagnosticRows() {
 					m.resize()
 				}
 				return m, cmd
@@ -383,12 +383,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if _, isKey := msg.(tea.KeyPressMsg); !isKey && m.commandVisible() {
-		oldDiagnostic := m.hasCommandDiagnostic()
+		oldDiagnostic := m.commandDiagnosticRows()
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
 		m.refreshCommandSuggestions()
 		m.syncCommandPromptStyle()
-		if oldDiagnostic != m.hasCommandDiagnostic() {
+		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
 		return m, cmd
@@ -453,7 +453,7 @@ func (m *Model) resize() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		m.commandInput.SetWidth(max(1, region-3))
 	}
-	m.viewport.SetHeight(max(0, m.height-header-2-boolInt(m.hasCommandDiagnostic())))
+	m.viewport.SetHeight(max(0, m.height-header-2-m.commandDiagnosticRows()))
 	m.refreshContent()
 }
 
@@ -481,14 +481,16 @@ func (m *Model) View() tea.View {
 	footer := m.footer()
 	diagnostic := m.commandDiagnostic()
 	diagnosticLine := m.commandDiagnosticLine(diagnostic)
-	extra := boolInt(diagnostic != "")
+	extra := m.commandDiagnosticRows()
 	if m.width < 80 || m.height < header+4+extra {
 		lines := make([]string, m.height)
 		if m.height > 1 {
 			lines[0] = ansi.Truncate(m.app.Styles.TextLight(fmt.Sprintf("Resize: need 80 cols / %d rows", header+4+extra)), m.width, "")
 		}
 		if extra > 0 && m.height > 1 {
-			lines[len(lines)-2] = diagnosticLine
+			diagnosticLines := strings.Split(diagnosticLine, "\n")
+			visible := min(len(diagnosticLines), m.height-1)
+			copy(lines[len(lines)-1-visible:], diagnosticLines[:visible])
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
@@ -502,7 +504,7 @@ func (m *Model) View() tea.View {
 	heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.currentSort)
 	lines = append(lines, ansi.Truncate(heading, m.width, ""), m.viewport.View())
 	if extra > 0 {
-		lines = append(lines, diagnosticLine)
+		lines = append(lines, strings.Split(diagnosticLine, "\n")...)
 	}
 	lines = append(lines, footer)
 	view.SetContent(strings.Join(lines, "\n"))
@@ -555,13 +557,6 @@ func (m *Model) footer() string {
 	return m.app.Styles.TextLight(text)
 }
 
-func boolInt(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
-}
-
 func (m *Model) displayedCommandError() error {
 	if m.commandErr != nil {
 		return m.commandErr
@@ -573,22 +568,51 @@ func (m *Model) hasCommandDiagnostic() bool {
 	return m.displayedCommandError() != nil || m.commandHint != ""
 }
 
+func (m *Model) commandDiagnosticRows() int {
+	if !m.hasCommandDiagnostic() {
+		return 0
+	}
+	if m.displayedCommandError() == nil && m.commandHelp() != "" {
+		return 2
+	}
+	return 1
+}
+
+func (m *Model) commandHelp() string {
+	if m.commandHint == "" {
+		return ""
+	}
+	fields := strings.Fields(m.commandInput.Value())
+	if len(fields) == 0 {
+		return ""
+	}
+	return commands.CmdHelp(fields[0])
+}
+
 func (m *Model) commandDiagnostic() string {
 	if err := m.displayedCommandError(); err != nil {
 		return m.app.Styles.Error.Render(sanitizeCommandDiagnostic(err.Error()))
 	}
 	if m.commandHint != "" {
-		return m.app.Styles.Accent.Render(sanitizeCommandDiagnostic("Usage: " + m.commandHint))
+		usage := m.app.Styles.Accent.Render(sanitizeCommandDiagnostic("Usage: " + m.commandHint))
+		if help := m.commandHelp(); help != "" {
+			return usage + "\n" + m.app.Styles.TextLight(sanitizeCommandDiagnostic("Help: "+help))
+		}
+		return usage
 	}
 	return ""
 }
 
 func (m *Model) commandDiagnosticLine(diagnostic string) string {
-	line := ansi.Truncate(diagnostic, m.width, "…")
-	if m.displayedCommandError() == nil && m.commandHint != "" {
-		line = strings.Repeat(" ", max(0, m.width-ansi.StringWidth(line))) + line
+	lines := strings.Split(diagnostic, "\n")
+	for i, line := range lines {
+		line = ansi.Truncate(line, m.width, "…")
+		if m.displayedCommandError() == nil && m.commandHint != "" {
+			line = strings.Repeat(" ", max(0, m.width-ansi.StringWidth(line))) + line
+		}
+		lines[i] = line
 	}
-	return line
+	return strings.Join(lines, "\n")
 }
 
 func sanitizeCommandDiagnostic(message string) string {
