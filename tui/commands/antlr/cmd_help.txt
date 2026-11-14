@@ -1,0 +1,33 @@
+MKT       │ Show stock mkt data
+DTX       │ Show stock transactions since date
+TX        │ Show stock transactions
+FXTX      │ Show stock transactions
+AOTX      │ Add an option transaction
+COTX      │ Close an option transaction
+ATX       │ Add a stock transaction
+TRANS     │ Transfer stock positions from broker1 to broker2
+INCOME    │ Show incomes
+POS       │ Show stock positions
+OPT       │ Show open option strategy chain trades
+OPTP      │ Show option strategy chain trades
+HELP      │ Show help
+P         │ List opt positions that made 90.0% profit
+CALL      │ List callable tickers
+QQQ       │ QQQ LEAP strategy advisor: show positions, delta, DTE, and recommendations
+MTX       │ Show stock data in the past given months (or this month if not specified)
+R         │ Option trades return
+MNQ       │ Summarize MNQ futures + futures option combo trades
+OPTCF     │ Show total cash flow and fee for option trades
+PCAL      │ PUT calendar
+CCAL      │ CALL calendar
+LEAP      │ LEAP calendar
+OPTPOS    │ Options open positions
+GOAL      │ Show the progress towards the monthly investment goal
+SPLIT     │ Record a stock split (e.g., SPLIT AAPL 4)
+NEXT      │ Calculate next trades based on rebalancing logic
+REBALANCE │ Show rebalance plan: sell overweights, buy underweights. Shows both whole-share and fractional-share strategies.
+RATIO     │ Compute gold/silver ratio (raw and post-swap)
+RC        │ Roll/Close scanner: short PUT & vertical spreads with ≥50% profit or ≤21 DTE
+ELW       │ List options expired last week. Optional: CLOSED to include manually closed trades.                      
+DBUY      │ Run daily buy strategy (Schwab) — compute selections, review, place & monitor orders
+PROP      │ Update/delete a property in transaction or instrument prop JSON
