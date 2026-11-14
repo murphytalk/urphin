@@ -32,9 +32,9 @@ func TestValidateCommand(t *testing.T) {
 		{"NOPE", textinput.StatusInvalid, "", false, true},
 		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
 		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", false, true},
-		{"MKT", textinput.StatusPartialInvalid, "MKT", false, true},
-		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", false, true},
-		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", false, true},
+		{"MKT", textinput.StatusPartialInvalid, "MKT", true, false},
+		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", true, false},
+		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", true, false},
 		{"TX AAPL extra", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
 		{"PROP TICKER AAPL Note 日本語 extra", textinput.StatusPartialInvalid, "PROP TICKER AAPL Note 日本語 ", false, true},
 		{"PROP TICKER AAPL Note MixedCase", textinput.StatusValid, "PROP TICKER AAPL Note MixedCase", true, false},
@@ -246,7 +246,7 @@ func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
 }
 
 func TestValidateCommandParserEdgeCases(t *testing.T) {
-	for _, raw := range []string{"NOPE", "MKT", "MKT USD", "TX AAPL extra", "MKT EUR AAPL"} {
+	for _, raw := range []string{"NOPE", "TX AAPL extra", "MKT EUR AAPL"} {
 		validation, hint, err := validateCommand(raw)
 		if err == nil || validation.Status == textinput.StatusValid || validation.Status == textinput.StatusNone {
 			t.Errorf("%q accepted unexpectedly: %#v, %v", raw, validation, err)

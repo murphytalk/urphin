@@ -47,6 +47,11 @@ func validateCommand(raw string) (textinput.Validation, string, error) {
 	}
 	if col == len(trimmed) {
 		valid.Valid = canonicalCommand(raw)
+		if parseErr.Col == len(trimmed) {
+			if usage := commands.Usage(strings.Fields(raw)[0]); usage != "" {
+				return valid, usage, nil
+			}
+		}
 	}
 	message := parseErr.Msg
 	if len(parseErr.Expected) > 0 {
