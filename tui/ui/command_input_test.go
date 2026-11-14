@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -17,6 +18,22 @@ import (
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
+
+func uiTestRunCommand(t *testing.T, m *Model, cmd tea.Cmd) {
+	t.Helper()
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, child := range batch {
+			if next := child(); next != nil {
+				uiTestUpdate(t, m, next)
+			}
+		}
+		return
+	}
+	if msg != nil {
+		uiTestUpdate(t, m, msg)
+	}
+}
 
 func TestValidateCommand(t *testing.T) {
 	for _, tc := range []struct {
@@ -227,7 +244,18 @@ func TestCommandInputClearsAfterSuccessAndKeepsFailuresOrNewEdits(t *testing.T) 
 	if cmd == nil || m.commandInput.Value() != "WATCH" {
 		t.Fatal("command did not remain visible while running")
 	}
-	uiTestUpdate(t, m, cmd())
+	if !m.commandRunning || !strings.Contains(ansi.Strip(m.result.View()), "Loading ...") {
+		t.Fatal("command did not show running indicator")
+	}
+	before := m.result.View()
+	uiTestUpdate(t, m, spinner.TickMsg{})
+	if m.result.View() == before {
+		t.Fatal("home UI did not forward spinner tick")
+	}
+	if cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter)); cmd != nil {
+		t.Fatal("accepted a second command while one was running")
+	}
+	uiTestRunCommand(t, m, cmd)
 	if m.commandInput.Value() != "" || m.hasCommandDiagnostic() {
 		t.Fatal("successful command did not clear input and diagnostic")
 	}
@@ -239,7 +267,7 @@ func TestCommandInputClearsAfterSuccessAndKeepsFailuresOrNewEdits(t *testing.T) 
 	m.commandInput.SetValue("WATCH")
 	cmd = uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
 	m.commandInput.SetValue("TX")
-	uiTestUpdate(t, m, cmd())
+	uiTestRunCommand(t, m, cmd)
 	if m.commandInput.Value() != "TX" {
 		t.Fatal("completed command erased newer input")
 	}
@@ -260,7 +288,7 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("HELP did not dispatch a command")
 	}
-	uiTestUpdate(t, m, cmd())
+	uiTestRunCommand(t, m, cmd)
 	if !m.result.Active() || m.commandInput.Value() != "" || m.hasCommandDiagnostic() || !strings.Contains(ansi.Strip(m.View().Content), "Home Watchlist") {
 		t.Fatal("HELP did not open the help screen")
 	}
@@ -476,7 +504,7 @@ func TestEnterShowsUnknownCommandExecutionError(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Enter did not return command execution")
 	}
-	uiTestUpdate(t, m, cmd())
+	uiTestRunCommand(t, m, cmd)
 	if !strings.Contains(m.commandDiagnostic(), "unknown command: MKT") || !strings.Contains(m.commandDiagnostic(), "ticker=AAPL") {
 		t.Fatalf("unknown command diagnostic = %q", m.commandDiagnostic())
 	}

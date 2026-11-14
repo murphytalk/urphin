@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -54,6 +55,7 @@ type Model struct {
 	commandHint    string
 	commandHistory textinput.TextHistory
 	result         *cmdview.Model
+	commandRunning bool
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -277,6 +279,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case commandResultMsg:
 		oldDiagnostic := m.commandDiagnosticRows()
+		m.commandRunning = false
 		m.commandErr = msg.err
 		if msg.err == nil && m.commandInput.Value() == msg.line {
 			m.commandInput.Reset()
@@ -285,10 +288,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncCommandPromptStyle()
 		if msg.err == nil && msg.name != "" && msg.content != "" {
 			m.showCommandResult(msg.name, msg.content)
+		} else {
+			m.result.Clear()
+			m.resize()
 		}
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.result, cmd = m.result.Update(msg)
+		return m, cmd
 	case subscriptionMsg:
 		// Startup subscription producer reports completion; partial failures keep the UI alive.
 		if msg.err != nil {
@@ -345,6 +355,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshContent()
 			return m, cmd
 		case "enter":
+			if m.commandRunning {
+				return m, nil
+			}
 			line := m.commandInput.Value()
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
@@ -357,11 +370,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.commandErr = nil
 
 			m.syncCommandPromptStyle()
+			m.commandRunning = true
+			var cmd tea.Cmd
+			m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: name})
 			m.resize()
-			return m, func() tea.Msg {
+			return m, tea.Batch(cmd, func() tea.Msg {
 				content, err := commands.RunCmd(m.ctx, &m.app, name, args, false)
 				return commandResultMsg{line: line, name: name, content: content, err: err}
-			}
+			})
 		case "esc":
 			m.commandInput.Reset()
 			m.commandInput.Err = nil

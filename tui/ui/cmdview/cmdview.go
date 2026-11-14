@@ -1,8 +1,10 @@
 package cmdview
 
 import (
+	"math/rand/v2"
 	"strings"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -15,34 +17,69 @@ type SetResultMsg struct {
 	Content string
 }
 
+type StartResultMsg struct {
+	Header string
+}
+
 type Model struct {
-	header   string
-	content  string
-	width    int
-	styles   theme.Styles
-	viewport viewport.Model
+	header       string
+	content      string
+	width        int
+	styles       theme.Styles
+	viewport     viewport.Model
+	spinner      spinner.Model
+	spinnerIndex int
+	running      bool
+}
+
+var spinners = [...]spinner.Spinner{
+	spinner.Line, spinner.Dot, spinner.MiniDot, spinner.Jump, spinner.Pulse, spinner.Points,
+	spinner.Globe, spinner.Moon, spinner.Monkey, spinner.Meter, spinner.Hamburger, spinner.Ellipsis,
 }
 
 func NewModel(styles theme.Styles) *Model {
 	v := viewport.New()
 	v.FillHeight = true
-	return &Model{styles: styles, viewport: v}
+	return &Model{styles: styles, viewport: v, spinnerIndex: -1}
 }
 
 func (m *Model) Active() bool { return m.header != "" }
 
 func (m *Model) Clear() {
 	m.header, m.content = "", ""
+	m.running = false
 	m.viewport.SetContent("")
 	m.viewport.GotoTop()
 }
 
 func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case SetResultMsg:
-		m.header, m.content = msg.Header, msg.Content
+	case StartResultMsg:
+		m.header, m.content, m.running = msg.Header, "Loading ...", true
+		index := rand.IntN(len(spinners))
+		if index == m.spinnerIndex {
+			index = (index + 1 + rand.IntN(len(spinners)-1)) % len(spinners)
+		}
+		m.spinnerIndex = index
+		m.spinner = spinner.New(spinner.WithSpinner(spinners[index]), spinner.WithStyle(m.styles.Accent))
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(m.spinner.Tick())
 		m.refreshContent()
 		m.viewport.GotoTop()
+		return m, cmd
+	case SetResultMsg:
+		m.header, m.content = msg.Header, msg.Content
+		m.running = false
+		m.refreshContent()
+		m.viewport.GotoTop()
+	case spinner.TickMsg:
+		if !m.running {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		m.refreshContent()
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.width = max(0, msg.Width)
 		m.viewport.SetWidth(m.width)
@@ -73,5 +110,9 @@ func (m *Model) View() string {
 }
 
 func (m *Model) refreshContent() {
-	m.viewport.SetContent(ansi.Wordwrap(m.content, max(1, m.width), " "))
+	content := m.content
+	if m.running {
+		content = m.spinner.View() + " " + m.styles.Accent.Render(content)
+	}
+	m.viewport.SetContent(ansi.Wordwrap(content, max(1, m.width), " "))
 }

@@ -18,7 +18,6 @@ func (w *HelpCmd) Execute(ctx context.Context, appCtx *setup.AppCtx, args map[st
 	if jsonOutput {
 		return "", fmt.Errorf("%q: json output not supported", w.Name())
 	}
-
 	names := HelpCommands()
 	lines := make([]string, 0, len(names))
 	for _, name := range names {

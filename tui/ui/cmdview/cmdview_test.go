@@ -39,3 +39,25 @@ func TestResultViewOwnsLayoutAndScrolling(t *testing.T) {
 		t.Fatal("result did not clear")
 	}
 }
+
+func TestRunningResultStartsSpinnerAndStopsOnCompletion(t *testing.T) {
+	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+	m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	var cmd tea.Cmd
+	m, cmd = m.Update(StartResultMsg{Header: "TX"})
+	if cmd == nil || !m.running || !strings.Contains(ansi.Strip(m.viewport.GetContent()), "Loading ...") {
+		t.Fatal("running result did not start spinner")
+	}
+	before := m.viewport.GetContent()
+	m, cmd = m.Update(m.spinner.Tick())
+	if cmd == nil || m.viewport.GetContent() == before {
+		t.Fatal("spinner tick did not animate running result")
+	}
+	m.Update(SetResultMsg{Header: "TX", Content: "Done"})
+	if m.running || !strings.Contains(m.viewport.GetContent(), "Done") {
+		t.Fatal("completed result did not stop spinner")
+	}
+	if _, cmd := m.Update(m.spinner.Tick()); cmd != nil {
+		t.Fatal("stopped spinner scheduled another tick")
+	}
+}
