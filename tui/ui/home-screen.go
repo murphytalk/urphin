@@ -42,7 +42,6 @@ type Model struct {
 	quotes         map[string]c.AssetQuote
 	mismatches     map[string]bool
 	selected       int
-	follow         bool
 	width, height  int
 	ready          bool
 	viewport       viewport.Model
@@ -116,12 +115,22 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 			fxPairSet[symbol] = struct{}{}
 		}
 	}
+	selected := 0
+	for i, list := range lists {
+		if list.Name == app.Settings.SelectedWatchlist {
+			selected = i
+			break
+		}
+	}
+	app.Settings.SelectedWatchlist = ""
+	if len(lists) > 0 {
+		app.Settings.SelectedWatchlist = lists[selected].Name
+	}
 	m := &Model{
 		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), quotes: make(map[string]c.AssetQuote),
-		mismatches: make(map[string]bool),
-		follow:     true,
-		viewport:   viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
+		mismatches: make(map[string]bool), selected: selected,
+		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
 			ExtraInfoExchange: app.Settings.ExtraInfoExchange, ExtraInfoFundamentals: app.Settings.ExtraInfoFundamentals,
@@ -317,7 +326,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		switch msg.Keystroke() {
-		case "f10", "ctrl+c":
+		case "f10", "ctrl+c", "ctrl+d":
 			slog.Debug("UI quit key received", "key", msg.Keystroke())
 			if m.session != nil {
 				m.session.requestStop()
@@ -339,7 +348,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+tab", "shift+tab":
 			return m, m.changeWatchlist(-1)
 		case "f3":
-			m.follow = !m.follow
+			m.app.Settings.FollowWatchlist = !m.app.Settings.FollowWatchlist
 			m.updateSummary()
 			m.resize()
 		case "f2":
@@ -460,9 +469,10 @@ func (m *Model) changeWatchlist(step int) tea.Cmd {
 		return nil
 	}
 	m.selected = (m.selected + step + len(m.lists)) % len(m.lists)
+	m.app.Settings.SelectedWatchlist = m.lists[m.selected].Name
 	m.viewport.GotoTop()
 	cmd := m.setWatchlist()
-	if m.follow {
+	if m.app.Settings.FollowWatchlist {
 		m.updateSummary()
 	}
 	m.resize()
@@ -584,9 +594,16 @@ func (m *Model) setCommandCursor(view *tea.View) {
 }
 
 func (m *Model) footer() string {
-	parts := []string{"F10/^C Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort", "F3 Σ", "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot"}
+	summaryMode := "F3 Summary: Follow"
+	if !m.app.Settings.FollowWatchlist {
+		summaryMode = "F3 Summary: Portfolio"
+	}
+	parts := []string{
+		"F10/^C/^D Exit", "Tab Nxt", "^Tab/⇧Tab Prv", "F2 Sort: " + m.app.Settings.Sort,
+		summaryMode, "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot",
+	}
 	if m.result.Active() {
-		parts = []string{"F10/^C Exit", "Home Watchlist", "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot"}
+		parts = []string{"F10/^C/^D Exit", "Home Watchlist", "↑↓/Pg Scr", "Ctrl+Home/End Top/Bot"}
 	}
 	budget := m.width
 	if m.commandVisible() {

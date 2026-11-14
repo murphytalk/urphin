@@ -243,6 +243,7 @@ func run() (code int) {
 		CurrencyConvertSummaryOnly:        true,
 		CurrencyDisableUnitCostConversion: true,
 		Sort:                              "ticker",
+		FollowWatchlist:                   true,
 		BaseCurrency:                      "USD",
 	}); err != nil {
 		slog.Error("Failed to load UI settings", "error", err)

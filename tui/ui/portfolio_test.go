@@ -133,7 +133,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 	}, map[string]databackend.Position{
 		"A": {Shares: 1, Ccy: "USD"}, "B": {Shares: 2, Ccy: "EUR"}, "C": {Shares: 3, Ccy: "USD"},
 	})
-	if !m.follow {
+	if !m.app.Settings.FollowWatchlist {
 		t.Fatal("follow mode must be enabled by default")
 	}
 	feed := newSessionTestFeed()
@@ -141,7 +141,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 	t.Cleanup(func() { _ = m.session.Close() })
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 100, 90), uiTestQuote("B", "EUR", 20, 19), uiTestQuote("C", "USD", 30, 29)})
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
-	if scope, _ := uiTestSummaries(m); !m.follow || scope != "Watchlist: Second" {
+	if scope, _ := uiTestSummaries(m); !m.app.Settings.FollowWatchlist || scope != "Watchlist: Second" {
 		t.Fatal("default follow scope did not move with navigation")
 	}
 	uiTestFloat(t, "follow USD", uiTestSummary(t, m, "USD").Value, 90)
@@ -162,7 +162,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 		t.Fatal("empty follow scope retained previous currencies")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
-	if scope, _ := uiTestSummaries(m); m.follow || scope != "Whole portfolio" {
+	if scope, _ := uiTestSummaries(m); m.app.Settings.FollowWatchlist || scope != "Whole portfolio" {
 		t.Fatal("F3 did not restore whole-portfolio scope")
 	}
 	uiTestFloat(t, "whole USD restored with latest quotes", uiTestSummary(t, m, "USD").Value, 200)

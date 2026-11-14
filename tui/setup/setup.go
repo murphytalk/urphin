@@ -48,7 +48,15 @@ func LoadConfig(path string) (*c.Config, error) {
 }
 
 func LoadSettings(path string) (*c.Settings, error) {
-	return loadConfig[c.Settings](path)
+	settings := &c.Settings{FollowWatchlist: true}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := yaml.Unmarshal(data, settings); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return settings, nil
 }
 
 func saveConfig[T any](path string, cfg *T) error {

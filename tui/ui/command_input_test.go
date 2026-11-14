@@ -208,7 +208,7 @@ func TestCommandFooterDropsWholeHelpItemsToFitInput(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	footer := ansi.Strip(m.footer())
-	if !strings.HasPrefix(footer, "F10/^C Exit · Tab Nxt · ^Tab/⇧Tab Prv · F2 Sort") {
+	if !strings.HasPrefix(footer, "F10/^C/^D Exit · Tab Nxt · ^Tab/⇧Tab Prv · F2 Sort") {
 		t.Fatalf("footer did not preserve whole ordered help items: %q", footer)
 	}
 	if strings.Contains(footer, "F3") || strings.Contains(footer, "^Home") {
@@ -451,9 +451,9 @@ func TestCommandEditingKeysAndPasteStayWithInput(t *testing.T) {
 	if m.commandInput.Position() != position-1 || m.viewport.YOffset() != before {
 		t.Fatal("left moved viewport or failed to edit input")
 	}
-	m.follow = true
+	m.app.Settings.FollowWatchlist = true
 	uiTestUpdate(t, m, uiTestKey(tea.KeyF3))
-	if m.follow || m.commandInput.Value() != "TX aapl " {
+	if m.app.Settings.FollowWatchlist || m.commandInput.Value() != "TX aapl " {
 		t.Fatal("F3 failed or changed input")
 	}
 }

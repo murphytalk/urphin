@@ -113,7 +113,7 @@ func (m *Model) updateSummary() {
 	if baseCurrency == "" {
 		baseCurrency = "USD"
 	}
-	if m.follow {
+	if m.app.Settings.FollowWatchlist {
 		symbols, scope = m.visibleSymbols(), "Watchlist: "+m.listName()
 	}
 	totals := make(map[string]*summary.CurrencySummary)

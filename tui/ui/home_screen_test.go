@@ -66,7 +66,7 @@ func uiTestStyles() theme.Styles {
 func uiTestApp(b *uiTestBackend) setup.AppCtx {
 	return setup.AppCtx{
 		Db: b, Styles: uiTestStyles(),
-		Settings: &c.Settings{Sort: "user", ShowSummary: true, BaseCurrency: "USD"},
+		Settings: &c.Settings{Sort: "user", ShowSummary: true, BaseCurrency: "USD", FollowWatchlist: true},
 	}
 }
 
@@ -137,7 +137,7 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	if !reflect.DeepEqual(m.lists, wantLists) || !reflect.DeepEqual(m.positions, positions) {
 		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.lists, m.positions)
 	}
-	if !m.follow {
+	if !m.app.Settings.FollowWatchlist {
 		t.Fatal("follow mode must be enabled by default")
 	}
 	if !slices.Equal(m.visibleSymbols(), []string{"B", "A"}) || m.listName() != "First" || b.closeCalls != 0 {
@@ -387,11 +387,11 @@ func TestModelAllLetterKeysAreReservedIncludingViewportShortcuts(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	m.viewport.SetContent(strings.Repeat("scrollable\n", 100))
 	m.viewport.SetYOffset(20)
-	follow := m.follow
+	follow := m.app.Settings.FollowWatchlist
 	for _, letter := range "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ" {
 		t.Run(string(letter), func(t *testing.T) {
 			before := m.View().Content
-			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.follow != follow || m.app.Settings.Sort != "user" || m.View().Content != before {
+			if cmd := uiTestUpdate(t, m, uiTestKey(letter)); cmd != nil || m.viewport.YOffset() != 20 || m.selected != 0 || m.app.Settings.FollowWatchlist != follow || m.app.Settings.Sort != "user" || m.View().Content != before {
 				t.Fatalf("letter %q changed UI state, scrolled, or quit", letter)
 			}
 		})
@@ -493,7 +493,7 @@ func TestModelFooterIsSingleLineUTF8SafeAndPrioritizesQuitAtEveryWidth(t *testin
 				t.Fatal("quit must survive before any other help")
 			}
 			if width >= 80 {
-				if ansi.StringWidth(footer) != width || !strings.Contains(ansi.Strip(footer), "Syntax check") || !strings.Contains(footer, "F10/^C Exit") {
+				if ansi.StringWidth(footer) != width || !strings.Contains(ansi.Strip(footer), "Syntax check") || !strings.Contains(footer, "F10/^C/^D Exit") {
 					t.Fatalf("command field not right-aligned or exit help missing: %q", footer)
 				}
 			}

@@ -51,6 +51,8 @@ type Settings struct {
 	ShowSummary                       bool   `yaml:"show-summary"`
 	ShowPositions                     bool   `yaml:"show-positions"`
 	Sort                              string `yaml:"sort"`
+	SelectedWatchlist                 string `yaml:"selected-watchlist"`
+	FollowWatchlist                   bool   `yaml:"follow-watchlist"`
 	BaseCurrency                      string `yaml:"base-currency"`
 	CurrencyConvertSummaryOnly        bool   `yaml:"currency-summary-only"`
 	CurrencyDisableUnitCostConversion bool   `yaml:"currency-disable-unit-cost-conversion"`
