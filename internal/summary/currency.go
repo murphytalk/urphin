@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	grid "github.com/achannarasappa/term-grid"
 	"github.com/charmbracelet/x/ansi"
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
@@ -77,11 +78,91 @@ func (m *Model) currencyView() string {
 		heading += strings.Repeat(" ", max(0, m.width-ansi.StringWidth(heading)-ansi.StringWidth(pairs))) + pairs
 	}
 	lines := []string{heading}
-	for _, currency := range m.currencies {
-		lines = append(lines, m.currencyLines(currency)...)
+	rows, ok := m.currencyGridLines(true)
+	if !ok {
+		rows, ok = m.currencyGridLines(false)
+	}
+	if ok {
+		lines = append(lines, rows...)
+	} else {
+		for _, currency := range m.currencies {
+			lines = append(lines, m.currencyLines(currency)...)
+		}
 	}
 	lines = append(lines, m.styles.TextLine(strings.Repeat("━", m.width)))
 	return strings.Join(lines, "\n")
+}
+
+type currencyGridRow struct {
+	currency                               string
+	labels, amounts, changeLabels, changes [3]string
+}
+
+func (m *Model) currencyGridLines(percent bool) ([]string, bool) {
+	rows := make([]currencyGridRow, 0, len(m.currencies))
+	var widths [5]int
+	for _, s := range m.currencies {
+		currency := singleLine(s.Currency)
+		if currency == "" {
+			currency = "Unknown"
+		}
+		row := currencyGridRow{currency: m.styles.TextBold(currency)}
+		row.labels = [3]string{m.styles.TextLabel("Value:"), m.styles.TextLabel("VWAP Cost:"), m.styles.TextLabel("Avg Cost:")}
+		row.changeLabels = [3]string{m.styles.TextLabel("Day Change:"), m.styles.TextLabel("VWAP P&L:"), m.styles.TextLabel("Avg Cost P&L:")}
+		row.amounts = [3]string{
+			m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.Value, false)),
+			m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.VWAPCost, false)),
+			m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.AvgCost, false)),
+		}
+		if s.ValueUnavailable {
+			row.amounts[0] = m.styles.TextLabel("N/A")
+		}
+		if s.VWAPCostUnavailable {
+			row.amounts[1] = m.styles.TextLabel("N/A")
+		}
+		if s.AvgCostUnavailable {
+			row.amounts[2] = m.styles.TextLabel("N/A")
+		}
+		if s.BaseCurrency != "" && !strings.EqualFold(s.Currency, s.BaseCurrency) {
+			baseValue := m.styles.Text(u.ConvertFloatToStringWithThousandsSeparator(s.BaseValue, false))
+			if s.BaseValueUnavailable {
+				baseValue = m.styles.TextLabel("N/A")
+			}
+			row.amounts[0] += m.styles.TextLabel(" ("+s.BaseCurrency+" ") + baseValue + m.styles.TextLabel(")")
+		}
+		row.changes = [3]string{
+			m.currencyChange(s.DayChange, s.ValueUnavailable || s.DayChangeUnavailable, true, percent),
+			m.currencyChange(s.VWAPChange, s.ValueUnavailable || s.ChangeUnavailable, s.VWAPCost > 0, percent),
+			m.currencyChange(s.AvgCostChange, s.ValueUnavailable || s.ChangeUnavailable, s.AvgCost > 0, percent),
+		}
+		underline := ansi.NewStyle().Underline(true)
+		row.labels[2], row.amounts[2] = underline.Styled(row.labels[2]), underline.Styled(row.amounts[2])
+		widths[0] = max(widths[0], ansi.StringWidth(row.currency))
+		for i := range 3 {
+			widths[1] = max(widths[1], ansi.StringWidth(row.labels[i]))
+			widths[2] = max(widths[2], ansi.StringWidth(row.amounts[i]))
+			widths[3] = max(widths[3], ansi.StringWidth(row.changeLabels[i]))
+			widths[4] = max(widths[4], ansi.StringWidth(row.changes[i]))
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) == 0 {
+		return nil, true
+	}
+	if widths[0]+widths[1]+widths[2]+widths[3]+widths[4]+4 > m.width {
+		return nil, false
+	}
+	gridRows := make([]grid.Row, 0, len(rows))
+	for _, row := range rows {
+		gridRows = append(gridRows, grid.Row{Width: m.width, Cells: []grid.Cell{
+			{Text: row.currency, Width: widths[0]},
+			{Text: strings.Join(row.labels[:], "\n"), Width: widths[1], Align: grid.Right},
+			{Text: strings.Join(row.amounts[:], "\n"), Width: widths[2], Align: grid.Right},
+			{Text: strings.Join(row.changeLabels[:], "\n"), Width: widths[3], Align: grid.Right},
+			{Text: strings.Join(row.changes[:], "\n"), Width: widths[4], Align: grid.Right},
+		}})
+	}
+	return strings.Split(strings.TrimSuffix(grid.Render(grid.Grid{Rows: gridRows, GutterHorizontal: 1}), "\n"), "\n"), true
 }
 
 type currencyLineParts struct {

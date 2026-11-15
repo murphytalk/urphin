@@ -136,12 +136,12 @@ func TestCurrencySummaryNativeTextOrderingAndHeight(t *testing.T) {
 	m := currencyModel(140, false, usd, eur)
 	want := []string{
 		"Summary: All portfolio",
-		"EUR • Value: 600.00 • Day Change:     ↓ -6.00 (-01.00%)",
-		"  VWAP Cost: 700.00 • VWAP P&L:     ↓ -100.00 (-14.29%)",
-		"  Avg Cost:  900.00 • Avg Cost P&L: ↓ -300.00 (-33.33%)",
-		"USD • Value: 1,200.00 • Day Change:    ↑ 12.00 (01.00%)",
-		"  VWAP Cost: 1,000.00 • VWAP P&L:     ↑ 200.00 (20.00%)",
-		"  Avg Cost:    800.00 • Avg Cost P&L: ↑ 400.00 (50.00%)",
+		"EUR     Value:   600.00   Day Change:   ↓ -6.00 (-01.00%)",
+		"    VWAP Cost:   700.00     VWAP P&L: ↓ -100.00 (-14.29%)",
+		"     Avg Cost:   900.00 Avg Cost P&L: ↓ -300.00 (-33.33%)",
+		"USD     Value: 1,200.00   Day Change:    ↑ 12.00 (01.00%)",
+		"    VWAP Cost: 1,000.00     VWAP P&L:   ↑ 200.00 (20.00%)",
+		"     Avg Cost:   800.00 Avg Cost P&L:   ↑ 400.00 (50.00%)",
 		strings.Repeat("━", 140),
 	}
 	if got := ansi.Strip(m.View()); got != strings.Join(want, "\n") {
@@ -159,9 +159,9 @@ func TestCurrencySummaryRightAlignsValuesAndCosts(t *testing.T) {
 	input := s.CurrencySummary{Currency: "USD", Value: 1000, VWAPCost: 10, AvgCost: 100}
 	lines := strings.Split(ansi.Strip(currencyModel(100, false, input).View()), "\n")
 	amountEnds := []int{
-		ansi.StringWidth(lines[1][:strings.Index(lines[1], " • Day Change:")]),
-		ansi.StringWidth(lines[2][:strings.Index(lines[2], " • VWAP P&L:")]),
-		ansi.StringWidth(lines[3][:strings.Index(lines[3], " • Avg Cost P&L:")]),
+		strings.Index(lines[1], "1,000.00") + len("1,000.00"),
+		strings.Index(lines[2], "10.00") + len("10.00"),
+		strings.Index(lines[3], "100.00") + len("100.00"),
 	}
 	if amountEnds[0] != amountEnds[1] || amountEnds[1] != amountEnds[2] {
 		t.Fatalf("value and costs must share right edge: %v", amountEnds)
@@ -199,7 +199,7 @@ func TestCurrencySummaryCopiesInputAndReplacesScope(t *testing.T) {
 		t.Fatal("sorting changed the producer's slice")
 	}
 	input[1].Currency, input[1].Value = "XXX", 999
-	if !strings.Contains(ansi.Strip(m.View()), "EUR • Value: 200.00") {
+	if !strings.Contains(strings.Join(strings.Fields(ansi.Strip(m.View())), " "), "EUR Value: 200.00") {
 		t.Fatal("the renderer retained mutable producer data")
 	}
 	m.Update(s.SetCurrencySummariesMsg{Scope: "Watchlist: Bonds", Summaries: []s.CurrencySummary{{Currency: "JPY", Value: 5000}}})
@@ -271,8 +271,8 @@ func TestCurrencySummaryNonpositiveBasisPercentages(t *testing.T) {
 			input.VWAPCost, input.AvgCost = basis, basis
 			view := strings.Join(strings.Fields(ansi.Strip(currencyModel(140, false, input).View())), " ")
 			for _, text := range []string{
-				fmt.Sprintf("%s • VWAP P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
-				fmt.Sprintf("%s • Avg Cost P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
+				fmt.Sprintf("%s VWAP P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
+				fmt.Sprintf("%s Avg Cost P&L:", u.ConvertFloatToStringWithThousandsSeparator(basis, false)),
 				"VWAP P&L: ↑ 200.00 (N/A)", "Avg Cost P&L: ↑ 400.00 (N/A)", "Day Change: ↑ 12.00 (01.00%)",
 			} {
 				if !strings.Contains(view, text) {
@@ -291,12 +291,12 @@ func TestCurrencySummaryUnavailableCurrencyDoesNotHideOtherCurrencies(t *testing
 	eur := currencyFixture()
 	eur.Currency, eur.ValueUnavailable = "EUR", true
 	lines := strings.Split(ansi.Strip(currencyModel(140, false, usd, eur).View()), "\n")
-	if !strings.Contains(strings.Join(strings.Fields(lines[1]), " "), "EUR • Value: N/A • Day Change: N/A") ||
+	if !strings.Contains(strings.Join(strings.Fields(lines[1]), " "), "EUR Value: N/A Day Change: N/A") ||
 		!strings.HasSuffix(strings.Join(strings.Fields(lines[2]), " "), "VWAP P&L: N/A") ||
 		!strings.HasSuffix(strings.Join(strings.Fields(lines[3]), " "), "Avg Cost P&L: N/A") {
 		t.Fatal("unavailable native-currency metrics must stay within their currency")
 	}
-	if !strings.Contains(lines[4], "USD • Value: 1,200.00") || !strings.Contains(lines[5], "200.00 (20.00%)") || !strings.Contains(lines[6], "400.00 (50.00%)") {
+	if !strings.Contains(strings.Join(strings.Fields(lines[4]), " "), "USD Value: 1,200.00") || !strings.Contains(lines[5], "200.00 (20.00%)") || !strings.Contains(lines[6], "400.00 (50.00%)") {
 		t.Fatal("available currencies must retain their native valuation and P&L")
 	}
 }
@@ -358,7 +358,7 @@ func TestCurrencySummaryColorFollowsAmountNotPercentage(t *testing.T) {
 
 func TestCurrencySummaryUnderlinesAverageCostOnly(t *testing.T) {
 	lines := strings.Split(currencyModel(140, false, currencyFixture()).View(), "\n")
-	if !strings.Contains(lines[3], "\x1b[4m") || !strings.Contains(ansi.Strip(lines[3]), "Avg Cost:    800.00") {
+	if !strings.Contains(lines[3], "\x1b[4m") || !strings.Contains(strings.Join(strings.Fields(ansi.Strip(lines[3])), " "), "Avg Cost: 800.00") {
 		t.Fatalf("average cost must be underlined: %q", lines[3])
 	}
 	for _, i := range []int{0, 1, 2, 4} {
@@ -427,7 +427,7 @@ func TestCurrencySummaryEmptyUnknownAndLegacySwitch(t *testing.T) {
 		t.Fatal("empty native summary layout")
 	}
 	m.Update(s.SetCurrencySummariesMsg{Summaries: []s.CurrencySummary{{}}})
-	if !strings.Contains(ansi.Strip(m.View()), "Unknown • Value: 0.00") {
+	if !strings.Contains(strings.Join(strings.Fields(ansi.Strip(m.View())), " "), "Unknown Value: 0.00") {
 		t.Fatal("unknown currency must be explicit")
 	}
 	legacy := s.SetSummaryMsg(fin.PositionSummary{Value: 100, Cost: 90, TotalChange: c.PositionChange{Amount: 10, Percent: 11}})
