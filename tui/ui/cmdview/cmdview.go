@@ -121,8 +121,10 @@ func (m *Model) View() string {
 	if !m.Active() {
 		return ""
 	}
-	header := m.styles.TextBold(m.header)
-	header = lipgloss.PlaceHorizontal(m.width, lipgloss.Center, ansi.Truncate(header, m.width, ""))
+	header := lipgloss.NewStyle().Bold(true).
+		Foreground(m.styles.Popup.GetBackground()).Background(m.styles.TextColor).
+		Width(m.width).Align(lipgloss.Center).
+		Render(ansi.Truncate(m.header, m.width, ""))
 	return strings.Join([]string{"", header, "", m.viewport.View()}, "\n")
 }
 

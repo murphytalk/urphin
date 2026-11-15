@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/evertras/bubble-table/table"
 	"github.com/murphytalk/urphin/internal/theme"
@@ -16,7 +17,7 @@ func TestResultViewOwnsLayoutAndScrolling(t *testing.T) {
 	content := strings.Repeat("word1 word2 word3 word4\n", 8)
 	m.Update(SetResultMsg{Header: "RESULT", Content: content})
 	lines := strings.Split(m.View(), "\n")
-	if len(lines) != 8 || lines[0] != "" || lines[1] != "       RESULT       " || lines[2] != "" || m.viewport.Height() != 5 {
+	if len(lines) != 8 || lines[0] != "" || ansi.Strip(lines[1]) != "       RESULT       " || lines[2] != "" || m.viewport.Height() != 5 {
 		t.Fatalf("result layout = %q", lines)
 	}
 	if got := strings.Join(strings.Fields(ansi.Strip(m.viewport.GetContent())), " "); got != strings.Join(strings.Fields(content), " ") {
@@ -38,6 +39,21 @@ func TestResultViewOwnsLayoutAndScrolling(t *testing.T) {
 	m.Clear()
 	if m.Active() || m.View() != "" || m.viewport.GetContent() != "" {
 		t.Fatal("result did not clear")
+	}
+}
+
+func TestResultHeaderUsesThemeColorsAcrossWidth(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	styles := theme.BuildStyles(theme.Default(), "")
+	m := NewModel(styles)
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 6})
+	m.Update(SetResultMsg{Header: "RESULT", Content: "Done"})
+	header := strings.Split(m.View(), "\n")[1]
+	want := lipgloss.NewStyle().Bold(true).
+		Foreground(styles.Popup.GetBackground()).Background(styles.TextColor).
+		Width(20).Align(lipgloss.Center).Render("RESULT")
+	if header != want || !strings.Contains(header, "\x1b[") {
+		t.Fatalf("header does not use themed light background and dark text: %q", header)
 	}
 }
 

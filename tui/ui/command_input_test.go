@@ -302,8 +302,7 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 	viewLines := strings.Split(m.View().Content, "\n")
 	headerRow := m.summary.Height() + 1
 	if len(viewLines) != 12 || viewLines[headerRow-1] != "" || viewLines[headerRow+1] != "" ||
-		ansi.Strip(viewLines[headerRow]) != strings.Repeat(" ", 48)+"Help"+strings.Repeat(" ", 48) ||
-		!strings.Contains(viewLines[headerRow], m.app.Styles.TextBold("Help")) {
+		ansi.Strip(viewLines[headerRow]) != strings.Repeat(" ", 48)+"Help"+strings.Repeat(" ", 48) {
 		t.Fatalf("result header is not centered, spaced, or distinct: %q", viewLines)
 	}
 	content := m.result.View()
