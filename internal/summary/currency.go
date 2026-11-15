@@ -66,7 +66,11 @@ func (m *Model) currencyView() string {
 	if scope == "" {
 		scope = "Portfolio"
 	}
-	heading := ansi.Truncate(m.styles.TextBold("Summary: "+scope), m.width, "")
+	headingText := m.styles.TextBold("Summary: " + scope)
+	if name, watchlist := strings.CutPrefix(scope, "Watchlist: "); watchlist {
+		headingText = m.styles.TextBold("Summary: Watchlist: ") + m.styles.Accent.Render(name)
+	}
+	heading := ansi.Truncate(headingText, m.width, "")
 	if len(m.fxPairs) > 0 {
 		pairTexts := make([]string, 0, len(m.fxPairs))
 		for _, pair := range m.fxPairs {
@@ -106,7 +110,7 @@ func (m *Model) currencyGridLines(percent bool) ([]string, bool) {
 		if currency == "" {
 			currency = "Unknown"
 		}
-		row := currencyGridRow{currency: m.styles.TextBold(currency)}
+		row := currencyGridRow{currency: m.styles.Accent.Render(currency)}
 		row.labels = [3]string{m.styles.TextLabel("Value:"), m.styles.TextLabel("VWAP Cost:"), m.styles.TextLabel("Avg Cost:")}
 		row.changeLabels = [3]string{m.styles.TextLabel("Day Change:"), m.styles.TextLabel("VWAP P&L:"), m.styles.TextLabel("Avg Cost P&L:")}
 		row.amounts = [3]string{
@@ -257,7 +261,7 @@ func (m *Model) currencyLineParts(s CurrencySummary, metric int, compact, percen
 			value += m.styles.TextLabel(" ("+s.BaseCurrency+" ") + baseValue + m.styles.TextLabel(")")
 		}
 		return currencyLineParts{
-			prefix:       m.styles.TextBold(currency) + m.styles.TextLabel(" • "+valueLabel),
+			prefix:       m.styles.Accent.Render(currency) + m.styles.TextLabel(" • "+valueLabel),
 			amount:       value,
 			changePrefix: m.styles.TextLabel(" • " + dayLabel),
 			change:       m.currencyChange(s.DayChange, s.ValueUnavailable || s.DayChangeUnavailable, true, percent),

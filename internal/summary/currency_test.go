@@ -82,6 +82,18 @@ func currencyModel(width int, colored bool, summaries ...s.CurrencySummary) *s.M
 	return m
 }
 
+func TestSummaryHighlightsWatchlistNameAndCurrency(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	styles := currencyStyles(true)
+	m := s.NewModel(styles, nil)
+	m.Update(tea.WindowSizeMsg{Width: 120})
+	m.Update(s.SetCurrencySummariesMsg{Scope: "Watchlist: Core", Summaries: []s.CurrencySummary{currencyFixture()}})
+	view := m.View()
+	if !strings.Contains(view, styles.Accent.Render("Core")) || !strings.Contains(view, styles.Accent.Render("USD")) {
+		t.Fatalf("watchlist name or currency lacks accent color: %q", view)
+	}
+}
+
 var _ = Describe("FX summary header", func() {
 	It("left-aligns scope and right-aligns configured pairs", func() {
 		const width = 80
