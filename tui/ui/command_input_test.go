@@ -100,7 +100,9 @@ func TestCommandFooterWidthsAndEditing(t *testing.T) {
 func TestCommandHintStylePriorityAndLayout(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
-	uiTestUpdate(t, m, tea.PasteMsg{Content: "TX"})
+	for _, text := range []string{"T", "X"} {
+		uiTestUpdate(t, m, tea.KeyPressMsg{Code: rune(text[0]), Text: text})
+	}
 	want := m.app.Styles.Accent.Render("Usage: TX [<broker> [<ticker>] | <ccy> | <ticker>]") +
 		"\n" + m.app.Styles.TextLight("Help: Show stock transactions")
 	if got := m.commandDiagnostic(); got != want {
@@ -120,7 +122,9 @@ func TestCommandHintStylePriorityAndLayout(t *testing.T) {
 		t.Fatalf("small screen lost syntax hint: %q", m.View().Content)
 	}
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
-	uiTestUpdate(t, m, tea.PasteMsg{Content: " @"})
+	for _, text := range []string{" ", "@"} {
+		uiTestUpdate(t, m, tea.KeyPressMsg{Code: rune(text[0]), Text: text})
+	}
 	if strings.Contains(ansi.Strip(m.commandDiagnostic()), "Usage:") || !strings.Contains(ansi.Strip(m.commandDiagnostic()), "Error at character") {
 		t.Fatalf("parse error did not take priority: %q", m.commandDiagnostic())
 	}
@@ -343,6 +347,43 @@ func TestHomeLeavesAnyCommandResultScreen(t *testing.T) {
 	uiTestUpdate(t, m, uiTestKey(tea.KeyHome))
 	if m.result.Active() || m.viewport.GetContent() != "No tickers" {
 		t.Fatal("Home did not restore watchlist from generic result screen")
+	}
+}
+
+func TestTxCommandUsesPaginatedTableResult(t *testing.T) {
+	txs := make([]databackend.Tx, 20)
+	for i := range txs {
+		txs[i] = databackend.Tx{Ticker: fmt.Sprintf("T%02d", i), Ccy: "USD", Side: databackend.SideBuy}
+	}
+	m, err := NewModel(context.Background(), uiTestApp(&uiTestBackend{txs: txs}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Init()
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("TX")
+	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	uiTestRunCommand(t, m, cmd)
+	before := ansi.Strip(m.result.View())
+	if !m.result.Active() || !strings.Contains(before, "Date") || !strings.Contains(before, "1/") {
+		t.Fatalf("TX table did not open with pagination: %q", before)
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyPgDown))
+	after := ansi.Strip(m.result.View())
+	if after == before || !strings.Contains(after, "2/") {
+		t.Fatalf("page down did not change TX table: %q", after)
+	}
+	uiTestUpdate(t, m, tea.PasteMsg{Content: "TX"})
+	if m.commandHint == "" || m.commandErr != nil || !strings.Contains(ansi.Strip(m.View().Content), "Usage: TX") {
+		t.Fatalf("TX result stopped command hints: hint=%q error=%v", m.commandHint, m.commandErr)
+	}
+	uiTestUpdate(t, m, tea.PasteMsg{Content: " @"})
+	if m.commandErr == nil || m.commandHint != "" || !strings.Contains(ansi.Strip(m.View().Content), "Error at character") {
+		t.Fatalf("TX result stopped command parsing: hint=%q error=%v", m.commandHint, m.commandErr)
+	}
+	uiTestUpdate(t, m, uiTestKey(tea.KeyHome))
+	if m.result.Active() {
+		t.Fatal("Home did not close TX table")
 	}
 }
 

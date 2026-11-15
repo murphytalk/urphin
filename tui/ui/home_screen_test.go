@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -25,10 +26,15 @@ type uiTestBackend struct {
 	positions     map[string]databackend.Position
 	watchErr      error
 	positionErr   map[string]error
+	txs           []databackend.Tx
 	watchCalls    int
 	positionCalls []string
 	brokers       []*string
 	closeCalls    int
+}
+
+func (b *uiTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
+	return slices.Clone(b.txs), nil
 }
 
 func (b *uiTestBackend) GetWatchList(_ context.Context, name *string) ([]databackend.Watchlist, error) {

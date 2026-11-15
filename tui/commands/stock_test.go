@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/tui/setup"
 )
 
@@ -49,6 +52,41 @@ func TestTxCommandPrintsJSON(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, string(want)) {
 		t.Errorf("command output = %q, want %q", got, want)
+	}
+}
+
+func TestTxCommandPrintsTable(t *testing.T) {
+	wantTx := databackend.Tx{
+		Broker: "Broker One", Ticker: "AAPL", Ccy: "USD", Side: databackend.SideBuy,
+		Timestamp: time.Date(2026, time.November, 15, 9, 30, 0, 0, time.UTC),
+		Shares:    1234.5, Price: 42.25, Fee: 1.5,
+	}
+
+	got, err := (&TxCmd{}).Execute(context.Background(), &setup.AppCtx{
+		Db:     txTestBackend{txs: []databackend.Tx{wantTx}},
+		Styles: theme.BuildStyles(theme.Default(), ""),
+	}, map[string]string{}, false)
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	plain := ansi.Strip(got)
+	for _, value := range []string{"Date", "Broker", "Ticker", "CCY", "Side", "Shares", "Price", "Fee", "2026-11-15 09:30", "Broker One", "AAPL", "USD", "BUY", "1,234.50", "42.25", "1.50"} {
+		if !strings.Contains(plain, value) {
+			t.Errorf("table output omitted %q: %q", value, plain)
+		}
+	}
+}
+
+func TestTxCommandReturnsInteractiveTUITable(t *testing.T) {
+	result, err := RunTUI(context.Background(), &setup.AppCtx{
+		Db:     txTestBackend{txs: []databackend.Tx{{Ticker: "AAPL"}}},
+		Styles: theme.BuildStyles(theme.Default(), ""),
+	}, "TX", map[string]string{})
+	if err != nil {
+		t.Fatalf("RunTUI() error = %v", err)
+	}
+	if result.Table == nil || result.Content != "" {
+		t.Fatalf("RunTUI() = %#v, want interactive table only", result)
 	}
 }
 

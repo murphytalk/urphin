@@ -12,6 +12,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/x/ansi v0.11.9
+	github.com/evertras/bubble-table v0.23.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/longbridge/openapi-go v0.30.1

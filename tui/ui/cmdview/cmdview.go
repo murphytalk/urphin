@@ -9,12 +9,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/evertras/bubble-table/table"
 	"github.com/murphytalk/urphin/internal/theme"
 )
 
 type SetResultMsg struct {
 	Header  string
 	Content string
+	Table   *table.Model
 }
 
 type StartResultMsg struct {
@@ -29,6 +31,7 @@ type Model struct {
 	viewport     viewport.Model
 	spinner      spinner.Model
 	spinnerIndex int
+	table        *table.Model
 	running      bool
 }
 
@@ -47,6 +50,7 @@ func (m *Model) Active() bool { return m.header != "" }
 
 func (m *Model) Clear() {
 	m.header, m.content = "", ""
+	m.table = nil
 	m.running = false
 	m.viewport.SetContent("")
 	m.viewport.GotoTop()
@@ -69,7 +73,9 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		return m, cmd
 	case SetResultMsg:
 		m.header, m.content = msg.Header, msg.Content
+		m.table = msg.Table
 		m.running = false
+		m.resizeTable()
 		m.refreshContent()
 		m.viewport.GotoTop()
 	case spinner.TickMsg:
@@ -84,9 +90,20 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 		m.width = max(0, msg.Width)
 		m.viewport.SetWidth(m.width)
 		m.viewport.SetHeight(max(0, msg.Height-3))
+		m.resizeTable()
 		m.refreshContent()
 	case tea.KeyPressMsg:
 		switch msg.Keystroke() {
+		case "pgup", "pgdown":
+			if m.table != nil {
+				var cmd tea.Cmd
+				*m.table, cmd = m.table.Update(msg)
+				m.refreshContent()
+				return m, cmd
+			}
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
 		case "ctrl+home":
 			m.viewport.GotoTop()
 		case "ctrl+end":
@@ -110,9 +127,20 @@ func (m *Model) View() string {
 }
 
 func (m *Model) refreshContent() {
+	if m.table != nil {
+		m.viewport.SetContent(m.table.View())
+		return
+	}
 	content := m.content
 	if m.running {
 		content = m.spinner.View() + " " + m.styles.Accent.Render(content)
 	}
 	m.viewport.SetContent(ansi.Wordwrap(content, max(1, m.width), " "))
+}
+
+func (m *Model) resizeTable() {
+	if m.table == nil {
+		return
+	}
+	*m.table = m.table.WithTargetWidth(max(1, m.width)).WithTargetHeight(max(1, m.viewport.Height()))
 }

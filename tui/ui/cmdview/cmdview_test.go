@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/evertras/bubble-table/table"
 	"github.com/murphytalk/urphin/internal/theme"
 )
 
@@ -59,5 +60,38 @@ func TestRunningResultStartsSpinnerAndStopsOnCompletion(t *testing.T) {
 	}
 	if _, cmd := m.Update(m.spinner.Tick()); cmd != nil {
 		t.Fatal("stopped spinner scheduled another tick")
+	}
+}
+
+func TestTableResultPaginatesUsingAvailableHeight(t *testing.T) {
+	rows := make([]table.Row, 20)
+	for i := range rows {
+		rows[i] = table.NewRow(table.RowData{"value": i})
+	}
+	tableModel := table.New([]table.Column{table.NewFlexColumn("value", "Value", 1)}).
+		WithRows(rows).
+		WithMultiline(true).
+		Focused(true)
+
+	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	m.Update(SetResultMsg{Header: "TX", Table: &tableModel})
+	smallPages := m.table.MaxPages()
+	if smallPages <= 1 || len(strings.Split(m.View(), "\n")) != 10 {
+		t.Fatalf("small result pages=%d view=%q", smallPages, m.View())
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if m.table.CurrentPage() != 2 {
+		t.Fatalf("page down selected page %d, want 2", m.table.CurrentPage())
+	}
+
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
+	if largePages := m.table.MaxPages(); largePages >= smallPages {
+		t.Fatalf("larger result has %d pages, want fewer than %d", largePages, smallPages)
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if ansi.StringWidth(line) > 40 {
+			t.Fatalf("table line exceeds result width: %q", line)
+		}
 	}
 }

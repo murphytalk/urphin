@@ -17,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/evertras/bubble-table/table"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
@@ -64,6 +65,7 @@ type commandResultMsg struct {
 	line    string
 	name    string
 	content string
+	table   *table.Model
 	err     error
 }
 
@@ -301,8 +303,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshCommandSuggestions()
 		}
 		m.syncCommandPromptStyle()
-		if msg.err == nil && msg.name != "" && msg.content != "" {
-			m.showCommandResult(msg.name, msg.content)
+		if msg.err == nil && msg.name != "" && (msg.content != "" || msg.table != nil) {
+			m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: sanitizeCommandDiagnostic(msg.name), Content: msg.content, Table: msg.table})
+			m.resize()
 		} else if m.result.Active() {
 			m.result.Clear()
 			m.resize()
@@ -390,8 +393,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: name})
 			m.resize()
 			return m, tea.Batch(cmd, func() tea.Msg {
-				content, err := commands.RunCmd(m.ctx, &m.app, name, args, false)
-				return commandResultMsg{line: line, name: name, content: content, err: err}
+				result, err := commands.RunTUI(m.ctx, &m.app, name, args)
+				return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err}
 			})
 		case "esc":
 			m.commandInput.Reset()
