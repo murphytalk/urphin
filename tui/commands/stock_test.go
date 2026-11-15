@@ -56,6 +56,25 @@ func TestTxCommandPrintsJSON(t *testing.T) {
 	}
 }
 
+func TestTxCommandSortsNewestFirst(t *testing.T) {
+	newest := time.Date(2026, time.November, 15, 9, 30, 0, 0, time.UTC)
+	source := []databackend.Tx{
+		{Ticker: "old", Timestamp: newest.Add(-48 * time.Hour)},
+		{Ticker: "first", Timestamp: newest},
+		{Ticker: "middle", Timestamp: newest.Add(-24 * time.Hour)},
+		{Ticker: "second", Timestamp: newest},
+	}
+	got, err := (&TxCmd{}).transactions(context.Background(), &setup.AppCtx{Db: txTestBackend{txs: source}}, nil)
+	if err != nil {
+		t.Fatalf("transactions() error = %v", err)
+	}
+	for i, want := range []string{"first", "second", "middle", "old"} {
+		if got[i].Ticker != want {
+			t.Fatalf("transaction %d = %q, want %q", i, got[i].Ticker, want)
+		}
+	}
+}
+
 func TestTxCommandPrintsTable(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
 	wantTx := databackend.Tx{

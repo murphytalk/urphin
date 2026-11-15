@@ -72,6 +72,9 @@ func (t *TxCmd) transactions(ctx context.Context, appCtx *setup.AppCtx, args map
 	if err != nil {
 		return nil, err
 	}
+	slices.SortStableFunc(txs, func(a, b databackend.Tx) int {
+		return b.Timestamp.Compare(a.Timestamp)
+	})
 	return txs, nil
 }
 
