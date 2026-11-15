@@ -3,7 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	databackend "github.com/murphytalk/urphin/data/backend"
@@ -52,6 +54,10 @@ func (w *WatchCmd) Execute(ctx context.Context, appCtx *setup.AppCtx, args map[s
 		for _, ticker := range watchlist.Tickers {
 			position, err := appCtx.Db.CalculatePositionAndVWAP(ctx, nil, ticker)
 			if err != nil {
+				if errors.Is(err, databackend.ErrUnmatchedPositionLot) {
+					slog.Error("Skipping watchlist ticker with invalid position", "watchlist", watchlist.Name, "ticker", ticker, "error", err)
+					continue
+				}
 				return "", fmt.Errorf("calculate position for watchlist %q ticker %q: %w", watchlist.Name, ticker, err)
 			}
 			positions = append(positions, watchPositionInput{watchlist: watchlist.Name, position: position})
