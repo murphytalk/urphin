@@ -94,4 +94,7 @@ func TestTableResultPaginatesUsingAvailableHeight(t *testing.T) {
 			t.Fatalf("table line exceeds result width: %q", line)
 		}
 	}
+	if got := ansi.StringWidth(strings.Split(m.table.View(), "\n")[0]); got >= 40 {
+		t.Fatalf("table expanded to terminal width: %d", got)
+	}
 }

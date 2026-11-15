@@ -365,7 +365,7 @@ func TestTxCommandUsesPaginatedTableResult(t *testing.T) {
 	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
 	uiTestRunCommand(t, m, cmd)
 	before := ansi.Strip(m.result.View())
-	if !m.result.Active() || !strings.Contains(before, "Date") || !strings.Contains(before, "1/") {
+	if !m.result.Active() || !strings.Contains(before, "Timestamp") || !strings.Contains(before, "1/") {
 		t.Fatalf("TX table did not open with pagination: %q", before)
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyPgDown))

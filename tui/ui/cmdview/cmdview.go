@@ -142,5 +142,5 @@ func (m *Model) resizeTable() {
 	if m.table == nil {
 		return
 	}
-	*m.table = m.table.WithTargetWidth(max(1, m.width)).WithTargetHeight(max(1, m.viewport.Height()))
+	*m.table = m.table.WithTargetHeight(max(1, m.viewport.Height()))
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 
 	"charm.land/lipgloss/v2"
 	"github.com/evertras/bubble-table/table"
@@ -75,7 +77,7 @@ func (t *TxCmd) transactions(ctx context.Context, appCtx *setup.AppCtx, args map
 
 func newTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 	const (
-		columnDate   = "date"
+		columnDate   = "timestamp"
 		columnBroker = "broker"
 		columnTicker = "ticker"
 		columnCcy    = "ccy"
@@ -83,24 +85,43 @@ func newTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 		columnShares = "shares"
 		columnPrice  = "price"
 		columnFee    = "fee"
+		columnCash   = "cash_flow"
 	)
 
-	left := lipgloss.NewStyle().Align(lipgloss.Left)
-	columns := []table.Column{
-		table.NewColumn(columnDate, "Date", 16).WithStyle(left),
-		table.NewFlexColumn(columnBroker, "Broker", 1).WithStyle(left),
-		table.NewFlexColumn(columnTicker, "Ticker", 1).WithStyle(left),
-		table.NewColumn(columnCcy, "CCY", 3).WithStyle(left),
-		table.NewColumn(columnSide, "Side", 5).WithStyle(left),
-		table.NewColumn(columnShares, "Shares", 10),
-		table.NewColumn(columnPrice, "Price", 10),
-		table.NewColumn(columnFee, "Fee", 8),
+	currencies := make(map[string]float64)
+	rows := make([]table.Row, 0, len(txs)+1)
+	widths := map[string]int{
+		columnDate: 19, columnBroker: 6, columnTicker: 6, columnCcy: 3,
+		columnSide: 4, columnShares: 7, columnPrice: 9, columnFee: 5, columnCash: 11,
 	}
-
-	rows := make([]table.Row, len(txs))
-	for i, tx := range txs {
-		rows[i] = table.NewRow(table.RowData{
-			columnDate:   tx.Timestamp.Format("2006-01-02 15:04"),
+	add := func(data table.RowData) {
+		for key, value := range data {
+			if cell, ok := value.(table.StyledCell); ok {
+				value = cell.Data
+			}
+			widths[key] = max(widths[key], lipgloss.Width(fmt.Sprint(value)))
+		}
+		rows = append(rows, table.NewRow(data))
+	}
+	for _, tx := range txs {
+		cash := tx.Shares*tx.Price - float64(tx.Fee)
+		switch tx.Side {
+		case databackend.SideBuy:
+			cash = -tx.Shares*tx.Price - float64(tx.Fee)
+		case databackend.SideSplit:
+			cash = 0
+		}
+		if cash == 0 {
+			cash = 0
+		}
+		currencies[tx.Ccy] += cash
+		cashText := u.ConvertFloatToStringWithThousandsSeparator(cash, false)
+		var cashCell any = cashText
+		if cash < 0 {
+			cashCell = table.NewStyledCell(cashText, styles.Error.Bold(true).Padding(0, 1))
+		}
+		add(table.RowData{
+			columnDate:   tx.Timestamp.Format("2006-01-02 15:04:05"),
 			columnBroker: tx.Broker,
 			columnTicker: tx.Ticker,
 			columnCcy:    tx.Ccy,
@@ -108,14 +129,50 @@ func newTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 			columnShares: u.ConvertFloatToStringWithThousandsSeparator(tx.Shares, false),
 			columnPrice:  u.ConvertFloatToStringWithThousandsSeparator(tx.Price, false),
 			columnFee:    u.ConvertFloatToStringWithThousandsSeparator(float64(tx.Fee), false),
+			columnCash:   cashCell,
 		})
+	}
+	for _, currency := range slices.Sorted(maps.Keys(currencies)) {
+		total := currencies[currency]
+		cashText := u.ConvertFloatToStringWithThousandsSeparator(total, false)
+		var cashCell any = cashText
+		if total < 0 {
+			cashCell = table.NewStyledCell(cashText, styles.Error.Bold(true).Padding(0, 1))
+		}
+		add(table.RowData{columnDate: "Total", columnCcy: currency, columnCash: cashCell})
+	}
+
+	column := func(key, title string) table.Column {
+		return table.NewColumn(key, title, max(widths[key], lipgloss.Width(title))+2).
+			WithStyle(lipgloss.NewStyle().Padding(0, 1))
+	}
+	columns := []table.Column{
+		column(columnDate, "Timestamp"),
+		column(columnBroker, "Broker"),
+		column(columnTicker, "Symbol").WithStyle(lipgloss.NewStyle().Align(lipgloss.Left).Padding(0, 1)),
+		column(columnSide, "Side"),
+		column(columnShares, "Shares"),
+		column(columnPrice, "Price"),
+		column(columnFee, "Fee"),
+		column(columnCash, "Cash Flow"),
+	}
+	if len(currencies) > 1 {
+		columns = slices.Insert(columns, 3, column(columnCcy, "CCY"))
 	}
 
 	return table.New(columns).
 		WithRows(rows).
-		WithTargetWidth(80).
-		WithMultiline(true).
-		WithBaseStyle(lipgloss.NewStyle().Foreground(styles.TextColor)).
+		WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+			if input.Row.Data[columnDate] == "Total" {
+				return lipgloss.NewStyle()
+			}
+			if input.Index%2 == 0 {
+				return styles.Selected
+			}
+			return styles.Popup
+		}).
+		WithRowBorder(true).
+		WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(styles.TextColor)).
 		WithBorderForeground(styles.MutedColor).
 		HeaderStyle(styles.Accent.Bold(true)).
 		Focused(true)
