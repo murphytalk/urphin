@@ -29,6 +29,8 @@ import (
 	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // Model owns portfolio state; only the UI event loop mutates it.
@@ -304,7 +306,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncCommandPromptStyle()
 		if msg.err == nil && msg.name != "" && (msg.content != "" || msg.table != nil) {
-			m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: sanitizeCommandDiagnostic(msg.name), Content: msg.content, Table: msg.table})
+			m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: commandResultHeader(msg.name), Content: msg.content, Table: msg.table})
 			m.resize()
 		} else if m.result.Active() {
 			m.result.Clear()
@@ -390,7 +392,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncCommandPromptStyle()
 			m.commandRunning = true
 			var cmd tea.Cmd
-			m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: name})
+			m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: commandResultHeader(name)})
 			m.resize()
 			return m, tea.Batch(cmd, func() tea.Msg {
 				result, err := commands.RunTUI(m.ctx, &m.app, name, args)
@@ -508,6 +510,21 @@ func (m *Model) refreshContent() {
 func (m *Model) showCommandResult(header, content string) {
 	m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: sanitizeCommandDiagnostic(header), Content: content})
 	m.resize()
+}
+
+func commandResultHeader(name string) string {
+	help := commands.CmdHelp(name)
+	if help == "" {
+		help = name
+	}
+	verb, rest, ok := strings.Cut(help, " ")
+	if ok {
+		switch strings.ToLower(verb) {
+		case "show", "do", "list", "add", "close", "transfer", "summarize", "record", "calculate", "compute", "run", "update/delete":
+			help = rest
+		}
+	}
+	return sanitizeCommandDiagnostic(cases.Title(language.English, cases.NoLower).String(help))
 }
 
 func (m *Model) resize() {

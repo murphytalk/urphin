@@ -292,6 +292,9 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("HELP did not dispatch a command")
 	}
+	if got := strings.TrimSpace(ansi.Strip(strings.Split(m.result.View(), "\n")[1])); got != "Help" {
+		t.Fatalf("loading header = %q, want Help", got)
+	}
 	uiTestRunCommand(t, m, cmd)
 	if !m.result.Active() || m.commandInput.Value() != "" || m.hasCommandDiagnostic() || !strings.Contains(ansi.Strip(m.View().Content), "Home Watchlist") {
 		t.Fatal("HELP did not open the help screen")
@@ -299,8 +302,8 @@ func TestHelpCommandReplacesWatchlistUntilHome(t *testing.T) {
 	viewLines := strings.Split(m.View().Content, "\n")
 	headerRow := m.summary.Height() + 1
 	if len(viewLines) != 12 || viewLines[headerRow-1] != "" || viewLines[headerRow+1] != "" ||
-		ansi.Strip(viewLines[headerRow]) != strings.Repeat(" ", 48)+"HELP"+strings.Repeat(" ", 48) ||
-		!strings.Contains(viewLines[headerRow], m.app.Styles.TextBold("HELP")) {
+		ansi.Strip(viewLines[headerRow]) != strings.Repeat(" ", 48)+"Help"+strings.Repeat(" ", 48) ||
+		!strings.Contains(viewLines[headerRow], m.app.Styles.TextBold("Help")) {
 		t.Fatalf("result header is not centered, spaced, or distinct: %q", viewLines)
 	}
 	content := m.result.View()
@@ -350,6 +353,23 @@ func TestHomeLeavesAnyCommandResultScreen(t *testing.T) {
 	}
 }
 
+func TestCommandResultHeader(t *testing.T) {
+	for _, test := range []struct {
+		command string
+		want    string
+	}{
+		{"TX", "Stock Transactions"},
+		{"MKT", "Stock Mkt Data"},
+		{"WATCH", "A Watchlist"},
+		{"HELP", "Help"},
+		{"unknown", "Unknown"},
+	} {
+		if got := commandResultHeader(test.command); got != test.want {
+			t.Errorf("commandResultHeader(%q) = %q, want %q", test.command, got, test.want)
+		}
+	}
+}
+
 func TestTxCommandUsesPaginatedTableResult(t *testing.T) {
 	txs := make([]databackend.Tx, 20)
 	for i := range txs {
@@ -365,7 +385,8 @@ func TestTxCommandUsesPaginatedTableResult(t *testing.T) {
 	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
 	uiTestRunCommand(t, m, cmd)
 	before := ansi.Strip(m.result.View())
-	if !m.result.Active() || !strings.Contains(before, "Timestamp") || !strings.Contains(before, "1/") {
+	if !m.result.Active() || strings.TrimSpace(strings.Split(before, "\n")[1]) != "Stock Transactions" ||
+		!strings.Contains(before, "Timestamp") || !strings.Contains(before, "1/") {
 		t.Fatalf("TX table did not open with pagination: %q", before)
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyPgDown))
