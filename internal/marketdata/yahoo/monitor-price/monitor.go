@@ -95,6 +95,8 @@ func (m *MonitorPriceYahoo) SupportsAssetClass(assetClass c.AssetClass) bool {
 	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
 }
 
+func (m *MonitorPriceYahoo) SupportsCurrency(string) bool { return true }
+
 // Config contains the required configuration for the Yahoo monitor.
 type Config struct {
 	Ctx                      context.Context

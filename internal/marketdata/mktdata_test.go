@@ -123,6 +123,13 @@ type testMktDataFeed struct {
 	starts            int
 }
 
+type currencyLimitedFeed struct {
+	testMktDataFeed
+	currencies map[string]bool
+}
+
+func (f *currencyLimitedFeed) SupportsCurrency(currency string) bool { return f.currencies[currency] }
+
 func (f *testMktDataFeed) Start() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -343,6 +350,28 @@ func TestSubscribersMergeSymbolsAndKeepSharedProviderSymbols(t *testing.T) {
 	}
 	wantNoQuote(t, first)
 	wantNoQuote(t, second)
+}
+
+func TestCurrencyCapabilitiesRouteSubscriptionsAndRejectUnsupportedUpdates(t *testing.T) {
+	yahoo := &testMktDataFeed{}
+	alpaca := &currencyLimitedFeed{currencies: map[string]bool{"USD": true}}
+	longport := &currencyLimitedFeed{currencies: map[string]bool{"USD": true, "HKD": true, "CNY": true}}
+	service := newTestMktData(t, map[c.QuoteSource]mktDataFeed{
+		c.QuoteSourceYahoo: yahoo, c.QuoteSourceAlpaca: alpaca, c.QuoteSource("longport"): longport,
+	})
+	updates := make(chan c.QuoteUpdate, 10)
+	symbols := []string{"AAPL", "D05.SI", "7203.T", "0700.HK", "600519.SS", "002472.SZ"}
+	subscribeQuotes(t, service, "portfolio", updates, symbols...)
+	if !slices.Equal(yahoo.symbols, []string{"002472.SZ", "0700.HK", "600519.SS", "7203.T", "AAPL", "D05.SI"}) ||
+		!slices.Equal(alpaca.symbols, []string{"AAPL"}) ||
+		!slices.Equal(longport.symbols, []string{"002472.SZ", "0700.HK", "600519.SS", "AAPL"}) {
+		t.Fatalf("routed symbols: yahoo=%v alpaca=%v longport=%v", yahoo.symbols, alpaca.symbols, longport.symbols)
+	}
+	service.routeQuote(c.QuoteSourceAlpaca, c.AssetQuote{Symbol: "D05.SI", QuotePrice: c.QuotePrice{Price: 1}})
+	wantNoQuote(t, updates)
+	yahooQuote := c.AssetQuote{Symbol: "D05.SI", Currency: c.Currency{FromCurrencyCode: "SGD"}, QuotePrice: c.QuotePrice{Price: 10}}
+	service.routeQuote(c.QuoteSourceYahoo, yahooQuote)
+	wantQuote(t, updates, yahooQuote)
 }
 
 func TestSubscriptionSnapshotsAreIsolatedAndOnlySeedNewSymbols(t *testing.T) {

@@ -77,6 +77,8 @@ func (m *MktDataFeed) SupportsAssetClass(assetClass c.AssetClass) bool {
 	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
 }
 
+func (m *MktDataFeed) SupportsCurrency(currency string) bool { return currency == "USD" }
+
 var _ mktfeed.MktDataFeed = (*MktDataFeed)(nil)
 var _ mktfeed.MktDataFeedActor = (*MktDataFeed)(nil)
 

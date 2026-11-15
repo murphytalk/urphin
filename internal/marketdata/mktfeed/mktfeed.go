@@ -3,6 +3,7 @@ package mktfeed
 import (
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	c "github.com/murphytalk/urphin/internal"
@@ -22,6 +23,33 @@ type MktDataFeed interface {
 	GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error)
 	SetSymbols(symbols []string, versionVector int) error
 	Stop() error
+}
+
+// CurrencyCapability is optional; feeds without it retain unrestricted routing.
+type CurrencyCapability interface {
+	SupportsCurrency(string) bool
+}
+
+// TickerCurrency reads the app's Yahoo-style market suffix; unknown suffixes use Yahoo only.
+func TickerCurrency(symbol string) string {
+	index := strings.LastIndexByte(symbol, '.')
+	if index < 0 {
+		return "USD"
+	}
+	switch strings.ToUpper(symbol[index+1:]) {
+	case "US":
+		return "USD"
+	case "HK":
+		return "HKD"
+	case "SH", "SS", "SZ":
+		return "CNY"
+	case "T":
+		return "JPY"
+	case "SI":
+		return "SGD"
+	default:
+		return ""
+	}
 }
 
 // TickerConvention maps an app ticker and currency to a provider ticker.

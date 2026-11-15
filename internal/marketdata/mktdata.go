@@ -34,7 +34,7 @@ type MktFeedFactory = mktfeed.MktFeedFactory
 type MktData interface {
 	Start(config mktfeed.MktDataConfig) error
 	Stop() error
-	// Subscribe merges symbols for id and requests them from every enabled provider.
+	// Subscribe merges symbols for id and routes them to currency-capable providers.
 	// Quotes retain their provider-reported asset class. Repeat calls must use the same non-nil channel.
 	// Delivery is nonblocking: updates are skipped when the channel cannot accept them.
 	// The caller owns the channel and must unsubscribe before closing it.
@@ -1133,6 +1133,7 @@ func (o *mktDataOwner) enqueue(source c.QuoteSource, task *providerTask) {
 		o.providerTaskFailed(source, task, errors.New("provider is unavailable"))
 		return
 	}
+	task.symbols = o.providerSymbols(source, task.symbols)
 	if len(provider.queue) >= providerQueueSize {
 		o.providerTaskFailed(source, task, errors.New("provider operation queue is full"))
 		return
@@ -1142,6 +1143,31 @@ func (o *mktDataOwner) enqueue(source c.QuoteSource, task *providerTask) {
 	}
 	provider.queue = append(provider.queue, task)
 	o.startNext(source)
+}
+
+func (o *mktDataOwner) providerSupports(source c.QuoteSource, symbol string) bool {
+	if source == c.QuoteSourceYahoo {
+		return true
+	}
+	if _, fxPair := o.fxPairSet[symbol]; fxPair {
+		return false
+	}
+	provider := o.feeds[source]
+	if provider == nil {
+		return false
+	}
+	capability, ok := provider.feed.(mktfeed.CurrencyCapability)
+	return !ok || capability.SupportsCurrency(mktfeed.TickerCurrency(symbol))
+}
+
+func (o *mktDataOwner) providerSymbols(source c.QuoteSource, symbols []string) []string {
+	filtered := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		if o.providerSupports(source, symbol) {
+			filtered = append(filtered, symbol)
+		}
+	}
+	return filtered
 }
 
 func (o *mktDataOwner) startNext(source c.QuoteSource) {
@@ -1315,7 +1341,7 @@ func (o *mktDataOwner) captureSeedTargets(source c.QuoteSource, id string, symbo
 		}
 		members, sequence := make(map[string]uint64), make(map[string]uint64)
 		for symbol := range symbols {
-			if epoch, exists := sub.symbolEpochs[symbol]; exists {
+			if epoch, exists := sub.symbolEpochs[symbol]; exists && o.providerSupports(source, symbol) {
 				members[symbol] = epoch
 				sequence[symbol] = o.quoteVersions[source][symbol].sequence
 			}
@@ -1333,7 +1359,7 @@ func (o *mktDataOwner) applySeeds(source c.QuoteSource, updates []c.QuoteUpdate,
 	}
 	for _, update := range updates {
 		symbol := quoteSymbol(update)
-		if symbol == "" {
+		if symbol == "" || !o.providerSupports(source, symbol) {
 			continue
 		}
 		update.Symbol = symbol
@@ -1385,7 +1411,7 @@ func (o *mktDataOwner) handleQuote(source c.QuoteSource, update c.QuoteUpdate) {
 		return
 	}
 	symbol := quoteSymbol(update)
-	if symbol == "" {
+	if symbol == "" || !o.providerSupports(source, symbol) {
 		return
 	}
 	update.Symbol = symbol
