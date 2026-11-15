@@ -29,6 +29,7 @@ const defaultLogKeepDays = 7
 var (
 	cfgPath             string
 	cmdLine             string
+	dataBackendOverride string
 	logPath             string
 	mktDataFeedOverride string
 	themeOverride       string
@@ -120,6 +121,7 @@ func init() {
 	logPathDefault := filepath.Join(home, ".urphin", "urphin.log")
 
 	flag.StringVar(&cfgPath, "config", cfgPathDefault, "config file")
+	flag.StringVar(&dataBackendOverride, "data", "", "override data backend")
 	flag.StringVar(&themeOverride, "theme", "", "theme name or file")
 	flag.BoolVar(&listThemes, "list-themes", false, "list available themes")
 	flag.StringVar(&importTheme, "import-theme", "", "import a Base16 YAML theme")
@@ -135,6 +137,7 @@ func run() (code int) {
 	utilityProvided := false
 	importProvided := false
 	themeOverrideProvided := false
+	dataBackendOverrideProvided := false
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "C" {
 			commandProvided = true
@@ -147,6 +150,9 @@ func run() (code int) {
 		}
 		if f.Name == "theme" {
 			themeOverrideProvided = true
+		}
+		if f.Name == "data" {
+			dataBackendOverrideProvided = true
 		}
 	})
 	if listThemes && importProvided || utilityProvided && commandProvided || importProvided && importTheme == "" {
@@ -178,6 +184,9 @@ func run() (code int) {
 		slog.Error("Failed to load config", "config", cfgPath, "error", cfgErr)
 		fmt.Fprintln(os.Stderr, cfgErr)
 		return 1
+	}
+	if dataBackendOverrideProvided {
+		ctx.Cfg.App.Databackend = dataBackendOverride
 	}
 
 	if logs == nil {
