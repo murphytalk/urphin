@@ -136,7 +136,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 	if !m.app.Settings.FollowWatchlist {
 		t.Fatal("follow mode must be enabled by default")
 	}
-	feed := newSessionTestFeed()
+	feed := newSessionTestFeed(t)
 	m.session = newQuoteSession(context.Background(), feed, m.symbols)
 	t.Cleanup(func() { _ = m.session.Close() })
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 100, 90), uiTestQuote("B", "EUR", 20, 19), uiTestQuote("C", "USD", 30, 29)})

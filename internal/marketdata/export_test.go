@@ -1,20 +1,17 @@
 package mktdata
 
-import (
-	"context"
-
-	c "github.com/murphytalk/urphin/internal"
-)
+import c "github.com/murphytalk/urphin/internal"
 
 func (m *Service) routeQuote(source c.QuoteSource, quote c.AssetQuote) {
-	command := newMktDataCommand(context.Background(), mktDataRouteQuote)
-	command.source, command.update = source, c.NewQuoteUpdate(quote, 0, 0)
-	_ = m.call(command)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.handleQuote(source, c.NewQuoteUpdate(quote, 0, 0))
 }
 
 func (m *Service) inspect() *ownerSnapshot {
-	command := newMktDataCommand(context.Background(), mktDataInspect)
-	return m.call(command).snapshot
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.snapshot()
 }
 
 func (m *Service) subscriptionSymbols() map[string]struct{} {

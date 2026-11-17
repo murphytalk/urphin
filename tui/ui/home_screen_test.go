@@ -264,7 +264,7 @@ func TestModelInitCommandsRequireSessionAndSymbols(t *testing.T) {
 					lists[0].Tickers = []string{"A"}
 				}
 				m := uiTestModel(t, lists, nil)
-				feed := newSessionTestFeed()
+				feed := newSessionTestFeed(t)
 				if hasSession {
 					m.session = newQuoteSession(context.Background(), feed, m.symbols)
 					t.Cleanup(func() { _ = m.session.Close() })
@@ -321,7 +321,7 @@ func TestModelWatchlistNavigationWrapsInBothDirectionsWithoutFeedCalls(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Name: "A", Tickers: []string{"A"}}, {Name: "B", Tickers: []string{"B"}}, {Name: "C"}}, nil)
-			feed := newSessionTestFeed()
+			feed := newSessionTestFeed(t)
 			m.session = newQuoteSession(context.Background(), feed, m.symbols)
 			t.Cleanup(func() { _ = m.session.Close() })
 			for _, want := range tc.want {
@@ -350,7 +350,7 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 		t.Run(start, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: []string{"Z", "A"}}}, nil)
 			m.app.Settings.Sort = start
-			feed := newSessionTestFeed()
+			feed := newSessionTestFeed(t)
 			m.session = newQuoteSession(context.Background(), feed, m.symbols)
 			t.Cleanup(func() { _ = m.session.Close() })
 			modes := []string{"ticker", "value", "change", "user"}
@@ -557,7 +557,7 @@ func TestModelQuitKeysCancelSessionEvenDuringResizeNotice(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/session=%t", key.Keystroke(), hasSession), func(t *testing.T) {
 				m := uiTestModel(t, nil, nil)
 				if hasSession {
-					m.session = newQuoteSession(context.Background(), newSessionTestFeed(), nil)
+					m.session = newQuoteSession(context.Background(), newSessionTestFeed(t), nil)
 					t.Cleanup(func() { _ = m.session.Close() })
 				}
 				uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 8, Height: 1})
