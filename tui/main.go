@@ -13,6 +13,7 @@ import (
 	"time"
 
 	data "github.com/murphytalk/urphin/data"
+	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/theme"
@@ -197,27 +198,14 @@ func run() (code int) {
 	}
 	defer closeLogging()
 
-	backendFields := strings.Split(ctx.Cfg.App.Databackend, "|")
-	backendTypeName := backendFields[0]
-	backendName := ""
-	if len(backendFields) > 1 {
-		backendName = backendFields[1]
-	}
-	databackend, dataErr := data.ConnectToDataBackend(backendTypeName, backendName, ctx.Cfg)
-	if dataErr != nil {
-		slog.Error("Failed to connect to data backend", "backend", ctx.Cfg.App.Databackend, "error", dataErr)
-		fmt.Fprintln(os.Stderr, dataErr)
-		return 1
-	}
-	defer func() {
-		if err := databackend.Close(context.Background()); err != nil {
-			slog.Error("Failed to close data backend", "error", err)
-		}
-	}()
-
-	ctx.Db = databackend
-
 	if commandProvided {
+		databackend, err := connectBackend()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		defer databackend.Close(context.Background())
+		ctx.Db = databackend
 		cachePath := ctx.Cfg.App.Cache
 		getLastPrices, err := resolveOneShotMktDataFeed(ctx.Cfg.App.MktDataFeed, mktDataFeedOverride, ctx.Cfg.Alpaca, cachePath)
 		if err != nil {
@@ -274,28 +262,19 @@ func run() (code int) {
 		ctx.Cfg.App.MktDataFeed = c.QuoteSource(mktDataFeedOverride)
 	}
 
-	marketData := mktdata.NewMktData()
-	err := marketData.Start(mktdata.MktDataConfig{
-		CachePath:       ctx.Cfg.App.Cache,
-		TargetCurrency:  ctx.Settings.BaseCurrency,
-		FxPairs:         ctx.Cfg.App.FxPairs,
-		Cfg:             ctx.Cfg,
-		RandomMktData:   ctx.Cfg.App.RandomMktData,
-		RefreshInterval: time.Duration(ctx.Settings.RefreshInterval) * time.Second,
-	})
-	if err != nil {
-		slog.Error("Failed to start market data feeds", "error", err)
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	defer func() {
-		if err := marketData.Stop(); err != nil {
-			slog.Error("Failed to stop market data feeds", "error", err)
-		}
-	}()
-
 	slog.Info("urphin started", "config", cfgPath, "log", logPath, "debug", ctx.Debug)
-	if err := startUI(context.Background(), marketData); err != nil {
+	if err := ui.RunWithStartup(context.Background(), func(startCtx context.Context) (setup.AppCtx, mktdata.MktData, func() error, func() error, error) {
+		databackend, err := connectBackend()
+		if err != nil {
+			return ctx, nil, nil, nil, err
+		}
+		ctx.Db = databackend
+		marketData := mktdata.NewMktData()
+		start := func() error {
+			return marketData.Start(mktdata.MktDataConfig{CachePath: ctx.Cfg.App.Cache, TargetCurrency: ctx.Settings.BaseCurrency, FxPairs: ctx.Cfg.App.FxPairs, Cfg: ctx.Cfg, RandomMktData: ctx.Cfg.App.RandomMktData, RefreshInterval: time.Duration(ctx.Settings.RefreshInterval) * time.Second})
+		}
+		return ctx, marketData, start, func() error { return errors.Join(marketData.Stop(), databackend.Close(context.Background())) }, nil
+	}); err != nil {
 		slog.Error("UI failed", "error", err)
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -365,6 +344,15 @@ func writeThemeFile(path string, file io.WriteCloser, output []byte) error {
 func startUI(requestCtx context.Context, mktData mktdata.MktData) error {
 	// The UI session consumes quotes; this application retains feed/backend ownership.
 	return ui.Run(requestCtx, ctx, mktData)
+}
+
+func connectBackend() (databackend.DataBackend, error) {
+	fields := strings.Split(ctx.Cfg.App.Databackend, "|")
+	name := ""
+	if len(fields) > 1 {
+		name = fields[1]
+	}
+	return data.ConnectToDataBackend(fields[0], name, ctx.Cfg)
 }
 
 func resolveOneShotMktDataFeed(feed c.QuoteSource, override string, credentials c.KeySecretCfg, cachePath string) (func(context.Context, []string) (map[string]float64, error), error) {

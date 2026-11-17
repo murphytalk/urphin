@@ -58,6 +58,9 @@ type Model struct {
 	commandHistory textinput.TextHistory
 	result         *cmdview.Model
 	commandRunning bool
+	marketLoading  bool
+	marketSpinner  spinner.Model
+	marketError    error
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -316,6 +319,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resize()
 		}
 	case spinner.TickMsg:
+		if m.marketLoading {
+			var cmd tea.Cmd
+			m.marketSpinner, cmd = m.marketSpinner.Update(msg)
+			return m, cmd
+		}
 		var cmd tea.Cmd
 		m.result, cmd = m.result.Update(msg)
 		return m, cmd
@@ -595,7 +603,15 @@ func (m *Model) View() tea.View {
 	} else {
 		heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.app.Settings.Sort)
 		lines = append(lines, ansi.Truncate(heading, m.width, ""))
-		lines = append(lines, m.viewport.View())
+		if m.marketLoading || m.marketError != nil {
+			label := m.marketSpinner.View() + " Starting market data..."
+			if m.marketError != nil {
+				label = "Market data unavailable: " + m.marketError.Error()
+			}
+			lines = append(lines, centeredSpinner(label, m.viewport.Width(), m.viewport.Height()))
+		} else {
+			lines = append(lines, m.viewport.View())
+		}
 	}
 	if extra > 0 {
 		lines = append(lines, strings.Split(diagnosticLine, "\n")...)
@@ -604,6 +620,13 @@ func (m *Model) View() tea.View {
 	view.SetContent(strings.Join(lines, "\n"))
 	m.setCommandCursor(&view)
 	return view
+}
+
+func centeredSpinner(label string, width, height int) string {
+	line := strings.Repeat(" ", max(0, (width-ansi.StringWidth(label))/2)) + label
+	rows := make([]string, max(1, height))
+	rows[len(rows)/2] = line
+	return strings.Join(rows, "\n")
 }
 
 func (m *Model) setCommandCursor(view *tea.View) {
