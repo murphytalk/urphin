@@ -29,7 +29,7 @@ func testAPI(t *testing.T, transport roundTripFunc) *unary.UnaryAPI {
 		BaseURL:    "https://example.invalid",
 		HTTPClient: &http.Client{Transport: transport},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	return api
 }
 
@@ -93,7 +93,7 @@ func TestSetSymbolsClonesInputAndQuoteCurrencyRequestsUseQuoteResponse(t *testin
 	t.Cleanup(func() { _ = monitor.Stop() })
 	symbols := []string{"AAPL", "AAPL"}
 	setDone := make(chan error, 1)
-	go func() { setDone <- monitor.SetSymbols(symbols, 7) }()
+	go func() { setDone <- monitor.SetSymbols(context.Background(), symbols, 7) }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -115,7 +115,7 @@ func TestSetSymbolsClonesInputAndQuoteCurrencyRequestsUseQuoteResponse(t *testin
 	if !fieldsContainCurrency.Load() {
 		t.Fatal("quote request did not include currency field")
 	}
-	quotes, err := monitor.GetAssetQuotes()
+	quotes, err := monitor.Snapshot(context.Background(), false)
 	if err != nil || len(quotes) != 1 || quotes[0].Symbol != "AAPL" || quotes[0].Generation != 7 {
 		t.Fatalf("snapshot = %v, error = %v", quotes, err)
 	}
@@ -127,15 +127,15 @@ func TestSnapshotsOwnIndependentPricesAndConcurrentCallsAreSafe(t *testing.T) {
 	})
 	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api})
 	t.Cleanup(func() { _ = monitor.Stop() })
-	if err := monitor.SetSymbols([]string{"AAPL"}, 3); err != nil {
+	if err := monitor.SetSymbols(context.Background(), []string{"AAPL"}, 3); err != nil {
 		t.Fatal(err)
 	}
-	first, err := monitor.GetAssetQuotes()
+	first, err := monitor.Snapshot(context.Background(), false)
 	if err != nil || len(first) != 1 || first[0].QuotePrice == nil {
 		t.Fatalf("first snapshot = %v, error = %v", first, err)
 	}
 	first[0].QuotePrice.Price = 999
-	second, err := monitor.GetAssetQuotes()
+	second, err := monitor.Snapshot(context.Background(), false)
 	if err != nil || len(second) != 1 || second[0].QuotePrice.Price != 42 {
 		t.Fatalf("second snapshot = %v, error = %v", second, err)
 	}
@@ -146,10 +146,10 @@ func TestSnapshotsOwnIndependentPricesAndConcurrentCallsAreSafe(t *testing.T) {
 			defer func() { done <- struct{}{} }()
 			for j := 0; j < 20; j++ {
 				if i%2 == 0 {
-					if _, err := monitor.GetAssetQuotes(); err != nil {
+					if _, err := monitor.Snapshot(context.Background(), false); err != nil {
 						failures.Add(1)
 					}
-				} else if err := monitor.SetSymbols([]string{"AAPL"}, 3); err != nil {
+				} else if err := monitor.SetSymbols(context.Background(), []string{"AAPL"}, 3); err != nil {
 					failures.Add(1)
 				}
 			}
@@ -188,10 +188,10 @@ func TestStaleFetchDoesNotReplaceNewSymbolsAndCommandsRemainResponsive(t *testin
 	updates := make(chan c.QuoteUpdate, 8)
 	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api, ChanUpdateAssetQuote: updates}, WithRefreshInterval(80*time.Millisecond))
 	t.Cleanup(func() { _ = monitor.Stop() })
-	if err := monitor.SetSymbols([]string{"OLD"}, 1); err != nil {
+	if err := monitor.SetSymbols(context.Background(), []string{"OLD"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := monitor.Start(); err != nil {
+	if err := monitor.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return calls.Load() >= 3 }, "periodic request did not start")
@@ -204,14 +204,14 @@ func TestStaleFetchDoesNotReplaceNewSymbolsAndCommandsRemainResponsive(t *testin
 		t.Fatal("periodic request did not reach transport")
 	}
 	// Actor must serve cached reads and accept a new symbol set while HTTP is blocked.
-	quotes, err := monitor.GetAssetQuotes()
+	quotes, err := monitor.Snapshot(context.Background(), false)
 	if err != nil || len(quotes) != 1 || quotes[0].Symbol != "OLD" {
 		t.Fatalf("responsive cached snapshot = %v, error = %v", quotes, err)
 	}
 	setDone := make(chan error, 1)
-	go func() { setDone <- monitor.SetSymbols([]string{"NEW"}, 2) }()
+	go func() { setDone <- monitor.SetSymbols(context.Background(), []string{"NEW"}, 2) }()
 	waitFor(t, func() bool {
-		quotes, _ := monitor.GetAssetQuotes()
+		quotes, _ := monitor.Snapshot(context.Background(), false)
 		return len(quotes) == 0
 	}, "symbol command did not clear stale snapshot while request was pending")
 	close(release)
@@ -223,7 +223,7 @@ func TestStaleFetchDoesNotReplaceNewSymbolsAndCommandsRemainResponsive(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("new symbol request did not complete")
 	}
-	quotes, err = monitor.GetAssetQuotes()
+	quotes, err = monitor.Snapshot(context.Background(), false)
 	if err != nil || len(quotes) != 1 || quotes[0].Symbol != "NEW" || quotes[0].Generation != 2 {
 		t.Fatalf("new snapshot = %v, error = %v", quotes, err)
 	}
@@ -255,10 +255,10 @@ func TestTimerCoalescesTicksWhileFetchIsPending(t *testing.T) {
 	})
 	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api}, WithRefreshInterval(30*time.Millisecond))
 	t.Cleanup(func() { _ = monitor.Stop() })
-	if err := monitor.SetSymbols([]string{"AAPL"}, 1); err != nil {
+	if err := monitor.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := monitor.Start(); err != nil {
+	if err := monitor.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -285,10 +285,10 @@ func TestMetadataOnlyPeriodicUpdateIsPublishedAndStopJoins(t *testing.T) {
 		return response(t, request, quoteResponse("AAPL", name, "USD", 42)), nil
 	})
 	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api, ChanUpdateAssetQuote: updates}, WithRefreshInterval(20*time.Millisecond))
-	if err := monitor.SetSymbols([]string{"AAPL"}, 1); err != nil {
+	if err := monitor.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := monitor.Start(); err != nil {
+	if err := monitor.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -328,7 +328,7 @@ func TestStopCancelsBlockedInitialSeed(t *testing.T) {
 	})
 	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api})
 	setDone := make(chan error, 1)
-	go func() { setDone <- monitor.SetSymbols([]string{"AAPL"}, 1) }()
+	go func() { setDone <- monitor.SetSymbols(context.Background(), []string{"AAPL"}, 1) }()
 	select {
 	case <-started:
 	case <-time.After(time.Second):
@@ -336,6 +336,9 @@ func TestStopCancelsBlockedInitialSeed(t *testing.T) {
 	}
 	if err := monitor.Stop(); err != nil {
 		t.Fatal(err)
+	}
+	if err := monitor.Stop(); err != nil {
+		t.Fatalf("repeated Stop() error = %v", err)
 	}
 	select {
 	case err := <-setDone:

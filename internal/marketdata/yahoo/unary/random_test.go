@@ -7,7 +7,7 @@ import (
 
 func TestRandomModeSynthesizesYahooQueryResponsesWithoutRequests(t *testing.T) {
 	api := NewUnaryAPI(Config{RandomMktData: true})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 
 	quotes, quotesBySymbol, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
 	if err != nil {
@@ -29,15 +29,15 @@ func TestRandomModeSynthesizesYahooQueryResponsesWithoutRequests(t *testing.T) {
 	}
 }
 
-func TestWorkerReturnsIndependentOwnedQuotePrices(t *testing.T) {
+func TestRequestsReturnIndependentQuotePrices(t *testing.T) {
 	api := NewUnaryAPI(Config{RandomMktData: true})
-	t.Cleanup(api.Close)
-	first := api.submit(context.Background(), request{kind: quotesRequest, symbols: []string{"AAPL"}})
-	second := api.submit(context.Background(), request{kind: quotesRequest, symbols: []string{"AAPL"}})
-	if first.err != nil || second.err != nil || len(first.quotes) != 1 || len(second.quotes) != 1 {
-		t.Fatalf("quote results = %+v / %+v", first, second)
+	t.Cleanup(api.CloseIdleConnections)
+	first, firstErr := api.owner.getAssetQuotes(context.Background(), []string{"AAPL"})
+	second, secondErr := api.owner.getAssetQuotes(context.Background(), []string{"AAPL"})
+	if firstErr != nil || secondErr != nil || len(first) != 1 || len(second) != 1 {
+		t.Fatalf("quote results = %+v / %+v, errors = %v / %v", first, second, firstErr, secondErr)
 	}
-	if first.quotes[0].QuotePrice == nil || second.quotes[0].QuotePrice == nil || first.quotes[0].QuotePrice == second.quotes[0].QuotePrice {
-		t.Fatal("worker reused a quote price pointer across requests")
+	if first[0].QuotePrice == nil || second[0].QuotePrice == nil || first[0].QuotePrice == second[0].QuotePrice {
+		t.Fatal("requests reused a quote price pointer")
 	}
 }

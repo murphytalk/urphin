@@ -13,6 +13,7 @@ import (
 	"github.com/alpacahq/alpaca-trade-api-go/v3/marketdata/stream"
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata/mktfeed"
+	"github.com/murphytalk/urphin/internal/marketdata/mktfeed/actor"
 )
 
 const (
@@ -63,24 +64,21 @@ type MktDataFeed struct {
 	snapshotClient       snapshotClient
 	streamClientFactory  streamClientFactory
 	chanError            chan error
-	chanUpdateAssetQuote chan c.QuoteUpdate
+	chanUpdateAssetQuote chan<- c.QuoteUpdate
 
-	commands     chan mktfeed.FeedCommand
+	commands     chan actor.Command
 	events       chan feedEvent
 	snapshotJobs chan snapshotJob
 	streamJobs   chan streamJob
 	done         chan struct{}
-	terminal     mktfeed.FeedResult
-}
-
-func (m *MktDataFeed) SupportsAssetClass(assetClass c.AssetClass) bool {
-	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
+	terminal     actor.Result
+	stopOnce     sync.Once
+	stopErr      error
 }
 
 func (m *MktDataFeed) SupportsCurrency(currency string) bool { return currency == "USD" }
 
 var _ mktfeed.MktDataFeed = (*MktDataFeed)(nil)
-var _ mktfeed.MktDataFeedActor = (*MktDataFeed)(nil)
 
 func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 	if config.Credentials.Key == "" || config.Credentials.Secret == "" {
@@ -106,7 +104,7 @@ func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 		streamClientFactory:  streamFactory,
 		chanError:            config.ChanError,
 		chanUpdateAssetQuote: config.ChanUpdateAssetQuote,
-		commands:             make(chan mktfeed.FeedCommand, commandBufferSize),
+		commands:             make(chan actor.Command, commandBufferSize),
 		events:               make(chan feedEvent, eventBufferSize),
 		snapshotJobs:         make(chan snapshotJob, workerBufferSize),
 		streamJobs:           make(chan streamJob, 1),
@@ -129,41 +127,44 @@ func newStreamClient(credentials c.KeySecretCfg) streamClientFactory {
 	}
 }
 
-func (m *MktDataFeed) Commands() chan<- mktfeed.FeedCommand { return m.commands }
-func (m *MktDataFeed) Done() <-chan struct{}                { return m.done }
-
-// TerminalResult is immutable after Done closes.
-func (m *MktDataFeed) TerminalResult() mktfeed.FeedResult { return m.terminal }
-
-func (m *MktDataFeed) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
-	kind := mktfeed.FeedGetSnapshot
-	if len(ignoreCache) > 0 && ignoreCache[0] {
-		kind = mktfeed.FeedGetFreshSnapshot
+func (m *MktDataFeed) Snapshot(ctx context.Context, fresh bool) ([]c.QuoteUpdate, error) {
+	kind := actor.GetSnapshot
+	if fresh {
+		kind = actor.GetFreshSnapshot
 	}
-	result := m.request(mktfeed.NewFeedCommand(m.ctx, 0, kind, nil, 0))
+	result := m.request(actor.NewCommand(ctx, 0, kind, nil, 0))
 	return result.Quotes, result.Err
 }
 
-func (m *MktDataFeed) SetSymbols(symbols []string, versionVector int) error {
-	command := mktfeed.NewFeedCommand(m.ctx, 0, mktfeed.FeedSetSymbols, symbols, versionVector)
+func (m *MktDataFeed) SetSymbols(ctx context.Context, symbols []string, versionVector int) error {
+	command := actor.NewCommand(ctx, 0, actor.SetSymbols, symbols, versionVector)
 	return m.request(command).Err
 }
 
-func (m *MktDataFeed) Start() error {
-	command := mktfeed.NewFeedCommand(m.ctx, 0, mktfeed.FeedStart, nil, 0)
+func (m *MktDataFeed) Start(ctx context.Context) error {
+	command := actor.NewCommand(ctx, 0, actor.Start, nil, 0)
 	return m.request(command).Err
+}
+
+func (m *MktDataFeed) SetQuoteUpdates(updates chan<- c.QuoteUpdate) {
+	command := actor.NewCommand(context.Background(), 0, actor.SetQuoteUpdates, nil, 0)
+	command.QuoteUpdates = updates
+	_ = m.request(command)
 }
 
 func (m *MktDataFeed) Stop() error {
-	command := mktfeed.NewFeedCommand(context.Background(), 0, mktfeed.FeedStop, nil, 0)
-	err := m.request(command).Err
-	if errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return err
+	m.stopOnce.Do(func() {
+		command := actor.NewCommand(context.Background(), 0, actor.Stop, nil, 0)
+		err := m.request(command).Err
+		<-m.done
+		if !errors.Is(err, context.Canceled) {
+			m.stopErr = err
+		}
+	})
+	return m.stopErr
 }
 
-func (m *MktDataFeed) request(command mktfeed.FeedCommand) mktfeed.FeedResult {
+func (m *MktDataFeed) request(command actor.Command) actor.Result {
 	select {
 	case <-m.done:
 		return m.completedRequest(command)
@@ -178,27 +179,22 @@ func (m *MktDataFeed) request(command mktfeed.FeedCommand) mktfeed.FeedResult {
 			return result
 		default:
 		}
-		return mktfeed.FeedResult{OperationID: command.OperationID, Kind: command.Kind, Err: command.Context.Err()}
+		return actor.Result{OperationID: command.OperationID, Kind: command.Kind, Err: command.Context.Err()}
 	case m.commands <- command:
 	}
 	select {
 	case result := <-command.Reply():
 		return result
 	case <-command.Context.Done():
-		select {
-		case result := <-command.Reply():
-			return result
-		default:
-		}
-		return mktfeed.FeedResult{OperationID: command.OperationID, Kind: command.Kind, Err: command.Context.Err()}
+		return actor.Result{OperationID: command.OperationID, Kind: command.Kind, Err: command.Context.Err()}
 	case <-m.done:
 		return m.completedRequest(command)
 	}
 }
 
-func (m *MktDataFeed) completedRequest(command mktfeed.FeedCommand) mktfeed.FeedResult {
+func (m *MktDataFeed) completedRequest(command actor.Command) actor.Result {
 	result := m.terminal
-	if command.Kind == mktfeed.FeedStop {
+	if command.Kind == actor.Stop {
 		if errors.Is(result.Err, context.Canceled) {
 			result.Err = nil
 		}
@@ -237,7 +233,7 @@ const (
 )
 
 type feedMutation struct {
-	command       mktfeed.FeedCommand
+	command       actor.Command
 	operationID   uint64
 	kind          mutationKind
 	stage         mutationStage
@@ -260,7 +256,7 @@ type feedOwner struct {
 	nextID     uint64
 	active     *feedMutation
 	queued     []*feedMutation
-	fresh      map[uint64]mktfeed.FeedCommand
+	fresh      map[uint64]actor.Command
 }
 
 type snapshotJob struct {
@@ -332,7 +328,7 @@ func (m *MktDataFeed) run() {
 		feed:    m,
 		applied: make(map[string]struct{}),
 		quotes:  make(map[string]quoteEntry),
-		fresh:   make(map[uint64]mktfeed.FeedCommand),
+		fresh:   make(map[uint64]actor.Command),
 	}
 	terminal, stopCommands, pendingCommands := owner.loop()
 	m.cancel()
@@ -349,10 +345,10 @@ func (m *MktDataFeed) run() {
 	for {
 		select {
 		case command := <-m.commands:
-			if command.Kind == mktfeed.FeedStop {
+			if command.Kind == actor.Stop {
 				stopCommands = append(stopCommands, command)
 			} else {
-				command.Complete(mktfeed.FeedResult{Err: stopError})
+				command.Complete(actor.Result{Err: stopError})
 			}
 		case <-workersDone:
 			goto joined
@@ -361,10 +357,10 @@ func (m *MktDataFeed) run() {
 
 joined:
 	for _, command := range pendingCommands {
-		command.Complete(mktfeed.FeedResult{Generation: terminal.Generation, Err: stopError})
+		command.Complete(actor.Result{Generation: terminal.Generation, Err: stopError})
 	}
 	for _, command := range stopCommands {
-		command.Complete(mktfeed.FeedResult{Generation: terminal.Generation, Err: terminal.Err})
+		command.Complete(actor.Result{Generation: terminal.Generation, Err: terminal.Err})
 	}
 	m.terminal = terminal
 	close(m.done)
@@ -472,19 +468,19 @@ func (m *MktDataFeed) emitCallback(event feedEvent) {
 	}
 }
 
-func (o *feedOwner) loop() (mktfeed.FeedResult, []mktfeed.FeedCommand, []mktfeed.FeedCommand) {
+func (o *feedOwner) loop() (actor.Result, []actor.Command, []actor.Command) {
 	for {
 		if err := o.feed.ctx.Err(); err != nil {
-			return mktfeed.FeedResult{Kind: mktfeed.FeedStop, Generation: o.version, Err: err}, nil, o.pendingCommands(err)
+			return actor.Result{Kind: actor.Stop, Generation: o.version, Err: err}, nil, o.pendingCommands(err)
 		}
 		o.startNextMutation()
 		select {
 		case <-o.feed.ctx.Done():
 			err := o.feed.ctx.Err()
-			return mktfeed.FeedResult{Kind: mktfeed.FeedStop, Generation: o.version, Err: err}, nil, o.pendingCommands(err)
+			return actor.Result{Kind: actor.Stop, Generation: o.version, Err: err}, nil, o.pendingCommands(err)
 		case command := <-o.feed.commands:
-			if command.Kind == mktfeed.FeedStop {
-				return mktfeed.FeedResult{Kind: mktfeed.FeedStop, Generation: o.version}, []mktfeed.FeedCommand{command}, o.pendingCommands(errFeedStopped)
+			if command.Kind == actor.Stop {
+				return actor.Result{Kind: actor.Stop, Generation: o.version}, []actor.Command{command}, o.pendingCommands(errFeedStopped)
 			}
 			o.handleCommand(command)
 		case event := <-o.feed.events:
@@ -495,12 +491,12 @@ func (o *feedOwner) loop() (mktfeed.FeedResult, []mktfeed.FeedCommand, []mktfeed
 	}
 }
 
-func (o *feedOwner) pendingCommands(err error) []mktfeed.FeedCommand {
-	commands := make([]mktfeed.FeedCommand, 0, len(o.fresh)+len(o.queued)+1)
+func (o *feedOwner) pendingCommands(err error) []actor.Command {
+	commands := make([]actor.Command, 0, len(o.fresh)+len(o.queued)+1)
 	for _, command := range o.fresh {
 		commands = append(commands, command)
 	}
-	o.fresh = make(map[uint64]mktfeed.FeedCommand)
+	o.fresh = make(map[uint64]actor.Command)
 	if o.active != nil {
 		commands = append(commands, o.active.command)
 		o.active = nil
@@ -510,12 +506,12 @@ func (o *feedOwner) pendingCommands(err error) []mktfeed.FeedCommand {
 	}
 	o.queued = nil
 	for _, command := range commands {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: err})
+		command.Complete(actor.Result{Generation: o.version, Err: err})
 	}
 	return nil
 }
 
-func (o *feedOwner) handleCommand(command mktfeed.FeedCommand) {
+func (o *feedOwner) handleCommand(command actor.Command) {
 	if command.Context == nil {
 		command.Context = o.feed.ctx
 	}
@@ -523,40 +519,43 @@ func (o *feedOwner) handleCommand(command mktfeed.FeedCommand) {
 	if command.OperationID == 0 {
 		command.OperationID = o.nextID
 	}
-	if command.Kind != mktfeed.FeedStop && command.Context.Err() != nil {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: command.Context.Err()})
+	if command.Kind != actor.Stop && command.Context.Err() != nil {
+		command.Complete(actor.Result{Generation: o.version, Err: command.Context.Err()})
 		return
 	}
 	if o.lifecycle == feedTerminal {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errFeedStopped})
+		command.Complete(actor.Result{Generation: o.version, Err: errFeedStopped})
 		return
 	}
 	switch command.Kind {
-	case mktfeed.FeedStart:
+	case actor.Start:
 		if o.lifecycle == feedStarted {
-			command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errors.New("Alpaca market data feed already started")})
+			command.Complete(actor.Result{Generation: o.version, Err: errors.New("Alpaca market data feed already started")})
 			return
 		}
 		if len(o.queued) >= commandBufferSize {
-			command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errors.New("too many pending Alpaca feed commands")})
+			command.Complete(actor.Result{Generation: o.version, Err: errors.New("too many pending Alpaca feed commands")})
 			return
 		}
 		o.queued = append(o.queued, &feedMutation{command: command, operationID: o.nextID, kind: mutationStart})
-	case mktfeed.FeedSetSymbols:
+	case actor.SetSymbols:
 		if len(o.queued) >= commandBufferSize {
-			command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errors.New("too many pending Alpaca feed commands")})
+			command.Complete(actor.Result{Generation: o.version, Err: errors.New("too many pending Alpaca feed commands")})
 			return
 		}
 		o.queued = append(o.queued, &feedMutation{
 			command: command, operationID: o.nextID, kind: mutationSetSymbols,
 			symbols: uniqueSymbols(command.Symbols), version: command.Generation,
 		})
-	case mktfeed.FeedGetSnapshot:
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Quotes: o.snapshotQuotes()})
-	case mktfeed.FeedGetFreshSnapshot:
+	case actor.GetSnapshot:
+		command.Complete(actor.Result{Generation: o.version, Quotes: o.snapshotQuotes()})
+	case actor.SetQuoteUpdates:
+		o.feed.chanUpdateAssetQuote = command.QuoteUpdates
+		command.Complete(actor.Result{Generation: o.version})
+	case actor.GetFreshSnapshot:
 		o.requestFreshSnapshot(command)
 	default:
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: fmt.Errorf("unknown Alpaca feed command %d", command.Kind)})
+		command.Complete(actor.Result{Generation: o.version, Err: fmt.Errorf("unknown Alpaca feed command %d", command.Kind)})
 	}
 }
 
@@ -608,9 +607,9 @@ func (o *feedOwner) requestMutationSnapshot(mutation *feedMutation, symbols []st
 	}
 }
 
-func (o *feedOwner) requestFreshSnapshot(command mktfeed.FeedCommand) {
+func (o *feedOwner) requestFreshSnapshot(command actor.Command) {
 	if o.lifecycle == feedTerminal {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errFeedStopped})
+		command.Complete(actor.Result{Generation: o.version, Err: errFeedStopped})
 		return
 	}
 	o.nextID++
@@ -627,11 +626,11 @@ func (o *feedOwner) requestFreshSnapshot(command mktfeed.FeedCommand) {
 	default:
 		cancel()
 		delete(o.fresh, operationID)
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errors.New("Alpaca snapshot worker is busy")})
+		command.Complete(actor.Result{Generation: o.version, Err: errors.New("Alpaca snapshot worker is busy")})
 	}
 }
 
-func (o *feedOwner) handleEvent(event feedEvent) *mktfeed.FeedResult {
+func (o *feedOwner) handleEvent(event feedEvent) *actor.Result {
 	switch event.kind {
 	case eventSnapshot:
 		if o.active != nil && o.active.operationID == event.operationID {
@@ -651,7 +650,7 @@ func (o *feedOwner) handleEvent(event feedEvent) *mktfeed.FeedResult {
 		err := fmt.Errorf("Alpaca quote stream terminated: %w", event.err)
 		o.reportError(err)
 		o.lifecycle = feedTerminal
-		return &mktfeed.FeedResult{Kind: mktfeed.FeedStop, Generation: o.version, Err: err}
+		return &actor.Result{Kind: actor.Stop, Generation: o.version, Err: err}
 	}
 	return nil
 }
@@ -799,7 +798,7 @@ func (o *feedOwner) finishMutation(err error) {
 		resultGeneration = o.active.version
 	}
 	o.active = nil
-	command.Complete(mktfeed.FeedResult{Generation: resultGeneration, Err: err})
+	command.Complete(actor.Result{Generation: resultGeneration, Err: err})
 }
 
 func (o *feedOwner) handleFreshSnapshot(event feedEvent) {
@@ -809,19 +808,19 @@ func (o *feedOwner) handleFreshSnapshot(event feedEvent) {
 	}
 	delete(o.fresh, event.operationID)
 	if command.Context != nil && command.Context.Err() != nil {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: command.Context.Err()})
+		command.Complete(actor.Result{Generation: o.version, Err: command.Context.Err()})
 		return
 	}
 	if event.err != nil {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: event.err})
+		command.Complete(actor.Result{Generation: o.version, Err: event.err})
 		return
 	}
 	if event.generation != o.generation {
-		command.Complete(mktfeed.FeedResult{Generation: o.version, Err: errors.New("Alpaca snapshot superseded by symbol change")})
+		command.Complete(actor.Result{Generation: o.version, Err: errors.New("Alpaca snapshot superseded by symbol change")})
 		return
 	}
 	o.storeSnapshots(event.entries)
-	command.Complete(mktfeed.FeedResult{Generation: o.version, Quotes: o.snapshotQuotes()})
+	command.Complete(actor.Result{Generation: o.version, Quotes: o.snapshotQuotes()})
 }
 
 func (o *feedOwner) snapshotQuotes() []c.QuoteUpdate {

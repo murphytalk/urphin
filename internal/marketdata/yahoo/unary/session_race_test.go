@@ -43,7 +43,7 @@ func TestConcurrentPriceAndFXRequestsShareYahooSession(t *testing.T) {
 			}
 		})},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 
 	start := make(chan struct{})
 	errs := make(chan error, 2)
@@ -74,6 +74,45 @@ func TestConcurrentPriceAndFXRequestsShareYahooSession(t *testing.T) {
 	}
 }
 
+func TestPriceAndFXRequestsRunConcurrently(t *testing.T) {
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	api := NewUnaryAPI(Config{
+		BaseURL: "https://example.invalid",
+		HTTPClient: &http.Client{Transport: currencyRoundTrip(func(r *http.Request) (*http.Response, error) {
+			started <- struct{}{}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+			return sessionRaceResponse(http.StatusOK, `{"quoteResponse":{"result":[]}}`), nil
+		})},
+	})
+	t.Cleanup(api.CloseIdleConnections)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		_, _, _ = api.GetAssetQuotes(context.Background(), []string{"AAPL"})
+	}()
+	go func() {
+		defer workers.Done()
+		_, _ = api.GetCurrencyRates(context.Background(), []string{"EUR"}, "USD")
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("Yahoo requests were serialized")
+		}
+	}
+	releaseOnce.Do(func() { close(release) })
+	workers.Wait()
+}
+
 func TestRepeatedAuthenticationFailureRefreshesOnlyOnce(t *testing.T) {
 	var quoteRequests, cookieRequests atomic.Int32
 	api := NewUnaryAPI(Config{
@@ -95,7 +134,7 @@ func TestRepeatedAuthenticationFailureRefreshesOnlyOnce(t *testing.T) {
 			}
 		})},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
 	if err == nil || !strings.Contains(err.Error(), "authentication rejected") {
 		t.Fatalf("GetAssetQuotes() error = %v, want bounded authentication error", err)
@@ -132,7 +171,7 @@ func TestFailedCrumbRefreshDoesNotCommitPartialSession(t *testing.T) {
 			}
 		})},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	if _, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"}); err == nil {
 		t.Fatal("GetAssetQuotes() succeeded after a failed crumb refresh")
 	}
@@ -160,7 +199,7 @@ func TestYahooHTTPAndEnvelopeErrorsAreReturned(t *testing.T) {
 					return test.resp, nil
 				})},
 			})
-			t.Cleanup(api.Close)
+			t.Cleanup(api.CloseIdleConnections)
 			_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("GetAssetQuotes() error = %v, want %q", err, test.want)
@@ -182,7 +221,7 @@ func TestStalledYahooHeadersAndBodyRespectRequestDeadline(t *testing.T) {
 					return nil, r.Context().Err()
 				})},
 			})
-			t.Cleanup(api.Close)
+			t.Cleanup(api.CloseIdleConnections)
 			_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
 			if !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatalf("GetAssetQuotes() error = %v, want deadline exceeded", err)
@@ -194,7 +233,6 @@ func TestStalledYahooHeadersAndBodyRespectRequestDeadline(t *testing.T) {
 func TestYahooHandshakeTimeoutRetriesWithoutLoggingCrumb(t *testing.T) {
 	var calls int
 	stored := cache.New(filepath.Join(t.TempDir(), "cache.json"))
-	t.Cleanup(func() { _ = stored.Close() })
 	stored.Set(cacheKeySession, sessionCache{Crumb: "private-crumb", Cookies: []sessionCookie{{Name: "A3", Value: "fixture"}}}, time.Hour)
 	owner := requestOwner{baseURL: "https://example.invalid", cache: stored}
 	owner.client = &http.Client{Transport: currencyRoundTrip(func(r *http.Request) (*http.Response, error) {
@@ -246,7 +284,7 @@ func TestCancellationDuringConsentFlowStopsRequest(t *testing.T) {
 			}
 		})},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
@@ -266,161 +304,6 @@ func TestCancellationDuringConsentFlowStopsRequest(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("consent request did not cancel")
-	}
-}
-
-func TestCloseCancelsAndJoinsPendingRequest(t *testing.T) {
-	started := make(chan struct{})
-	api := NewUnaryAPI(Config{
-		BaseURL: "https://example.invalid",
-		HTTPClient: &http.Client{Transport: currencyRoundTrip(func(r *http.Request) (*http.Response, error) {
-			close(started)
-			<-r.Context().Done()
-			return nil, r.Context().Err()
-		})},
-	})
-	result := make(chan error, 1)
-	go func() {
-		_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
-		result <- err
-	}()
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("request did not start")
-	}
-	api.Close()
-	select {
-	case <-api.Done():
-	default:
-		t.Fatal("Close returned before worker stopped")
-	}
-	select {
-	case err := <-result:
-		if err == nil {
-			t.Fatal("pending request succeeded after Close")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("pending caller did not return")
-	}
-}
-
-func TestCancelledQueuedRequestIsSkipped(t *testing.T) {
-	started, release := make(chan struct{}), make(chan struct{})
-	var transportCalls atomic.Int32
-	api := NewUnaryAPI(Config{
-		BaseURL: "https://example.invalid",
-		HTTPClient: &http.Client{Transport: currencyRoundTrip(func(*http.Request) (*http.Response, error) {
-			if transportCalls.Add(1) == 1 {
-				close(started)
-				<-release
-			}
-			return sessionRaceResponse(http.StatusOK, `{"quoteResponse":{"result":[]}}`), nil
-		})},
-	})
-	t.Cleanup(api.Close)
-	firstResult := make(chan error, 1)
-	go func() {
-		_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
-		firstResult <- err
-	}()
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("first request did not start")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	queued := request{ctx: ctx, kind: quotesRequest, symbols: []string{"MSFT"}, reply: make(chan response, 1)}
-	api.commands <- queued
-	cancel()
-	close(release)
-	if err := <-firstResult; err != nil {
-		t.Fatalf("first request error = %v", err)
-	}
-	if result := <-queued.reply; !errors.Is(result.err, context.Canceled) {
-		t.Fatalf("queued request error = %v, want context canceled", result.err)
-	}
-	if got := transportCalls.Load(); got != 1 {
-		t.Fatalf("transport calls = %d, want cancelled queued request skipped", got)
-	}
-}
-
-type signaledCancelContext struct {
-	context.Context
-	done    chan struct{}
-	entered chan struct{}
-	once    sync.Once
-}
-
-func (c *signaledCancelContext) Done() <-chan struct{} {
-	c.once.Do(func() { close(c.entered) })
-	return c.done
-}
-
-func (c *signaledCancelContext) Err() error {
-	select {
-	case <-c.done:
-		return context.Canceled
-	default:
-		return nil
-	}
-}
-
-func TestFullYahooRequestMailboxCancellationAndCloseJoin(t *testing.T) {
-	transportEntered := make(chan struct{})
-	api := NewUnaryAPI(Config{
-		BaseURL:         "https://example.invalid",
-		SessionRootURL:  "https://example.invalid/cookie",
-		SessionCrumbURL: "https://example.invalid",
-		HTTPClient: &http.Client{Transport: currencyRoundTrip(func(req *http.Request) (*http.Response, error) {
-			close(transportEntered)
-			<-req.Context().Done()
-			return nil, req.Context().Err()
-		})},
-	})
-	active := make(chan error, 1)
-	go func() {
-		_, _, err := api.GetAssetQuotes(context.Background(), []string{"AAPL"})
-		active <- err
-	}()
-	select {
-	case <-transportEntered:
-	case <-time.After(time.Second):
-		t.Fatal("active request did not reach the blocking transport")
-	}
-	for range requestQueueSize {
-		api.commands <- request{ctx: context.Background(), reply: make(chan response, 1)}
-	}
-	overflow := &signaledCancelContext{Context: context.Background(), done: make(chan struct{}), entered: make(chan struct{})}
-	queued := make(chan error, 1)
-	go func() {
-		_, _, err := api.GetAssetQuotes(overflow, []string{"MSFT"})
-		queued <- err
-	}()
-	<-overflow.entered
-	close(overflow.done)
-	var queuedErr error
-	select {
-	case queuedErr = <-queued:
-	case <-time.After(time.Second):
-		t.Fatal("full-mailbox caller did not return after cancellation")
-	}
-	if !errors.Is(queuedErr, context.Canceled) {
-		t.Fatalf("full-mailbox request error = %v, want context.Canceled", queuedErr)
-	}
-	api.Close()
-	select {
-	case err := <-active:
-		if err == nil {
-			t.Fatal("Close left the stalled request successful")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("stalled caller did not return after Close")
-	}
-	select {
-	case <-api.Done():
-	default:
-		t.Fatal("Close returned before the request owner stopped")
 	}
 }
 

@@ -7,57 +7,32 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-const (
-	schemaVersion = 1
-	commandBuffer = 64
-)
+const schemaVersion = 1
 
 type entry struct {
 	ExpiresAt time.Time       `json:"expires_at"`
 	Payload   json.RawMessage `json:"payload"`
 }
 
-type operation uint8
-
-const (
-	getOperation operation = iota
-	setOperation
-	closeOperation
-)
-
-type command struct {
-	operation operation
-	key       string
-	payload   []byte
-	ttl       time.Duration
-	reply     chan result
-}
-
-type result struct {
-	payload []byte
-	found   bool
-}
-
 // Cache is a file-backed key/value store with a per-entry TTL. An empty path
-// disables caching. Its owner serializes memory and file access.
+// disables caching. The mutex serializes memory and file access.
 type Cache struct {
-	path     string
-	enabled  bool
-	commands chan command
-	done     chan struct{}
+	mu      sync.Mutex
+	path    string
+	enabled bool
+	entries map[string]entry
 }
 
-// New starts a cache owner. A nonempty path enables persistence; an empty path
-// makes Get and Set no-ops.
+// New loads persisted entries. An empty path makes Get and Set no-ops.
 func New(path string) *Cache {
-	c := &Cache{
-		path: path, enabled: path != "",
-		commands: make(chan command, commandBuffer), done: make(chan struct{}),
+	c := &Cache{path: path, enabled: path != ""}
+	if c.enabled {
+		c.entries = readEntries(path)
 	}
-	go c.run()
 	return c
 }
 
@@ -66,16 +41,15 @@ func (c *Cache) Get(key string, out any) bool {
 	if !c.enabled {
 		return false
 	}
-	reply := make(chan result, 1)
-	if !c.send(command{operation: getOperation, key: key, reply: reply}) {
+	c.mu.Lock()
+	cached, exists := c.entries[keyPrefix()+key]
+	if !exists || !time.Now().Before(cached.ExpiresAt) {
+		c.mu.Unlock()
 		return false
 	}
-	select {
-	case res := <-reply:
-		return res.found && json.Unmarshal(res.payload, out) == nil
-	case <-c.done:
-		return false
-	}
+	payload := append([]byte(nil), cached.Payload...)
+	c.mu.Unlock()
+	return json.Unmarshal(payload, out) == nil
 }
 
 // Set serializes caller data before transfer. Persistence failures are ignored
@@ -88,79 +62,17 @@ func (c *Cache) Set(key string, value any, ttl time.Duration) {
 	if err != nil {
 		return
 	}
-	reply := make(chan result, 1)
-	if !c.send(command{operation: setOperation, key: key, payload: payload, ttl: ttl, reply: reply}) {
-		return
-	}
-	select {
-	case <-reply:
-	case <-c.done:
-	}
-}
-
-// Close waits for the owner to finish. Repeated calls return the same result.
-func (c *Cache) Close() error {
-	select {
-	case <-c.done:
-		return nil
-	default:
-	}
-	reply := make(chan result, 1)
-	if !c.send(command{operation: closeOperation, reply: reply}) {
-		<-c.done
-		return nil
-	}
-	select {
-	case <-reply:
-		<-c.done
-	case <-c.done:
-	}
-	return nil
-}
-
-// Done closes after the owner has stopped processing commands.
-func (c *Cache) Done() <-chan struct{} { return c.done }
-
-func (c *Cache) send(cmd command) bool {
-	select {
-	case <-c.done:
-		return false
-	case c.commands <- cmd:
-		return true
-	}
-}
-
-func (c *Cache) run() {
-	entries := make(map[string]entry)
-	if c.enabled {
-		entries = readEntries(c.path)
-	}
-	for cmd := range c.commands {
-		switch cmd.operation {
-		case getOperation:
-			cached, exists := entries[keyPrefix()+cmd.key]
-			if !exists || !time.Now().Before(cached.ExpiresAt) {
-				cmd.reply <- result{}
-				continue
-			}
-			cmd.reply <- result{found: true, payload: append([]byte(nil), cached.Payload...)}
-		case setOperation:
-			entries = readEntries(c.path)
-			prefix := keyPrefix()
-			for existingKey := range entries {
-				if !strings.HasPrefix(existingKey, prefix) {
-					delete(entries, existingKey)
-				}
-			}
-			entries[prefix+cmd.key] = entry{ExpiresAt: time.Now().Add(cmd.ttl), Payload: cmd.payload}
-			_ = writeEntries(c.path, entries)
-			cmd.reply <- result{}
-		case closeOperation:
-			cmd.reply <- result{}
-			close(c.done)
-			return
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = readEntries(c.path)
+	prefix := keyPrefix()
+	for existingKey := range c.entries {
+		if !strings.HasPrefix(existingKey, prefix) {
+			delete(c.entries, existingKey)
 		}
 	}
+	c.entries[prefix+key] = entry{ExpiresAt: time.Now().Add(ttl), Payload: payload}
+	_ = writeEntries(c.path, c.entries)
 }
 
 // keyPrefix namespaces entries; bump schemaVersion when a cached value's shape changes.

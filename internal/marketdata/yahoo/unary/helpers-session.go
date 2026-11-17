@@ -25,18 +25,17 @@ const (
 )
 
 // refreshSession refreshes the Yahoo Finance session by getting new cookies and crumb
-func (u *requestOwner) refreshSession(ctx context.Context) error {
+func (u *requestOwner) refreshSession(ctx context.Context) ([]*http.Cookie, string, error) {
 	cookies, err := u.getCookie(ctx)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
 
 	crumb, err := u.getCrumb(ctx, cookies)
 	if err != nil {
-		return err
+		return nil, "", err
 	}
-	u.cookies, u.crumb = cookies, crumb
-	return nil
+	return cookies, crumb, nil
 }
 
 // getCookie retrieves authentication cookies from Yahoo Finance

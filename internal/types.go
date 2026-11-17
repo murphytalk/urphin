@@ -23,7 +23,6 @@ func ParseCurrencyPair(symbol string) (from, to string, ok bool) {
 type Cache interface {
 	Get(key string, out any) bool
 	Set(key string, value any, ttl time.Duration)
-	Close() error
 }
 
 type AppCfg struct {

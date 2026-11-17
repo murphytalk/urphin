@@ -26,7 +26,7 @@ func testAPI(t *testing.T, transport roundTripFunc) *unary.UnaryAPI {
 	api := unary.NewUnaryAPI(unary.Config{
 		BaseURL: "https://example.invalid", HTTPClient: &http.Client{Transport: transport},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	return api
 }
 
@@ -51,7 +51,7 @@ func TestForwardedRatesAreIndependentSnapshots(t *testing.T) {
 	requests := make(chan []string, 2)
 	updates := make(chan c.CurrencyRates, 2)
 	api := unary.NewUnaryAPI(unary.Config{RandomMktData: true})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	monitor := NewMonitorCurrencyRateYahoo(Config{
 		Ctx: context.Background(), ChanRequestCurrencyRates: requests,
 		ChanUpdateCurrencyRates: updates, UnaryAPI: api,

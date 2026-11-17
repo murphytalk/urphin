@@ -23,7 +23,7 @@ func TestCurrencyRatesCarryPreviousCloseIncludingMinorUnits(t *testing.T) {
 			))}, nil
 		}),
 	}})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	rates, err := api.GetCurrencyRates(context.Background(), []string{"GBP"}, "USD")
 	if err != nil {
 		t.Fatal(err)

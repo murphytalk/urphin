@@ -24,9 +24,6 @@ import (
 	unaryClientYahoo "github.com/murphytalk/urphin/internal/marketdata/yahoo/unary"
 )
 
-// mktDataFeed kept for older tests and helper code that refer to the concrete
-// market-data feed interface by the shorter name.
-type mktDataFeed = mktfeed.MktDataFeed
 type MktDataFeed = mktfeed.MktDataFeed
 type MktDataConfig = mktfeed.MktDataConfig
 type MktFeedFactory = mktfeed.MktFeedFactory
@@ -110,7 +107,7 @@ func (command mktDataCommand) complete(result mktDataResult) bool {
 
 // NewMktData creates an independent market-data service instance.
 func NewMktData() MktData {
-	return newMktDataImpl(nil, lifecycleNew)
+	return newService(nil, lifecycleNew)
 }
 
 // YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
@@ -122,8 +119,7 @@ func YahooGetLastPrices(ctx context.Context, symbols []string, cachePath string,
 	slog.Info("Requesting Yahoo market-data quotes", "symbols", symbols)
 	mktCache := cache.New(cachePath)
 	yahooAPI := newYahooAPI(mktCache, randomMktData)
-	defer mktCache.Close()
-	defer yahooAPI.Close()
+	defer yahooAPI.CloseIdleConnections()
 	_, quotesBySymbol, err := yahooAPI.GetAssetQuotes(ctx, symbols)
 	if err != nil {
 		slog.Error("Yahoo one-shot market-data quote request failed", "error", err, "symbols", symbols)
@@ -153,8 +149,6 @@ const (
 	yahooSessionRootURL    = "https://finance.yahoo.com"
 	yahooSessionCrumbURL   = "https://query2.finance.yahoo.com"
 	yahooSessionConsentURL = "https://consent.yahoo.com"
-	coinbaseBaseURL        = "https://api.coinbase.com"
-	coinbaseStreamingURL   = "wss://ws-feed.exchange.coinbase.com"
 )
 
 type lifecycleState uint8
@@ -167,32 +161,15 @@ const (
 	lifecycleStopped
 )
 
-type mktDataImpl struct {
-	commands chan mktDataCommand
-	results  chan providerResult
-	cleanup  chan cleanupResult
-	done     chan struct{}
-	stopErr  error
-
-	// These are immutable owner handles retained for package-level lifetime
-	// checks. Their mutable state remains inside their respective actors.
-	mktCache c.Cache
-	yahooAPI *unaryClientYahoo.UnaryAPI
-}
-
 type subscriber struct {
-	symbols      map[string]struct{}
-	symbolEpochs map[string]uint64
-	updates      chan<- c.QuoteUpdate
+	id      string
+	symbols map[string]struct{}
+	updates chan<- c.QuoteUpdate
 }
 
 type optionSubscriber struct {
 	options map[c.Option]struct{}
 	updates chan<- c.OptionQuote
-}
-
-type optionSubscriptionFeed interface {
-	SetOptions([]c.Option) error
 }
 
 type ownerSnapshot struct {
@@ -204,24 +181,23 @@ type ownerSnapshot struct {
 }
 
 type seedTarget struct {
-	subscriber string
-	members    map[string]uint64
-	sequence   map[string]uint64
+	sub     *subscriber
+	symbols map[string]struct{}
 }
 
 type providerTask struct {
-	action      string
-	symbols     []string
-	ctx         context.Context
-	operationID uint64
-	ensure      bool
-	setSymbols  bool
-	start       bool
-	snapshot    bool
-	startup     bool
-	callID      uint64
-	generation  int
-	seeds       []seedTarget
+	action       string
+	symbols      []string
+	ctx          context.Context
+	ensure       bool
+	setSymbols   bool
+	start        bool
+	snapshot     bool
+	startup      bool
+	callID       uint64
+	generation   int
+	seeds        []seedTarget
+	seedSequence map[string]uint64
 }
 
 type providerResult struct {
@@ -262,8 +238,13 @@ type quoteVersion struct {
 	sequence   uint64
 }
 
-type mktDataOwner struct {
-	service *mktDataImpl
+type Service struct {
+	commands chan mktDataCommand
+	results  chan providerResult
+	cleanup  chan cleanupResult
+	done     chan struct{}
+	stopOnce sync.Once
+	stopErr  error
 
 	state             lifecycleState
 	subscribers       map[string]*subscriber
@@ -288,45 +269,42 @@ type mktDataOwner struct {
 	mktCache          c.Cache
 	yahooAPI          *unaryClientYahoo.UnaryAPI
 
-	pendingCalls       map[uint64]*pendingCall
-	nextCallID         uint64
-	nextOperationID    uint64
-	startCommand       *mktDataCommand
-	startRemaining     int
-	startErrors        []error
-	stopCommands       []mktDataCommand
-	cleanupStarted     bool
-	cleanupCause       error
-	workers            sync.WaitGroup
-	quoteSequence      uint64
-	quoteVersions      map[c.QuoteSource]map[string]quoteVersion
-	subscriberSequence uint64
+	pendingCalls    map[uint64]*pendingCall
+	nextCallID      uint64
+	nextOperationID uint64
+	startCommand    *mktDataCommand
+	startRemaining  int
+	startErrors     []error
+	stopCommands    []mktDataCommand
+	cleanupStarted  bool
+	cleanupCause    error
+	workers         sync.WaitGroup
+	quoteSequence   uint64
+	quoteVersions   map[c.QuoteSource]map[string]quoteVersion
 }
 
-func newMktDataImpl(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleState) *mktDataImpl {
-	m := &mktDataImpl{
-		commands: make(chan mktDataCommand, 128),
-		results:  make(chan providerResult, 64),
-		cleanup:  make(chan cleanupResult, 1),
-		done:     make(chan struct{}),
-	}
-	o := &mktDataOwner{
-		service: m, state: state,
+func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleState) *Service {
+	m := &Service{
+		commands:    make(chan mktDataCommand, 128),
+		results:     make(chan providerResult, 64),
+		cleanup:     make(chan cleanupResult, 1),
+		done:        make(chan struct{}),
+		state:       state,
 		subscribers: make(map[string]*subscriber), optionSubscribers: make(map[string]*optionSubscriber),
 		feeds:     make(map[c.QuoteSource]*providerRuntime),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote), yahooNames: make(map[string]string),
 		pendingCalls: make(map[uint64]*pendingCall), quoteVersions: make(map[c.QuoteSource]map[string]quoteVersion),
 	}
-	o.workerCtx, o.workerCancel = context.WithCancel(context.Background())
+	m.workerCtx, m.workerCancel = context.WithCancel(context.Background())
 	for source, feed := range feeds {
-		o.addProvider(source, feed)
+		m.addProvider(source, feed)
 	}
-	go o.run()
+	go m.run()
 	return m
 }
 
-func (m *mktDataImpl) call(command mktDataCommand) mktDataResult {
+func (m *Service) call(command mktDataCommand) mktDataResult {
 	select {
 	case m.commands <- command:
 	case <-m.done:
@@ -349,38 +327,38 @@ func (m *mktDataImpl) call(command mktDataCommand) mktDataResult {
 	}
 }
 
-func (m *mktDataImpl) doneResult(kind mktDataCommandKind) mktDataResult {
+func (m *Service) doneResult(kind mktDataCommandKind) mktDataResult {
 	if kind == mktDataStop {
 		return mktDataResult{err: m.stopErr}
 	}
 	return mktDataResult{err: errors.New("market data service is stopped")}
 }
 
-func (m *mktDataImpl) Start(config mktfeed.MktDataConfig) error {
+func (m *Service) Start(config mktfeed.MktDataConfig) error {
 	command := newMktDataCommand(context.Background(), mktDataStart)
 	command.config = cloneMktDataConfig(config)
 	return m.call(command).err
 }
 
-func (m *mktDataImpl) Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error {
+func (m *Service) Subscribe(id string, symbols []string, updates chan<- c.QuoteUpdate) error {
 	command := newMktDataCommand(context.Background(), mktDataSubscribe)
 	command.subscriber, command.symbols, command.updates = id, slices.Clone(symbols), updates
 	return m.call(command).err
 }
 
-func (m *mktDataImpl) SubscribeOption(id string, options []c.Option, updates chan<- c.OptionQuote) error {
+func (m *Service) SubscribeOption(id string, options []c.Option, updates chan<- c.OptionQuote) error {
 	command := newMktDataCommand(context.Background(), mktDataSubscribeOption)
 	command.subscriber, command.options, command.optionUpdates = id, slices.Clone(options), updates
 	return m.call(command).err
 }
 
-func (m *mktDataImpl) Unsubscribe(id string) error {
+func (m *Service) Unsubscribe(id string) error {
 	command := newMktDataCommand(context.Background(), mktDataDetach)
 	command.subscriber = id
 	return m.call(command).err
 }
 
-func (m *mktDataImpl) RegisterMktDataFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
+func (m *Service) RegisterMktDataFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 	command := newMktDataCommand(context.Background(), mktDataRegisterFeed)
 	command.source, command.feed = source, feed
 	if err := m.call(command).err; err != nil {
@@ -388,18 +366,14 @@ func (m *mktDataImpl) RegisterMktDataFeed(source c.QuoteSource, feed mktfeed.Mkt
 	}
 }
 
-func (m *mktDataImpl) Stop() error {
-	started := time.Now()
-	slog.Debug("market data stop requested")
-	err := m.call(newMktDataCommand(context.Background(), mktDataStop)).err
-	slog.Debug("market data stop completed", "duration", time.Since(started), "error", err)
-	return err
-}
-
-func (m *mktDataImpl) routeQuote(source c.QuoteSource, quote c.AssetQuote) {
-	command := newMktDataCommand(context.Background(), mktDataRouteQuote)
-	command.source, command.update = source, c.NewQuoteUpdate(quote, 0, 0)
-	_ = m.call(command)
+func (m *Service) Stop() error {
+	m.stopOnce.Do(func() {
+		started := time.Now()
+		slog.Debug("market data stop requested")
+		_ = m.call(newMktDataCommand(context.Background(), mktDataStop))
+		slog.Debug("market data stop completed", "duration", time.Since(started), "error", m.stopErr)
+	})
+	return m.stopErr
 }
 
 func cloneMktDataConfig(config mktfeed.MktDataConfig) mktfeed.MktDataConfig {
@@ -440,9 +414,7 @@ func newYahooCurrencyRateMonitor(config mktfeed.MktDataConfig, ctx context.Conte
 func alpacaFactory(mktCfg mktfeed.MktDataConfig, ctx context.Context, chanError chan error, chanQuotes chan c.QuoteUpdate) (mktfeed.MktDataFeed, error) {
 	credentials := mktCfg.Cfg.Alpaca
 	if credentials.Key == "" || credentials.Secret == "" {
-		if credentials.Key != "" || credentials.Secret != "" {
-			return nil, fmt.Errorf("Alpaca market data feed not registered: both API key and secret are required")
-		}
+		return nil, fmt.Errorf("Alpaca market data feed not registered: both API key and secret are required")
 	}
 
 	return alpacaFeed.NewMktDataFeed(alpacaFeed.Config{
@@ -455,27 +427,15 @@ func alpacaFactory(mktCfg mktfeed.MktDataConfig, ctx context.Context, chanError 
 
 const providerQueueSize = 1024
 
-func (m *mktDataImpl) inspect() *ownerSnapshot {
-	command := newMktDataCommand(context.Background(), mktDataInspect)
-	return m.call(command).snapshot
-}
-
-func (m *mktDataImpl) subscriptionSymbols() map[string]struct{} {
-	if snapshot := m.inspect(); snapshot != nil {
-		return snapshot.union
-	}
-	return map[string]struct{}{}
-}
-
-func (o *mktDataOwner) run() {
-	defer close(o.service.done)
+func (o *Service) run() {
+	defer close(o.done)
 	for o.state != lifecycleStopped {
 		select {
-		case command := <-o.service.commands:
+		case command := <-o.commands:
 			o.handleCommand(command)
-		case result := <-o.service.results:
+		case result := <-o.results:
 			o.handleProviderResult(result)
-		case result := <-o.service.cleanup:
+		case result := <-o.cleanup:
 			o.finishCleanup(result.err)
 		case update := <-o.chanQuotes:
 			o.handleQuote(update.QuoteSource, update)
@@ -491,7 +451,7 @@ func (o *mktDataOwner) run() {
 	}
 }
 
-func (o *mktDataOwner) handleCommand(command mktDataCommand) {
+func (o *Service) handleCommand(command mktDataCommand) {
 	if command.operationID == 0 {
 		o.nextOperationID++
 		command.operationID = o.nextOperationID
@@ -518,7 +478,7 @@ func (o *mktDataOwner) handleCommand(command mktDataCommand) {
 	}
 }
 
-func (o *mktDataOwner) addProvider(source c.QuoteSource, feed mktfeed.MktDataFeed) {
+func (o *Service) addProvider(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 	provider := &providerRuntime{
 		feed: feed, jobs: make(chan *providerTask, 1),
 		pendingQuotes: make(map[int][]c.QuoteUpdate),
@@ -529,19 +489,17 @@ func (o *mktDataOwner) addProvider(source c.QuoteSource, feed mktfeed.MktDataFee
 	go o.runProviderWorker(source, provider)
 }
 
-func (o *mktDataOwner) bindQuotePublisher(feed mktfeed.MktDataFeed) {
+func (o *Service) bindQuotePublisher(feed mktfeed.MktDataFeed) {
 	if o.chanQuotes == nil {
 		return
 	}
-	if publisher, ok := feed.(mktfeed.QuoteUpdatePublisher); ok {
-		publisher.SetQuoteUpdates(o.chanQuotes)
-	}
-	if publisher, ok := feed.(mktfeed.OptionQuotePublisher); ok {
-		publisher.SetOptionQuotes(o.chanOptionQuotes)
+	feed.SetQuoteUpdates(o.chanQuotes)
+	if optionFeed, ok := feed.(mktfeed.OptionFeed); ok {
+		optionFeed.SetOptionQuotes(o.chanOptionQuotes)
 	}
 }
 
-func (o *mktDataOwner) start(command mktDataCommand) {
+func (o *Service) start(command mktDataCommand) {
 	if o.state != lifecycleNew {
 		if o.state == lifecycleStopped || o.state == lifecycleStopping {
 			command.complete(mktDataResult{err: errors.New("market data service already stopped")})
@@ -584,7 +542,6 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	}
 	o.mktCache = cache.New(config.CachePath)
 	o.yahooAPI = newYahooAPI(o.mktCache, config.RandomMktData)
-	o.service.mktCache, o.service.yahooAPI = o.mktCache, o.yahooAPI
 
 	o.currencyRates = newYahooCurrencyRateMonitor(config, o.ctx, o.yahooAPI, o.mktCache, o.chanError, o.chanRates, o.fxRequests)
 	if config.RandomMktData {
@@ -616,7 +573,7 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	o.optionProvider = c.QuoteSourceYahoo
 	if config.Cfg != nil {
 		if provider := o.feeds[config.Cfg.App.MktDataFeed]; provider != nil {
-			if _, ok := provider.feed.(optionSubscriptionFeed); ok {
+			if _, ok := provider.feed.(mktfeed.OptionFeed); ok {
 				o.optionProvider = config.Cfg.App.MktDataFeed
 			}
 		}
@@ -641,7 +598,7 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 		o.enqueue(source, &providerTask{
 			action: "start", symbols: cloneSymbols(union), ensure: len(union) > 0,
 			start: true, snapshot: true, startup: true,
-			seeds: o.captureSeedTargets(source, "", union),
+			seeds: o.captureSeedTargets(source, "", union), seedSequence: o.captureSeedSequence(source, union),
 		})
 	}
 	if o.startRemaining == 0 {
@@ -649,7 +606,7 @@ func (o *mktDataOwner) start(command mktDataCommand) {
 	}
 }
 
-func (o *mktDataOwner) completeStart() {
+func (o *Service) completeStart() {
 	if o.state != lifecycleStarting || o.startRemaining != 0 {
 		return
 	}
@@ -664,7 +621,7 @@ func (o *mktDataOwner) completeStart() {
 	}
 }
 
-func (o *mktDataOwner) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
+func (o *Service) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 	if o.state == lifecycleStopping || o.state == lifecycleStopped || feed == nil {
 		return
 	}
@@ -678,7 +635,7 @@ func (o *mktDataOwner) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFe
 		o.enqueue(source, &providerTask{
 			action: "register", symbols: cloneSymbols(union), ensure: len(union) > 0,
 			start: true, snapshot: true,
-			seeds: o.captureSeedTargets(source, "", union),
+			seeds: o.captureSeedTargets(source, "", union), seedSequence: o.captureSeedSequence(source, union),
 		})
 		if options := o.optionUnion(); len(options) > 0 {
 			if err := o.subscribeOptionsToFeed(source, options); err != nil {
@@ -688,7 +645,7 @@ func (o *mktDataOwner) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFe
 	}
 }
 
-func (o *mktDataOwner) subscribe(command mktDataCommand) {
+func (o *Service) subscribe(command mktDataCommand) {
 	if o.state == lifecycleStopping || o.state == lifecycleStopped {
 		command.complete(mktDataResult{err: errors.New("market data service is stopped")})
 		return
@@ -705,7 +662,7 @@ func (o *mktDataOwner) subscribe(command mktDataCommand) {
 
 	oldUnion := o.symbolUnion()
 	if sub == nil {
-		sub = &subscriber{symbols: make(map[string]struct{}), symbolEpochs: make(map[string]uint64), updates: command.updates}
+		sub = &subscriber{id: command.subscriber, symbols: make(map[string]struct{}), updates: command.updates}
 		o.subscribers[command.subscriber] = sub
 	}
 	requested := make(map[string]struct{})
@@ -722,9 +679,7 @@ func (o *mktDataOwner) subscribe(command mktDataCommand) {
 			requestedFX = append(requestedFX, symbol)
 		}
 		if _, exists := sub.symbols[symbol]; !exists {
-			o.subscriberSequence++
 			sub.symbols[symbol] = struct{}{}
-			sub.symbolEpochs[symbol] = o.subscriberSequence
 			newSymbols[symbol] = struct{}{}
 		}
 	}
@@ -769,7 +724,7 @@ func (o *mktDataOwner) subscribe(command mktDataCommand) {
 			task   *providerTask
 		}{source, &providerTask{
 			action: "subscribe", symbols: newSymbolsSorted, ensure: ensure,
-			snapshot: len(seeds) > 0, callID: callID, seeds: seeds,
+			snapshot: len(seeds) > 0, callID: callID, seeds: seeds, seedSequence: o.captureSeedSequence(source, seedSymbols),
 		}})
 	}
 	call.remaining = len(tasks)
@@ -783,7 +738,7 @@ func (o *mktDataOwner) subscribe(command mktDataCommand) {
 	}
 }
 
-func (o *mktDataOwner) subscribeOption(command mktDataCommand) {
+func (o *Service) subscribeOption(command mktDataCommand) {
 	if o.state == lifecycleStopping || o.state == lifecycleStopped {
 		command.complete(mktDataResult{err: errors.New("market data service is stopped")})
 		return
@@ -830,49 +785,37 @@ func (o *mktDataOwner) subscribeOption(command mktDataCommand) {
 	command.complete(mktDataResult{err: errors.Join(errs...)})
 }
 
-func (o *mktDataOwner) subscribeOptionFeeds(options []c.Option) error {
+func (o *Service) subscribeOptionFeeds(options []c.Option) error {
 	return o.subscribeOptionsToFeed(o.optionProvider, options)
 }
 
-func (o *mktDataOwner) optionSubscriptionProviderErrors() error {
+func (o *Service) optionSubscriptionProviderErrors() error {
 	provider := o.feeds[o.optionProvider]
 	if provider == nil {
 		return fmt.Errorf("%s option provider is not available", o.optionProvider)
 	}
-	if _, ok := provider.feed.(optionSubscriptionFeed); !ok {
+	if _, ok := provider.feed.(mktfeed.OptionFeed); !ok {
 		return fmt.Errorf("%s option subscriptions: not implemented", o.optionProvider)
 	}
 	return nil
 }
 
-func (o *mktDataOwner) subscribeOptionsToFeed(source c.QuoteSource, options []c.Option) error {
+func (o *Service) subscribeOptionsToFeed(source c.QuoteSource, options []c.Option) error {
 	provider := o.feeds[source]
 	if provider == nil {
 		return nil
 	}
-	feed, ok := provider.feed.(optionSubscriptionFeed)
+	feed, ok := provider.feed.(mktfeed.OptionFeed)
 	if !ok {
 		return fmt.Errorf("%s option subscriptions: not implemented", source)
 	}
-	if err := feed.SetOptions(options); err != nil {
+	if err := feed.SetOptions(o.opContext(), options); err != nil {
 		return fmt.Errorf("%s option subscriptions: %w", source, err)
 	}
 	return nil
 }
 
-func (o *mktDataOwner) updateYahooOptions(options []c.Option) error {
-	provider := o.feeds[c.QuoteSourceYahoo]
-	if provider == nil {
-		return nil
-	}
-	feed, ok := provider.feed.(optionSubscriptionFeed)
-	if !ok {
-		return errors.New("Yahoo option poller: not implemented")
-	}
-	return feed.SetOptions(options)
-}
-
-func (o *mktDataOwner) reportOptionError(err error) {
+func (o *Service) reportOptionError(err error) {
 	if err == nil {
 		return
 	}
@@ -886,7 +829,7 @@ func (o *mktDataOwner) reportOptionError(err error) {
 	slog.Error("Option subscription provider error", "error", err)
 }
 
-func (o *mktDataOwner) optionUnion() []c.Option {
+func (o *Service) optionUnion() []c.Option {
 	unique := make(map[c.Option]struct{})
 	for _, sub := range o.optionSubscribers {
 		for option := range sub.options {
@@ -952,7 +895,7 @@ func normalizeOption(option c.Option) (c.Option, error) {
 	return option, nil
 }
 
-func (o *mktDataOwner) handleOptionQuote(update c.OptionQuote) {
+func (o *Service) handleOptionQuote(update c.OptionQuote) {
 	option, err := normalizeOption(update.Option)
 	if err != nil || update.Price <= 0 || math.IsNaN(update.Price) || math.IsInf(update.Price, 0) {
 		return
@@ -969,7 +912,7 @@ func (o *mktDataOwner) handleOptionQuote(update c.OptionQuote) {
 	}
 }
 
-func (o *mktDataOwner) detach(command mktDataCommand) {
+func (o *Service) detach(command mktDataCommand) {
 	if o.state == lifecycleStopping || o.state == lifecycleStopped {
 		command.complete(mktDataResult{err: errors.New("market data service is stopped")})
 		return
@@ -1023,9 +966,9 @@ func (o *mktDataOwner) detach(command mktDataCommand) {
 	}
 }
 
-func (o *mktDataOwner) stop(command mktDataCommand) {
+func (o *Service) stop(command mktDataCommand) {
 	if o.state == lifecycleStopped {
-		command.complete(mktDataResult{err: o.service.stopErr})
+		command.complete(mktDataResult{err: o.stopErr})
 		return
 	}
 	o.stopCommands = append(o.stopCommands, command)
@@ -1034,7 +977,7 @@ func (o *mktDataOwner) stop(command mktDataCommand) {
 	}
 }
 
-func (o *mktDataOwner) beginCleanup(cause error) {
+func (o *Service) beginCleanup(cause error) {
 	if o.cleanupStarted {
 		if cause != nil {
 			o.cleanupCause = errors.Join(o.cleanupCause, cause)
@@ -1057,7 +1000,7 @@ func (o *mktDataOwner) beginCleanup(cause error) {
 		feeds = append(feeds, o.feeds[source].feed)
 		o.feeds[source].queue = nil
 	}
-	rates, api, mktCache := o.currencyRates, o.yahooAPI, o.mktCache
+	rates, api := o.currencyRates, o.yahooAPI
 	go func() {
 		workersStarted := time.Now()
 		slog.Debug("market data cleanup waiting for provider workers")
@@ -1082,28 +1025,20 @@ func (o *mktDataOwner) beginCleanup(cause error) {
 		}
 		if api != nil {
 			slog.Debug("closing Yahoo HTTP client")
-			api.Close()
-		}
-		if mktCache != nil {
-			cacheStarted := time.Now()
-			slog.Debug("closing market data cache")
-			if err := mktCache.Close(); err != nil {
-				errs = append(errs, err)
-			}
-			slog.Debug("market data cache closed", "duration", time.Since(cacheStarted))
+			api.CloseIdleConnections()
 		}
 		cleanupErr := errors.Join(errs...)
 		slog.Debug("market data cleanup completed", "duration", time.Since(cleanupStarted), "error", cleanupErr)
-		o.service.cleanup <- cleanupResult{err: cleanupErr}
+		o.cleanup <- cleanupResult{err: cleanupErr}
 	}()
 }
 
-func (o *mktDataOwner) finishCleanup(err error) {
+func (o *Service) finishCleanup(err error) {
 	if o.state != lifecycleStopping {
 		return
 	}
 	o.state = lifecycleStopped
-	o.service.stopErr = err
+	o.stopErr = err
 	for id, call := range o.pendingCalls {
 		call.command.complete(mktDataResult{
 			localDetached: call.localDetached,
@@ -1127,7 +1062,7 @@ func (o *mktDataOwner) finishCleanup(err error) {
 	o.stopCommands = nil
 }
 
-func (o *mktDataOwner) enqueue(source c.QuoteSource, task *providerTask) {
+func (o *Service) enqueue(source c.QuoteSource, task *providerTask) {
 	provider := o.feeds[source]
 	if provider == nil {
 		o.providerTaskFailed(source, task, errors.New("provider is unavailable"))
@@ -1145,7 +1080,7 @@ func (o *mktDataOwner) enqueue(source c.QuoteSource, task *providerTask) {
 	o.startNext(source)
 }
 
-func (o *mktDataOwner) providerSupports(source c.QuoteSource, symbol string) bool {
+func (o *Service) providerSupports(source c.QuoteSource, symbol string) bool {
 	if source == c.QuoteSourceYahoo {
 		return true
 	}
@@ -1160,7 +1095,7 @@ func (o *mktDataOwner) providerSupports(source c.QuoteSource, symbol string) boo
 	return !ok || capability.SupportsCurrency(mktfeed.TickerCurrency(symbol))
 }
 
-func (o *mktDataOwner) providerSymbols(source c.QuoteSource, symbols []string) []string {
+func (o *Service) providerSymbols(source c.QuoteSource, symbols []string) []string {
 	filtered := make([]string, 0, len(symbols))
 	for _, symbol := range symbols {
 		if o.providerSupports(source, symbol) {
@@ -1170,7 +1105,7 @@ func (o *mktDataOwner) providerSymbols(source c.QuoteSource, symbols []string) [
 	return filtered
 }
 
-func (o *mktDataOwner) startNext(source c.QuoteSource) {
+func (o *Service) startNext(source c.QuoteSource) {
 	provider := o.feeds[source]
 	if provider == nil || provider.active || len(provider.queue) == 0 || o.state == lifecycleStopping || o.state == lifecycleStopped {
 		return
@@ -1187,13 +1122,11 @@ func (o *mktDataOwner) startNext(source c.QuoteSource) {
 		provider.nextGen++
 		task.generation = provider.nextGen
 	}
-	task.operationID = o.nextOperationID
-	o.nextOperationID += 3
 	provider.active = true
 	provider.jobs <- task
 }
 
-func (o *mktDataOwner) runProviderWorker(source c.QuoteSource, provider *providerRuntime) {
+func (o *Service) runProviderWorker(source c.QuoteSource, provider *providerRuntime) {
 	defer o.workers.Done()
 	for {
 		select {
@@ -1202,10 +1135,7 @@ func (o *mktDataOwner) runProviderWorker(source c.QuoteSource, provider *provide
 		case task := <-provider.jobs:
 			result := providerResult{source: source, task: task, generation: task.generation}
 			if task.setSymbols {
-				setResult, err := callFeed(task.ctx, provider.feed, task.operationID, mktfeed.FeedSetSymbols, slices.Clone(task.symbols), task.generation)
-				if err == nil && setResult.Generation != 0 && setResult.Generation != task.generation {
-					err = fmt.Errorf("provider acknowledged generation %d, want %d", setResult.Generation, task.generation)
-				}
+				err := provider.feed.SetSymbols(task.ctx, slices.Clone(task.symbols), task.generation)
 				if err != nil {
 					result.stage, result.err = "set subscriptions", err
 					o.publishProviderResult(result)
@@ -1214,18 +1144,18 @@ func (o *mktDataOwner) runProviderWorker(source c.QuoteSource, provider *provide
 				result.setSucceeded = true
 			}
 			if task.start {
-				if _, err := callFeed(task.ctx, provider.feed, task.operationID+1, mktfeed.FeedStart, nil, task.generation); err != nil {
+				if err := provider.feed.Start(task.ctx); err != nil {
 					result.stage, result.err = "start", err
 					o.publishProviderResult(result)
 					continue
 				}
 			}
 			if task.snapshot {
-				feedResult, err := callFeed(task.ctx, provider.feed, task.operationID+2, mktfeed.FeedGetSnapshot, nil, task.generation)
+				quotes, err := provider.feed.Snapshot(task.ctx, false)
 				if err != nil {
 					result.stage, result.err = "read snapshot", err
 				} else {
-					result.quotes = feedResult.Quotes
+					result.quotes = quotes
 				}
 			}
 			o.publishProviderResult(result)
@@ -1233,13 +1163,13 @@ func (o *mktDataOwner) runProviderWorker(source c.QuoteSource, provider *provide
 	}
 }
 
-func (o *mktDataOwner) publishProviderResult(result providerResult) {
+func (o *Service) publishProviderResult(result providerResult) {
 	result.handled = make(chan struct{})
-	o.service.results <- result
+	o.results <- result
 	<-result.handled
 }
 
-func (o *mktDataOwner) handleProviderResult(result providerResult) {
+func (o *Service) handleProviderResult(result providerResult) {
 	defer close(result.handled)
 	provider := o.feeds[result.source]
 	if provider == nil {
@@ -1277,8 +1207,10 @@ func (o *mktDataOwner) handleProviderResult(result providerResult) {
 			o.startErrors = append(o.startErrors, fmt.Errorf("%s %v market-data feed: %w", result.stage, result.source, result.err))
 		}
 	} else {
-		if task.snapshot {
-			o.applySeeds(result.source, result.quotes, task.seeds)
+		if task.snapshot && len(task.seeds) > 0 {
+			for _, quote := range result.quotes {
+				o.handleQuoteTo(result.source, quote, task.seeds, task.seedSequence)
+			}
 		}
 		if task.callID != 0 {
 			o.completeProviderCall(task.callID, nil)
@@ -1293,7 +1225,7 @@ func (o *mktDataOwner) handleProviderResult(result providerResult) {
 	}
 }
 
-func (o *mktDataOwner) providerTaskFailed(source c.QuoteSource, task *providerTask, err error) {
+func (o *Service) providerTaskFailed(source c.QuoteSource, task *providerTask, err error) {
 	if task.ensure || task.snapshot {
 		if provider := o.feeds[source]; provider != nil {
 			provider.pending = true
@@ -1315,7 +1247,7 @@ func (o *mktDataOwner) providerTaskFailed(source c.QuoteSource, task *providerTa
 	}
 }
 
-func (o *mktDataOwner) completeProviderCall(id uint64, err error) {
+func (o *Service) completeProviderCall(id uint64, err error) {
 	call := o.pendingCalls[id]
 	if call == nil {
 		return
@@ -1330,7 +1262,7 @@ func (o *mktDataOwner) completeProviderCall(id uint64, err error) {
 	}
 }
 
-func (o *mktDataOwner) captureSeedTargets(source c.QuoteSource, id string, symbols map[string]struct{}) []seedTarget {
+func (o *Service) captureSeedTargets(source c.QuoteSource, id string, symbols map[string]struct{}) []seedTarget {
 	if len(symbols) == 0 {
 		return nil
 	}
@@ -1339,61 +1271,32 @@ func (o *mktDataOwner) captureSeedTargets(source c.QuoteSource, id string, symbo
 		if id != "" && subscriberID != id {
 			continue
 		}
-		members, sequence := make(map[string]uint64), make(map[string]uint64)
+		members := make(map[string]struct{})
 		for symbol := range symbols {
-			if epoch, exists := sub.symbolEpochs[symbol]; exists && o.providerSupports(source, symbol) {
-				members[symbol] = epoch
-				sequence[symbol] = o.quoteVersions[source][symbol].sequence
+			if _, exists := sub.symbols[symbol]; exists && o.providerSupports(source, symbol) {
+				members[symbol] = struct{}{}
 			}
 		}
 		if len(members) != 0 {
-			targets = append(targets, seedTarget{subscriber: subscriberID, members: members, sequence: sequence})
+			targets = append(targets, seedTarget{sub: sub, symbols: members})
 		}
 	}
 	return targets
 }
 
-func (o *mktDataOwner) applySeeds(source c.QuoteSource, updates []c.QuoteUpdate, targets []seedTarget) {
-	if o.state != lifecycleStarting && o.state != lifecycleRunning {
-		return
+func (o *Service) captureSeedSequence(source c.QuoteSource, symbols map[string]struct{}) map[string]uint64 {
+	baseline := make(map[string]uint64, len(symbols))
+	for symbol := range symbols {
+		baseline[symbol] = o.quoteVersions[source][symbol].sequence
 	}
-	for _, update := range updates {
-		symbol := quoteSymbol(update)
-		if symbol == "" || !o.providerSupports(source, symbol) {
-			continue
-		}
-		update.Symbol = symbol
-		provider := o.feeds[source]
-		if provider == nil || (update.Generation != 0 && update.Generation != provider.generation) {
-			continue
-		}
-		current := o.quoteVersions[source][symbol]
-		if current.generation == update.Generation && update.Revision > 0 && current.revision > update.Revision {
-			continue
-		}
-		delivered := false
-		for _, target := range targets {
-			epoch, subscribed := target.members[symbol]
-			if !subscribed || target.sequence[symbol] < current.sequence {
-				continue
-			}
-			sub := o.subscribers[target.subscriber]
-			if sub == nil || sub.symbolEpochs[symbol] != epoch {
-				continue
-			}
-			if !delivered {
-				update = o.preserveYahooName(source, update)
-			}
-			deliverQuote(sub, update, sub.symbols)
-			delivered = true
-		}
-		if delivered {
-			o.recordQuoteVersion(source, symbol, update)
-		}
-	}
+	return baseline
 }
 
-func (o *mktDataOwner) handleQuote(source c.QuoteSource, update c.QuoteUpdate) {
+func (o *Service) handleQuote(source c.QuoteSource, update c.QuoteUpdate) {
+	o.handleQuoteTo(source, update, nil, nil)
+}
+
+func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targets []seedTarget, baseline map[string]uint64) {
 	if o.state != lifecycleStarting && o.state != lifecycleRunning {
 		return
 	}
@@ -1419,6 +1322,21 @@ func (o *mktDataOwner) handleQuote(source c.QuoteSource, update c.QuoteUpdate) {
 	if current.generation == update.Generation && update.Revision > 0 && current.revision > update.Revision {
 		return
 	}
+	if targets != nil {
+		var delivered bool
+		for _, target := range targets {
+			if _, ok := target.symbols[symbol]; !ok || o.subscribers[target.sub.id] != target.sub || baseline[symbol] < current.sequence {
+				continue
+			}
+			if !delivered {
+				update = o.preserveYahooName(source, update)
+				o.recordQuoteVersion(source, symbol, update)
+			}
+			deliverQuote(target.sub, update, target.symbols)
+			delivered = true
+		}
+		return
+	}
 	update = o.preserveYahooName(source, update)
 	o.recordQuoteVersion(source, symbol, update)
 	for _, sub := range o.subscribers {
@@ -1433,7 +1351,7 @@ func quoteSymbol(update c.QuoteUpdate) string {
 	return update.Meta.SymbolInSourceAPI
 }
 
-func (o *mktDataOwner) preserveYahooName(source c.QuoteSource, update c.QuoteUpdate) c.QuoteUpdate {
+func (o *Service) preserveYahooName(source c.QuoteSource, update c.QuoteUpdate) c.QuoteUpdate {
 	symbol := quoteSymbol(update)
 	if symbol == "" {
 		return update
@@ -1450,7 +1368,7 @@ func (o *mktDataOwner) preserveYahooName(source c.QuoteSource, update c.QuoteUpd
 	return update
 }
 
-func (o *mktDataOwner) recordQuoteVersion(source c.QuoteSource, symbol string, update c.QuoteUpdate) {
+func (o *Service) recordQuoteVersion(source c.QuoteSource, symbol string, update c.QuoteUpdate) {
 	if o.quoteVersions[source] == nil {
 		o.quoteVersions[source] = make(map[string]quoteVersion)
 	}
@@ -1458,7 +1376,7 @@ func (o *mktDataOwner) recordQuoteVersion(source c.QuoteSource, symbol string, u
 	o.quoteVersions[source][symbol] = quoteVersion{generation: update.Generation, revision: update.Revision, sequence: o.quoteSequence}
 }
 
-func (o *mktDataOwner) handleRates(rates c.CurrencyRates) {
+func (o *Service) handleRates(rates c.CurrencyRates) {
 	for _, quote := range currencyRateQuotes(cloneSymbols(o.fxPairSet), rates) {
 		o.fxQuotes[quote.Symbol] = quote
 		o.handleQuote(c.QuoteSourceYahoo, c.NewQuoteUpdate(quote, 0, 0))
@@ -1508,7 +1426,7 @@ func currencyRateQuotes(pairs []string, rates c.CurrencyRates) []c.AssetQuote {
 	return quotes
 }
 
-func (o *mktDataOwner) snapshot() *ownerSnapshot {
+func (o *Service) snapshot() *ownerSnapshot {
 	snapshot := &ownerSnapshot{
 		state: o.state, subscribers: make(map[string]subscriber, len(o.subscribers)),
 		feeds:   make(map[c.QuoteSource]mktfeed.MktDataFeed, len(o.feeds)),
@@ -1516,7 +1434,7 @@ func (o *mktDataOwner) snapshot() *ownerSnapshot {
 	}
 	for id, sub := range o.subscribers {
 		snapshot.subscribers[id] = subscriber{
-			symbols: maps.Clone(sub.symbols), symbolEpochs: maps.Clone(sub.symbolEpochs), updates: sub.updates,
+			id: sub.id, symbols: maps.Clone(sub.symbols), updates: sub.updates,
 		}
 	}
 	for source, provider := range o.feeds {
@@ -1528,7 +1446,7 @@ func (o *mktDataOwner) snapshot() *ownerSnapshot {
 	return snapshot
 }
 
-func (o *mktDataOwner) symbolUnion() map[string]struct{} {
+func (o *Service) symbolUnion() map[string]struct{} {
 	symbols := make(map[string]struct{})
 	for _, sub := range o.subscribers {
 		for symbol := range sub.symbols {
@@ -1540,7 +1458,7 @@ func (o *mktDataOwner) symbolUnion() map[string]struct{} {
 	return symbols
 }
 
-func (o *mktDataOwner) sources() []c.QuoteSource {
+func (o *Service) sources() []c.QuoteSource {
 	sources := make([]c.QuoteSource, 0, len(o.feeds))
 	for source := range o.feeds {
 		sources = append(sources, source)
@@ -1549,61 +1467,16 @@ func (o *mktDataOwner) sources() []c.QuoteSource {
 	return sources
 }
 
-func (o *mktDataOwner) newCallID() uint64 {
+func (o *Service) newCallID() uint64 {
 	o.nextCallID++
 	return o.nextCallID
 }
 
-func (o *mktDataOwner) opContext() context.Context {
+func (o *Service) opContext() context.Context {
 	if o.ctx != nil {
 		return o.ctx
 	}
 	return o.workerCtx
-}
-
-func callFeed(ctx context.Context, feed mktfeed.MktDataFeed, operationID uint64, kind mktfeed.FeedCommandKind, symbols []string, generation int) (mktfeed.FeedResult, error) {
-	if actor, ok := feed.(mktfeed.MktDataFeedActor); ok {
-		command := mktfeed.NewFeedCommand(ctx, operationID, kind, symbols, generation)
-		select {
-		case actor.Commands() <- command:
-		case <-actor.Done():
-			result := actor.TerminalResult()
-			if result.Err == nil && kind != mktfeed.FeedStop {
-				result.Err = errors.New("market-data feed stopped")
-			}
-			return result, result.Err
-		case <-ctx.Done():
-			return mktfeed.FeedResult{}, ctx.Err()
-		}
-		select {
-		case result := <-command.Reply():
-			return result, result.Err
-		case <-actor.Done():
-			select {
-			case result := <-command.Reply():
-				return result, result.Err
-			default:
-				result := actor.TerminalResult()
-				if result.Err == nil {
-					result.Err = errors.New("market-data feed stopped")
-				}
-				return result, result.Err
-			}
-		case <-ctx.Done():
-			return mktfeed.FeedResult{}, ctx.Err()
-		}
-	}
-	switch kind {
-	case mktfeed.FeedStart:
-		return mktfeed.FeedResult{}, feed.Start()
-	case mktfeed.FeedSetSymbols:
-		return mktfeed.FeedResult{Generation: generation}, feed.SetSymbols(symbols, generation)
-	case mktfeed.FeedGetSnapshot, mktfeed.FeedGetFreshSnapshot:
-		quotes, err := feed.GetAssetQuotes(kind == mktfeed.FeedGetFreshSnapshot)
-		return mktfeed.FeedResult{Quotes: quotes}, err
-	default:
-		return mktfeed.FeedResult{}, fmt.Errorf("unsupported provider operation %d", kind)
-	}
 }
 
 func requestFxPairRates(ctx context.Context, pairs []string, targetCurrency string, requests chan<- []string) error {
@@ -1657,15 +1530,6 @@ func deliverQuote(sub *subscriber, quote c.QuoteUpdate, symbols map[string]struc
 
 func cloneSymbols(symbols map[string]struct{}) []string {
 	return slices.Sorted(maps.Keys(symbols))
-}
-
-func feedSources(feeds map[c.QuoteSource]mktfeed.MktDataFeed) []c.QuoteSource {
-	sources := make([]c.QuoteSource, 0, len(feeds))
-	for source := range feeds {
-		sources = append(sources, source)
-	}
-	slices.Sort(sources)
-	return sources
 }
 
 func lastPricesFromQuotes(symbols []string, quotesBySymbol map[string]*c.AssetQuote) (map[string]float64, error) {

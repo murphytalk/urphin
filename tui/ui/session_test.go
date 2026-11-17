@@ -60,9 +60,9 @@ func (f *sessionIntegrationFeed) SetQuoteUpdates(updates chan<- c.QuoteUpdate) {
 	f.mu.Unlock()
 }
 
-func (f *sessionIntegrationFeed) Start() error { return nil }
+func (f *sessionIntegrationFeed) Start(context.Context) error { return nil }
 
-func (f *sessionIntegrationFeed) GetAssetQuotes(...bool) ([]c.QuoteUpdate, error) {
+func (f *sessionIntegrationFeed) Snapshot(context.Context, bool) ([]c.QuoteUpdate, error) {
 	f.mu.Lock()
 	f.snapshotCalls++
 	call := f.snapshotCalls
@@ -75,7 +75,7 @@ func (f *sessionIntegrationFeed) GetAssetQuotes(...bool) ([]c.QuoteUpdate, error
 	return []c.QuoteUpdate{c.NewQuoteUpdate(old, 0, 0)}, nil
 }
 
-func (f *sessionIntegrationFeed) SetSymbols(symbols []string, _ int) error {
+func (f *sessionIntegrationFeed) SetSymbols(_ context.Context, symbols []string, _ int) error {
 	f.mu.Lock()
 	f.setCalls++
 	call := f.setCalls

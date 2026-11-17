@@ -72,6 +72,8 @@ type MonitorCurrencyRateYahoo struct {
 	chanUpdateCurrencyRates  chan c.CurrencyRates
 	chanRequestCurrencyRates chan []string
 	chanError                chan error
+	stopOnce                 sync.Once
+	stopErr                  error
 }
 
 // Config contains the required configuration for the Yahoo monitor.
@@ -112,21 +114,14 @@ func (m *MonitorCurrencyRateYahoo) SetTargetCurrency(targetCurrency string) {
 
 // Stop cancels and joins the owner and its active request.
 func (m *MonitorCurrencyRateYahoo) Stop() error {
-	select {
-	case <-m.done:
-		return nil
-	default:
-	}
-	err := m.call(command{kind: stopCommand})
-	select {
-	case <-m.done:
-	case <-m.ctx.Done():
+	m.stopOnce.Do(func() {
+		err := m.call(command{kind: stopCommand})
 		<-m.done
-	}
-	if errors.Is(err, errMonitorStopped) || errors.Is(err, context.Canceled) {
-		return nil
-	}
-	return err
+		if !errors.Is(err, errMonitorStopped) && !errors.Is(err, context.Canceled) {
+			m.stopErr = err
+		}
+	})
+	return m.stopErr
 }
 
 func (m *MonitorCurrencyRateYahoo) call(cmd command) error {
@@ -142,12 +137,7 @@ func (m *MonitorCurrencyRateYahoo) call(cmd command) error {
 	case err := <-cmd.reply:
 		return err
 	case <-m.done:
-		select {
-		case err := <-cmd.reply:
-			return err
-		default:
-			return errMonitorStopped
-		}
+		return errMonitorStopped
 	case <-m.ctx.Done():
 		return m.ctx.Err()
 	}

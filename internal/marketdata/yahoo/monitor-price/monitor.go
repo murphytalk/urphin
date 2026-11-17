@@ -26,15 +26,20 @@ const (
 	setOptionsCommand
 	getSnapshotCommand
 	getFreshSnapshotCommand
+	setQuoteUpdatesCommand
+	setOptionQuotesCommand
 	stopCommand
 )
 
 type command struct {
-	kind       commandKind
-	symbols    []string
-	options    []c.Option
-	generation int
-	reply      chan commandResult
+	kind         commandKind
+	symbols      []string
+	options      []c.Option
+	generation   int
+	ctx          context.Context
+	quoteUpdates chan<- c.QuoteUpdate
+	optionQuotes chan<- c.OptionQuote
+	reply        chan commandResult
 }
 
 type commandResult struct {
@@ -62,6 +67,7 @@ type fetchWaiter struct {
 }
 
 type quoteFetch struct {
+	ctx          context.Context
 	id           uint64
 	configID     uint64
 	generation   int
@@ -76,8 +82,8 @@ type monitorOptions struct{ refreshInterval time.Duration }
 type ownerConfig struct {
 	unaryAPI                 *unary.UnaryAPI
 	chanError                chan error
-	chanUpdateAssetQuote     chan c.QuoteUpdate
-	chanUpdateOptionQuote    chan c.OptionQuote
+	chanUpdateAssetQuote     chan<- c.QuoteUpdate
+	chanUpdateOptionQuote    chan<- c.OptionQuote
 	chanRequestCurrencyRates chan []string
 	refreshInterval          time.Duration
 }
@@ -89,10 +95,8 @@ type MonitorPriceYahoo struct {
 	commands chan command
 	done     chan struct{}
 	config   ownerConfig
-}
-
-func (m *MonitorPriceYahoo) SupportsAssetClass(assetClass c.AssetClass) bool {
-	return assetClass == c.AssetClassStock || assetClass == c.AssetClassETF
+	stopOnce sync.Once
+	stopErr  error
 }
 
 func (m *MonitorPriceYahoo) SupportsCurrency(string) bool { return true }
@@ -141,73 +145,72 @@ func WithRefreshInterval(interval time.Duration) Option {
 	return func(options *monitorOptions) { options.refreshInterval = interval }
 }
 
-// GetAssetQuotes returns cached quotes, or fetches a fresh snapshot when requested.
-func (m *MonitorPriceYahoo) GetAssetQuotes(ignoreCache ...bool) ([]c.QuoteUpdate, error) {
+// Snapshot returns cached quotes, or fetches a fresh snapshot when requested.
+func (m *MonitorPriceYahoo) Snapshot(ctx context.Context, fresh bool) ([]c.QuoteUpdate, error) {
 	kind := getSnapshotCommand
-	if len(ignoreCache) > 0 && ignoreCache[0] {
+	if fresh {
 		kind = getFreshSnapshotCommand
 	}
-	result := m.call(command{kind: kind})
+	result := m.call(command{kind: kind, ctx: ctx})
 	return result.quotes, result.err
 }
 
 // SetSymbols replaces the monitored symbol set and waits for its initial snapshot.
-func (m *MonitorPriceYahoo) SetSymbols(symbols []string, generation int) error {
-	result := m.call(command{kind: setSymbolsCommand, symbols: slices.Clone(symbols), generation: generation})
+func (m *MonitorPriceYahoo) SetSymbols(ctx context.Context, symbols []string, generation int) error {
+	result := m.call(command{kind: setSymbolsCommand, ctx: ctx, symbols: slices.Clone(symbols), generation: generation})
 	return result.err
 }
 
 // SetOptions replaces the option contracts polled by Yahoo.
-func (m *MonitorPriceYahoo) SetOptions(options []c.Option) error {
-	result := m.call(command{kind: setOptionsCommand, options: slices.Clone(options)})
+func (m *MonitorPriceYahoo) SetOptions(ctx context.Context, options []c.Option) error {
+	result := m.call(command{kind: setOptionsCommand, ctx: ctx, options: slices.Clone(options)})
 	return result.err
 }
 
 // Start fetches an initial snapshot and starts periodic refreshes.
-func (m *MonitorPriceYahoo) Start() error {
-	return m.call(command{kind: startCommand}).err
+func (m *MonitorPriceYahoo) Start(ctx context.Context) error {
+	return m.call(command{kind: startCommand, ctx: ctx}).err
+}
+
+func (m *MonitorPriceYahoo) SetQuoteUpdates(updates chan<- c.QuoteUpdate) {
+	_ = m.call(command{kind: setQuoteUpdatesCommand, quoteUpdates: updates})
+}
+
+func (m *MonitorPriceYahoo) SetOptionQuotes(updates chan<- c.OptionQuote) {
+	_ = m.call(command{kind: setOptionQuotesCommand, optionQuotes: updates})
 }
 
 // Stop cancels and joins the owner and any active request.
 func (m *MonitorPriceYahoo) Stop() error {
-	select {
-	case <-m.done:
-		return nil
-	default:
-	}
-	result := m.call(command{kind: stopCommand})
-	select {
-	case <-m.done:
-	case <-m.ctx.Done():
+	m.stopOnce.Do(func() {
+		result := m.call(command{kind: stopCommand})
 		<-m.done
-	}
-	if errors.Is(result.err, errMonitorStopped) || errors.Is(result.err, context.Canceled) {
-		return nil
-	}
-	return result.err
+		if !errors.Is(result.err, errMonitorStopped) && !errors.Is(result.err, context.Canceled) {
+			m.stopErr = result.err
+		}
+	})
+	return m.stopErr
 }
 
 func (m *MonitorPriceYahoo) call(cmd command) commandResult {
+	if cmd.ctx == nil {
+		cmd.ctx = m.ctx
+	}
 	cmd.reply = make(chan commandResult, 1)
 	select {
 	case m.commands <- cmd:
 	case <-m.done:
 		return commandResult{err: errMonitorStopped}
-	case <-m.ctx.Done():
-		return commandResult{err: m.ctx.Err()}
+	case <-cmd.ctx.Done():
+		return commandResult{err: cmd.ctx.Err()}
 	}
 	select {
 	case result := <-cmd.reply:
 		return result
 	case <-m.done:
-		select {
-		case result := <-cmd.reply:
-			return result
-		default:
-			return commandResult{err: errMonitorStopped}
-		}
-	case <-m.ctx.Done():
-		return commandResult{err: m.ctx.Err()}
+		return commandResult{err: errMonitorStopped}
+	case <-cmd.ctx.Done():
+		return commandResult{err: cmd.ctx.Err()}
 	}
 }
 
@@ -255,7 +258,7 @@ func (m *MonitorPriceYahoo) run() {
 		if owner.ticker != nil {
 			ticks = owner.ticker.C
 		}
-		var updates chan c.QuoteUpdate
+		var updates chan<- c.QuoteUpdate
 		var nextUpdate c.QuoteUpdate
 		if len(owner.updateOrder) > 0 {
 			updates = m.config.chanUpdateAssetQuote
@@ -304,16 +307,26 @@ func (m *MonitorPriceYahoo) run() {
 }
 
 func (owner *priceOwner) handle(cmd command) bool {
+	if err := cmd.ctx.Err(); err != nil {
+		owner.reply(cmd.reply, nil, err)
+		return false
+	}
 	switch cmd.kind {
 	case getSnapshotCommand:
 		owner.reply(cmd.reply, owner.snapshot(), nil)
 	case getFreshSnapshotCommand:
-		owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
+		owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation,
 			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
 	case setSymbolsCommand:
 		owner.setSymbols(cmd)
 	case setOptionsCommand:
 		owner.setOptions(cmd)
+	case setQuoteUpdatesCommand:
+		owner.monitor.config.chanUpdateAssetQuote = cmd.quoteUpdates
+		owner.reply(cmd.reply, nil, nil)
+	case setOptionQuotesCommand:
+		owner.monitor.config.chanUpdateOptionQuote = cmd.optionQuotes
+		owner.reply(cmd.reply, nil, nil)
 	case startCommand:
 		if owner.started || owner.startPending {
 			owner.reply(cmd.reply, nil, errors.New("monitor already started"))
@@ -324,7 +337,7 @@ func (owner *priceOwner) handle(cmd command) bool {
 			return false
 		}
 		owner.startPending = true
-		owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
+		owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation,
 			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
 	case stopCommand:
 		owner.reply(cmd.reply, nil, nil)
@@ -361,7 +374,7 @@ func (owner *priceOwner) setSymbols(cmd command) {
 		owner.pending = nil
 	}
 	waiters = append(waiters, fetchWaiter{kind: cmd.kind, reply: cmd.reply})
-	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation, symbols: symbols,
+	owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation, symbols: symbols,
 		publish: publish, reportErrors: reportErrors, waiters: waiters})
 }
 
@@ -391,6 +404,7 @@ func (owner *priceOwner) enqueue(fetch *quoteFetch) {
 		return
 	}
 	if owner.active.configID == fetch.configID {
+		// shortcut: coalesced callers share first fetch context; split fetches if independent cancellation becomes required.
 		owner.active.publish = owner.active.publish || fetch.publish
 		owner.active.reportErrors = owner.active.reportErrors || fetch.reportErrors
 		owner.active.waiters = append(owner.active.waiters, fetch.waiters...)
@@ -401,6 +415,7 @@ func (owner *priceOwner) enqueue(fetch *quoteFetch) {
 		return
 	}
 	owner.pending.configID = fetch.configID
+	owner.pending.ctx = fetch.ctx
 	owner.pending.generation = fetch.generation
 	owner.pending.symbols = fetch.symbols
 	owner.pending.publish = owner.pending.publish || fetch.publish
@@ -415,6 +430,14 @@ func (owner *priceOwner) startFetch(fetch *quoteFetch) {
 	owner.workers.Add(1)
 	go func() {
 		defer owner.workers.Done()
+		ctx := owner.monitor.ctx
+		if fetch.ctx != nil {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(fetch.ctx)
+			stop := context.AfterFunc(owner.monitor.ctx, cancel)
+			defer stop()
+			defer cancel()
+		}
 		if owner.monitor.config.unaryAPI == nil {
 			select {
 			case owner.results <- fetchResult{id: fetch.id, configID: fetch.configID, err: errors.New("Yahoo API is required")}:
@@ -422,7 +445,7 @@ func (owner *priceOwner) startFetch(fetch *quoteFetch) {
 			}
 			return
 		}
-		quotes, _, err := owner.monitor.config.unaryAPI.GetAssetQuotes(owner.monitor.ctx, fetch.symbols)
+		quotes, _, err := owner.monitor.config.unaryAPI.GetAssetQuotes(ctx, fetch.symbols)
 		select {
 		case owner.results <- fetchResult{id: fetch.id, configID: fetch.configID, quotes: quotes, err: err}:
 		case <-owner.monitor.ctx.Done():

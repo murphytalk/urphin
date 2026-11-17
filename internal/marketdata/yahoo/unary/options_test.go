@@ -20,7 +20,7 @@ func TestGetOptionLastPriceSelectsCallAndExpiry(t *testing.T) {
 			return sessionRaceResponse(http.StatusOK, body), nil
 		})},
 	})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 
 	got, err := api.GetOptionLastPrice(context.Background(), " AMZN ", "CALL", "2026-11-23", 255)
 	if err != nil {
@@ -37,7 +37,7 @@ func TestGetOptionLastPriceSelectsCallAndExpiry(t *testing.T) {
 
 func TestGetOptionLastPriceRejectsInvalidOptionInputs(t *testing.T) {
 	api := NewUnaryAPI(Config{RandomMktData: true})
-	t.Cleanup(api.Close)
+	t.Cleanup(api.CloseIdleConnections)
 	for _, test := range []struct {
 		name       string
 		ticker     string

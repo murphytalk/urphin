@@ -12,7 +12,7 @@ import (
 	"github.com/alpacahq/alpaca-trade-api-go/v3/marketdata"
 	"github.com/alpacahq/alpaca-trade-api-go/v3/marketdata/stream"
 	c "github.com/murphytalk/urphin/internal"
-	"github.com/murphytalk/urphin/internal/marketdata/mktfeed"
+	"github.com/murphytalk/urphin/internal/marketdata/mktfeed/actor"
 )
 
 type fakeSnapshotClient struct {
@@ -208,10 +208,10 @@ func TestSetSymbolsSnapshotsAndUpdatesLiveSubscriptions(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 50}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"MSFT", "AAPL", "AAPL"}, 11); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"MSFT", "AAPL", "AAPL"}, 11); err != nil {
 		t.Fatalf("SetSymbols(initial) error = %v", err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	client := getStream()
@@ -219,7 +219,7 @@ func TestSetSymbolsSnapshotsAndUpdatesLiveSubscriptions(t *testing.T) {
 		t.Fatalf("initial stream symbols = %v, want [AAPL MSFT]", client.initial)
 	}
 
-	if err := feed.SetSymbols([]string{"NVDA", "AAPL"}, 12); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"NVDA", "AAPL"}, 12); err != nil {
 		t.Fatalf("SetSymbols(update) error = %v", err)
 	}
 	if !reflect.DeepEqual(snapshotClient.callsSnapshot(), [][]string{{"AAPL", "MSFT"}, {"AAPL", "MSFT"}, {"NVDA"}}) {
@@ -231,7 +231,7 @@ func TestSetSymbolsSnapshotsAndUpdatesLiveSubscriptions(t *testing.T) {
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "NVDA"}) {
 		t.Errorf("acknowledged subscriptions = %v, want [AAPL NVDA]", client.currentSymbols())
 	}
-	quotes, err := feed.GetAssetQuotes()
+	quotes, err := feed.Snapshot(context.Background(), false)
 	if err != nil {
 		t.Fatalf("GetAssetQuotes() error = %v", err)
 	}
@@ -245,17 +245,17 @@ func TestSetSymbolsSnapshotFailurePreservesDesiredSetAndCache(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10}, stamp)}
 	factory, _ := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL"}, 3); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 3); err != nil {
 		t.Fatalf("SetSymbols(initial) error = %v", err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	snapshotClient.setResult(nil, errors.New("snapshot unavailable"))
-	if err := feed.SetSymbols([]string{"AAPL", "GOOG"}, 4); err == nil || !strings.Contains(err.Error(), "snapshot unavailable") {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "GOOG"}, 4); err == nil || !strings.Contains(err.Error(), "snapshot unavailable") {
 		t.Fatalf("SetSymbols() error = %v, want snapshot failure", err)
 	}
-	quotes, err := feed.GetAssetQuotes()
+	quotes, err := feed.Snapshot(context.Background(), false)
 	if err != nil {
 		t.Fatalf("GetAssetQuotes() error = %v", err)
 	}
@@ -271,10 +271,10 @@ func TestStreamQuotesUpdateOwnedCacheAndIgnoreInvalidOrOldQuotes(t *testing.T) {
 	snapshotClient.snapshots["AAPL"].PrevDailyBar = &marketdata.Bar{Close: 100}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, updates, nil)
-	if err := feed.SetSymbols([]string{"AAPL"}, 17); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 17); err != nil {
 		t.Fatalf("SetSymbols() error = %v", err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
 	getStream().callbacks.quote(stream.Quote{Symbol: "AAPL", BidPrice: 110, AskPrice: 112, Timestamp: stamp.Add(time.Second)})
@@ -283,7 +283,7 @@ func TestStreamQuotesUpdateOwnedCacheAndIgnoreInvalidOrOldQuotes(t *testing.T) {
 		update.QuotePrice.Price != 111 || update.QuotePrice.Change != 11 || update.QuotePrice.ChangePercent != 11 {
 		t.Errorf("stream update = %+v", update)
 	}
-	quotes, err := feed.GetAssetQuotes()
+	quotes, err := feed.Snapshot(context.Background(), false)
 	if err != nil {
 		t.Fatalf("GetAssetQuotes() error = %v", err)
 	}
@@ -310,17 +310,17 @@ func TestFailedUnsubscribeRollsBackAddedSubscription(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL", "MSFT"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	client := getStream()
 	client.mu.Lock()
 	client.unsubErrors = []error{errors.New("unsubscribe failed"), nil}
 	client.mu.Unlock()
-	err := feed.SetSymbols([]string{"AAPL", "NVDA"}, 2)
+	err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2)
 	if err == nil || !strings.Contains(err.Error(), "unsubscribe failed") {
 		t.Fatalf("SetSymbols() error = %v, want unsubscribe failure", err)
 	}
@@ -337,24 +337,24 @@ func TestFailedRollbackKeepsAppliedSetForNextReconciliation(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL", "MSFT"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	client := getStream()
 	client.mu.Lock()
 	client.unsubErrors = []error{errors.New("unsubscribe failed"), errors.New("rollback failed")}
 	client.mu.Unlock()
-	err := feed.SetSymbols([]string{"AAPL", "NVDA"}, 2)
+	err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2)
 	if err == nil || !strings.Contains(err.Error(), "unsubscribe failed") || !strings.Contains(err.Error(), "rollback failed") {
 		t.Fatalf("SetSymbols() error = %v, want unsubscribe and rollback errors", err)
 	}
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "MSFT", "NVDA"}) {
 		t.Fatalf("applied subscriptions after failed rollback = %v", client.currentSymbols())
 	}
-	if err := feed.SetSymbols([]string{"AAPL"}, 3); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 3); err != nil {
 		t.Fatalf("SetSymbols(reconcile) error = %v", err)
 	}
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL"}) {
@@ -367,14 +367,14 @@ func TestReconnectUsesSDKCurrentAcknowledgedSubscriptions(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL", "MSFT"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	client := getStream()
-	if err := feed.SetSymbols([]string{"AAPL", "NVDA"}, 2); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2); err != nil {
 		t.Fatal(err)
 	}
 	client.reconnect()
@@ -396,15 +396,15 @@ func TestOwnerRemainsResponsiveWhileSubscriptionAckWaitsAndStopJoins(t *testing.
 		client.subscribeBlock = release
 	})
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
 	// The initial set arrives through WithQuotes, so block only the later update.
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	setDone := make(chan error, 1)
-	go func() { setDone <- feed.SetSymbols([]string{"AAPL", "NVDA"}, 2) }()
+	go func() { setDone <- feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2) }()
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
@@ -412,7 +412,7 @@ func TestOwnerRemainsResponsiveWhileSubscriptionAckWaitsAndStopJoins(t *testing.
 	}
 	quotesDone := make(chan error, 1)
 	go func() {
-		quotes, err := feed.GetAssetQuotes()
+		quotes, err := feed.Snapshot(context.Background(), false)
 		if err == nil && (len(quotes) != 1 || quotes[0].Symbol != "AAPL") {
 			err = errors.New("unexpected cached quotes while subscription was pending")
 		}
@@ -444,7 +444,7 @@ func TestOwnerRemainsResponsiveWhileSubscriptionAckWaitsAndStopJoins(t *testing.
 		t.Errorf("SetSymbols() after stop = %v, want stopped error", err)
 	}
 	select {
-	case <-feed.Done():
+	case <-feed.done:
 	default:
 		t.Fatal("Done remained open after Stop returned")
 	}
@@ -456,15 +456,15 @@ func TestQuoteOutputBackpressureDoesNotBlockOwner(t *testing.T) {
 	factory, getStream := streamFactoryFor(t, nil)
 	updates := make(chan c.QuoteUpdate)
 	feed := newFeedForTest(t, snapshotClient, factory, updates, nil)
-	if err := feed.SetSymbols([]string{"AAPL"}, 5); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 5); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	getStream().callbacks.quote(stream.Quote{Symbol: "AAPL", BidPrice: 100, AskPrice: 102, Timestamp: stamp.Add(time.Second)})
 	waitForCondition(t, func() bool {
-		quotes, err := feed.GetAssetQuotes()
+		quotes, err := feed.Snapshot(context.Background(), false)
 		return err == nil && len(quotes) == 1 && quotes[0].QuotePrice.Price == 101
 	})
 	select {
@@ -480,8 +480,8 @@ func TestStopCancelsSnapshotAndConnectWorkers(t *testing.T) {
 		snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10}, time.Now()), entered: entered, release: release}
 		factory, _ := streamFactoryFor(t, nil)
 		feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-		set := mktfeed.NewFeedCommand(context.Background(), 41, mktfeed.FeedSetSymbols, []string{"AAPL"}, 1)
-		feed.Commands() <- set
+		set := actor.NewCommand(context.Background(), 41, actor.SetSymbols, []string{"AAPL"}, 1)
+		feed.commands <- set
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
@@ -489,6 +489,9 @@ func TestStopCancelsSnapshotAndConnectWorkers(t *testing.T) {
 		}
 		if err := feed.Stop(); err != nil {
 			t.Fatalf("Stop() error = %v", err)
+		}
+		if err := feed.Stop(); err != nil {
+			t.Fatalf("repeated Stop() error = %v", err)
 		}
 		select {
 		case result := <-set.Reply():
@@ -508,11 +511,11 @@ func TestStopCancelsSnapshotAndConnectWorkers(t *testing.T) {
 			client.connectBlock = true
 		})
 		feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-		if err := feed.SetSymbols([]string{"AAPL"}, 1); err != nil {
+		if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 			t.Fatal(err)
 		}
 		startDone := make(chan error, 1)
-		go func() { startDone <- feed.Start() }()
+		go func() { startDone <- feed.Start(context.Background()) }()
 		select {
 		case <-entered:
 		case <-time.After(time.Second):
@@ -533,10 +536,10 @@ func TestFreshSnapshotCannotOverwriteNewerLiveQuote(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 100}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	if err := feed.SetSymbols([]string{"AAPL"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	snapshotClient.mu.Lock()
@@ -546,7 +549,7 @@ func TestFreshSnapshotCannotOverwriteNewerLiveQuote(t *testing.T) {
 	freshDone := make(chan []c.QuoteUpdate, 1)
 	freshErr := make(chan error, 1)
 	go func() {
-		quotes, err := feed.GetAssetQuotes(true)
+		quotes, err := feed.Snapshot(context.Background(), true)
 		if err != nil {
 			freshErr <- err
 			return
@@ -560,7 +563,7 @@ func TestFreshSnapshotCannotOverwriteNewerLiveQuote(t *testing.T) {
 	}
 	getStream().callbacks.quote(stream.Quote{Symbol: "AAPL", BidPrice: 100, AskPrice: 102, Timestamp: stamp.Add(2 * time.Second)})
 	waitForCondition(t, func() bool {
-		quotes, err := feed.GetAssetQuotes()
+		quotes, err := feed.Snapshot(context.Background(), false)
 		return err == nil && len(quotes) == 1 && quotes[0].QuotePrice.Price == 101
 	})
 	close(release)
@@ -582,23 +585,23 @@ func TestTerminalStreamErrorStopsFeedAndRejectsCommands(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, feedErrors)
-	if err := feed.SetSymbols([]string{"AAPL"}, 1); err != nil {
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err := feed.Start(); err != nil {
+	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	streamErr := errors.New("reconnect limit reached")
 	getStream().terminated <- streamErr
 	select {
-	case <-feed.Done():
+	case <-feed.done:
 	case <-time.After(time.Second):
 		t.Fatal("feed did not stop after terminal stream error")
 	}
-	if result := feed.TerminalResult(); !errors.Is(result.Err, streamErr) {
+	if result := feed.terminal; !errors.Is(result.Err, streamErr) {
 		t.Errorf("TerminalResult() = %+v, want terminal stream error", result)
 	}
-	if err := feed.SetSymbols([]string{"MSFT"}, 2); err == nil || !errors.Is(err, streamErr) {
+	if err := feed.SetSymbols(context.Background(), []string{"MSFT"}, 2); err == nil || !errors.Is(err, streamErr) {
 		t.Errorf("SetSymbols() after terminal error = %v", err)
 	}
 	select {
@@ -616,13 +619,13 @@ func TestFeedCommandActorReturnsOwnedSnapshot(t *testing.T) {
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10}, stamp)}
 	factory, _ := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
-	set := mktfeed.NewFeedCommand(context.Background(), 81, mktfeed.FeedSetSymbols, []string{"AAPL"}, 7)
-	feed.Commands() <- set
+	set := actor.NewCommand(context.Background(), 81, actor.SetSymbols, []string{"AAPL"}, 7)
+	feed.commands <- set
 	if result := <-set.Reply(); result.Err != nil || result.OperationID != 81 || result.Generation != 7 {
 		t.Fatalf("SetSymbols actor result = %+v", result)
 	}
-	get := mktfeed.NewFeedCommand(context.Background(), 82, mktfeed.FeedGetSnapshot, nil, 0)
-	feed.Commands() <- get
+	get := actor.NewCommand(context.Background(), 82, actor.GetSnapshot, nil, 0)
+	feed.commands <- get
 	result := <-get.Reply()
 	if result.Err != nil || result.Generation != 7 || len(result.Quotes) != 1 || result.Quotes[0].QuotePrice.Price != 10 {
 		t.Fatalf("GetSnapshot actor result = %+v", result)
@@ -644,7 +647,7 @@ func receiveQuotes(t *testing.T, feed *MktDataFeed) []c.QuoteUpdate {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		quotes, err := feed.GetAssetQuotes()
+		quotes, err := feed.Snapshot(context.Background(), false)
 		if err == nil && len(quotes) > 0 {
 			return quotes
 		}
