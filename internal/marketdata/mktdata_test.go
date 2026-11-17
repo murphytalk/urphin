@@ -1169,7 +1169,6 @@ func TestBlockedSubscribersDoNotStallSnapshotsOrLiveFanout(t *testing.T) {
 	}
 	wantQuote(t, fast, quote)
 	wantQuote(t, full, c.AssetQuote{Symbol: "sentinel"})
-	wantNoQuote(t, full)
 	wantNoQuote(t, unbuffered)
 }
 

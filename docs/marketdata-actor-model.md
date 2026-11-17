@@ -53,6 +53,25 @@ There is no cross-provider price priority or field merge. The home UI applies ac
 
 Live quote ingress has a 10-update buffer; subscription channels have a 64-update buffer. Delivery is nonblocking and may drop updates under sustained load. `Subscription.Close` removes its registry entry and closes its channel while holding `Service.mu`, so the ingress loop cannot send after close. Service stop closes remaining subscription channels, cancels reconcilers, waits for them, stops feeds and the FX monitor, and closes idle Yahoo HTTP connections. Repeated stop calls return the same result.
 
+## Concurrency checks
+
+Run the race detector for both builds when changing the service, feeds, or UI subscription path. Keep `GOCACHE` outside the workspace and remove the temporary cache afterward:
+
+```sh
+GOCACHE=/tmp/urphin-marketdata-race-cache go test -race ./internal/marketdata/... ./tui/ui ./tui/setup
+GOCACHE=/tmp/urphin-marketdata-race-cache go test -race -tags extension ./internal/marketdata/... ./extension/mktfeed/... ./tui/ui ./tui/setup
+rm -r /tmp/urphin-marketdata-race-cache
+```
+
+Repeat focused concurrency tests to exercise more interleavings, for example:
+
+```sh
+GOCACHE=/tmp/urphin-marketdata-race-cache go test -race -count=20 ./internal/marketdata -run 'Test(ConcurrentRoutingAndSubscriberChanges|DelayedSnapshotCannotAttachAfterUnsubscribeAndResubscribe|StopWaitsForStalledSubscriptionProviderCall)$'
+rm -r /tmp/urphin-marketdata-race-cache
+```
+
+Use `-count` only with ordinary Go test packages; Ginkgo suites in the UI reject counts above one. Run `make check`, then `make public` and `make extension` sequentially for shared-code changes. A clean `-race` run means no data race occurred on the paths exercised. It does not prove that every interleaving is safe or detect deadlocks, lost updates, and shutdown stalls; the focused tests above cover those behaviors with explicit assertions.
+
 ## Benchmark reference
 
 [`BenchmarkMarketDataProviderIngress`](../internal/marketdata/mktdata_test.go) measures one serial quote handoff from a fake provider through the service router to one subscriber. Setup waits for initial provider reconciliation. The benchmark includes quote creation, channel transfer, generation/revision checks, cloning, delivery, and receiver consumption. It excludes subscription, reconciliation, network, SDK callbacks, UI rendering, and bursts. It is a sequential latency reference, not a saturated-throughput claim.
