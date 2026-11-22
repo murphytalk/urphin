@@ -114,3 +114,22 @@ func TestTableResultPaginatesUsingAvailableHeight(t *testing.T) {
 		t.Fatalf("table expanded to terminal width: %d", got)
 	}
 }
+
+func TestTableResultIsCenterAligned(t *testing.T) {
+	tableModel := table.New([]table.Column{table.NewColumn("col", "Col", 10)}).
+		WithRows([]table.Row{table.NewRow(table.RowData{"col": "123"})})
+	rawTableWidth := ansi.StringWidth(strings.Split(tableModel.View(), "\n")[0])
+
+	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+	width := rawTableWidth + 20
+	m.Update(tea.WindowSizeMsg{Width: width, Height: 10})
+	m.Update(SetResultMsg{Header: "TX", Table: &tableModel})
+
+	wantPadding := (width - rawTableWidth) / 2
+	content := m.viewport.GetContent()
+	firstLine := ansi.Strip(strings.Split(content, "\n")[0])
+	leadingSpaces := len(firstLine) - len(strings.TrimLeft(firstLine, " "))
+	if leadingSpaces != wantPadding {
+		t.Fatalf("table leading spaces = %d, want %d (first line: %q)", leadingSpaces, wantPadding, firstLine)
+	}
+}

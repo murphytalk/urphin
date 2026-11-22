@@ -130,7 +130,7 @@ func (m *Model) View() string {
 
 func (m *Model) refreshContent() {
 	if m.table != nil {
-		m.viewport.SetContent(m.table.View())
+		m.viewport.SetContent(lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.table.View()))
 		return
 	}
 	content := m.content
