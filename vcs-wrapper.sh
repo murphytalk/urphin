@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 CMD=$(echo $(basename "$0") | sed 's/\(.*\)-.*/\1/g')
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# resolve symlinks so the extension/ guard holds no matter how the wrapper is invoked
+ROOT="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd -P)"
 CWD="$(pwd -P)"
 
 if [[ "$CWD" == "$ROOT/extension" || "$CWD" == "$ROOT/extension"/* ]]; then
-  echo "warning: refusing to run jj inside the extension/ submodule (cwd: $CWD)" >&2
+  echo "warning: refusing to run $CMD inside the extension/ submodule (cwd: $CWD)" >&2
   exit 1
 fi
 
