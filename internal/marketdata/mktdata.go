@@ -34,6 +34,8 @@ type MktData interface {
 	SubscribeOption(options []c.Option) (*OptionSubscription, error)
 	RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed)
 	Status() map[c.QuoteSource]ProviderStatus
+	LatestPrice(symbol string) (float64, bool)
+	LatestOptionPrice(option c.Option) (float64, bool)
 }
 
 // VisibleSubscriber attaches an ordered visible set atomically with logical subscriptions.
@@ -130,7 +132,10 @@ type registry struct {
 }
 
 type Service struct {
-	mu sync.RWMutex
+	mu           sync.RWMutex
+	priceMu      sync.RWMutex
+	prices       map[string]float64
+	optionPrices map[c.Option]float64
 	registry
 	results  chan providerEvent
 	prune    chan struct{}
@@ -176,7 +181,8 @@ func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleStat
 		done:    make(chan struct{}),
 		registry: registry{state: state, subscribers: make(map[*Subscription]struct{}), optionSubscribers: make(map[*OptionSubscription]struct{}),
 			fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote)},
-		feeds:     make(map[c.QuoteSource]*providerRuntime),
+		feeds:  make(map[c.QuoteSource]*providerRuntime),
+		prices: make(map[string]float64), optionPrices: make(map[c.Option]float64),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		router:    newRouter(),
 		chanError: make(chan error, errChanSize), chanQuotes: make(chan c.QuoteUpdate, quoteQueueSize),

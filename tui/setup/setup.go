@@ -10,6 +10,7 @@ import (
 	"github.com/goccy/go-yaml"
 	databackend "github.com/murphytalk/urphin/data/backend"
 	c "github.com/murphytalk/urphin/internal"
+	"github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/theme"
 )
 
@@ -19,6 +20,7 @@ type AppCtx struct {
 	Debug    bool                    // set by --debug-log, app only reads it
 	Styles   theme.Styles            // resolved once during application startup
 	Db       databackend.DataBackend // initialized in setup, used by app
+	MktData  mktdata.MktData
 }
 
 // LoadConfig reads the YAML file at path into a Config.

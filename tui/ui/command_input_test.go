@@ -547,6 +547,35 @@ func TestCommandHistoryBestSuggestionAndTabAcceptance(t *testing.T) {
 	}
 }
 
+func TestCommandHistoryNavigation(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	history := textinput.NewFileHistory(filepath.Join(t.TempDir(), "history"), nil)
+	history.Add("TX AAPL")
+	history.Add("TX AMZN")
+	m.commandHistory = history
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	m.commandInput.SetValue("draft")
+	uiTestUpdate(t, m, uiTestKey(tea.KeyDown))
+	if got := m.commandInput.Value(); got != "draft" {
+		t.Fatalf("down without history navigation changed command to %q", got)
+	}
+
+	for _, step := range []struct {
+		key  rune
+		want string
+	}{
+		{tea.KeyUp, "TX AMZN"},
+		{tea.KeyUp, "TX AAPL"},
+		{tea.KeyDown, "TX AMZN"},
+		{tea.KeyDown, "draft"},
+	} {
+		uiTestUpdate(t, m, uiTestKey(step.key))
+		if got := m.commandInput.Value(); got != step.want {
+			t.Errorf("key %q command = %q, want %q", step.key, got, step.want)
+		}
+	}
+}
+
 func TestValidateCommandOnlyChecksSyntax(t *testing.T) {
 	validation, hint, err := validateCommand("MKT USD AAPL")
 	if err != nil || validation.Status != textinput.StatusValid {

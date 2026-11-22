@@ -435,6 +435,7 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: tickers}, {Tickers: slices.Clone(tickers)}}, nil)
 			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
+			m.commandInput.Blur()
 			before := m.viewport.View()
 			uiTestUpdate(t, m, uiTestKey(code, func() tea.KeyMod {
 				if code == tea.KeyEnd {

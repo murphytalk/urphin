@@ -177,6 +177,11 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	if !ok {
 		return
 	}
+	if accepted.QuotePrice != nil {
+		o.priceMu.Lock()
+		o.prices[symbol] = accepted.QuotePrice.Price
+		o.priceMu.Unlock()
+	}
 	if targets != nil {
 		for _, target := range targets {
 			deliverQuote(target.sub, accepted, target.symbols)
@@ -186,6 +191,24 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	for sub := range o.subscribers {
 		deliverQuote(sub, accepted, sub.symbols)
 	}
+}
+
+func (o *Service) LatestPrice(symbol string) (float64, bool) {
+	o.priceMu.RLock()
+	defer o.priceMu.RUnlock()
+	price, ok := o.prices[symbol]
+	return price, ok
+}
+
+func (o *Service) LatestOptionPrice(option c.Option) (float64, bool) {
+	option, err := normalizeOption(option)
+	if err != nil {
+		return 0, false
+	}
+	o.priceMu.RLock()
+	defer o.priceMu.RUnlock()
+	price, ok := o.optionPrices[option]
+	return price, ok
 }
 
 func (o *Service) routingUnion() map[string]struct{} {

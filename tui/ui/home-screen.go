@@ -35,32 +35,34 @@ import (
 
 // Model owns portfolio state; only the UI event loop mutates it.
 type Model struct {
-	ctx            context.Context
-	app            setup.AppCtx
-	lists          []databackend.Watchlist
-	symbols        []string
-	fxPairs        []string
-	fxPairSet      map[string]struct{}
-	positions      map[string]databackend.Position
-	positionErrors map[string]bool
-	quotes         map[string]c.AssetQuote
-	mismatches     map[string]bool
-	selected       int
-	width, height  int
-	ready          bool
-	viewport       viewport.Model
-	watchlist      *watchlist.Model
-	summary        *summary.Model
-	session        *quoteSession
-	commandInput   textinput.Model
-	commandErr     error
-	commandHint    string
-	commandHistory textinput.TextHistory
-	result         *cmdview.Model
-	commandRunning bool
-	marketLoading  bool
-	marketSpinner  spinner.Model
-	marketError    error
+	ctx                    context.Context
+	app                    setup.AppCtx
+	lists                  []databackend.Watchlist
+	symbols                []string
+	fxPairs                []string
+	fxPairSet              map[string]struct{}
+	positions              map[string]databackend.Position
+	positionErrors         map[string]bool
+	quotes                 map[string]c.AssetQuote
+	mismatches             map[string]bool
+	selected               int
+	width, height          int
+	ready                  bool
+	viewport               viewport.Model
+	watchlist              *watchlist.Model
+	summary                *summary.Model
+	session                *quoteSession
+	commandInput           textinput.Model
+	commandErr             error
+	commandHint            string
+	commandHistory         textinput.TextHistory
+	commandHistoryDraft    string
+	commandHistoryBrowsing bool
+	result                 *cmdview.Model
+	commandRunning         bool
+	marketLoading          bool
+	marketSpinner          spinner.Model
+	marketError            error
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -193,6 +195,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 
 // Run owns the UI session; the application owner starts/stops feeds and closes the backend.
 func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err error) {
+	app.MktData = marketData
 	m, err := NewModel(ctx, app)
 	if err != nil {
 		return err
@@ -387,6 +390,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.commandRunning {
 				return m, nil
 			}
+			m.commandHistoryBrowsing = false
+			m.commandHistoryDraft = ""
 			line := m.commandInput.Value()
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
@@ -408,6 +413,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err}
 			})
 		case "esc":
+			m.commandHistoryBrowsing = false
+			m.commandHistoryDraft = ""
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
 			m.commandErr = nil
@@ -416,6 +423,34 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resize()
 			return m, nil
 		case "up", "down", "pgup", "pgdown", "ctrl+home", "ctrl+end":
+			if m.commandInput.Focused() && (msg.Keystroke() == "up" || msg.Keystroke() == "down") {
+				if m.commandHistory != nil {
+					if msg.Keystroke() == "up" {
+						if !m.commandHistoryBrowsing {
+							m.commandHistoryDraft = m.commandInput.Value()
+							m.commandHistoryBrowsing = true
+						}
+						line := m.commandHistory.Previous()
+						if line == "" {
+							m.commandHistoryBrowsing = false
+							line = m.commandHistoryDraft
+						}
+						m.commandInput.SetValue(line)
+					} else if m.commandHistoryBrowsing {
+						line := m.commandHistory.Next()
+						if line == "" {
+							m.commandHistoryBrowsing = false
+							line = m.commandHistoryDraft
+						}
+						m.commandInput.SetValue(line)
+					}
+					m.commandInput.SetCursor(len([]rune(m.commandInput.Value())))
+					m.refreshCommandSuggestions()
+					m.syncCommandPromptStyle()
+					m.resize()
+				}
+				return m, nil
+			}
 			if m.result.Active() {
 				var cmd tea.Cmd
 				m.result, cmd = m.result.Update(msg)

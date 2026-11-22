@@ -259,6 +259,9 @@ func (o *Service) handleOptionQuote(update c.OptionQuote) {
 		return
 	}
 	update.Option = option
+	o.priceMu.Lock()
+	o.optionPrices[option] = update.Price
+	o.priceMu.Unlock()
 	for sub := range o.optionSubscribers {
 		if _, subscribed := sub.options[option]; !subscribed {
 			continue
