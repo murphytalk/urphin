@@ -17,6 +17,7 @@ type subscriptionMsg struct{ err error }
 type quoteSession struct {
 	feed     mktdata.MktData
 	symbols  []string
+	visible  []string
 	ctx      context.Context
 	cancel   context.CancelFunc
 	mu       sync.Mutex
@@ -45,11 +46,38 @@ func (s *quoteSession) subscribe() tea.Cmd {
 		if !s.started {
 			s.started = true
 			if len(s.symbols) > 0 {
-				s.sub, s.startErr = s.feed.Subscribe(s.symbols)
+				if feed, ok := s.feed.(mktdata.VisibleSubscriber); ok {
+					s.sub, s.startErr = feed.SubscribeWithVisibility(s.symbols, s.visible)
+				} else {
+					s.sub, s.startErr = s.feed.Subscribe(s.symbols)
+					if s.startErr == nil {
+						s.startErr = s.sub.SetVisibleSymbols(s.visible)
+					}
+				}
 			}
 			close(s.ready)
 		}
 		return subscriptionMsg{err: s.startErr}
+	}
+}
+
+// setVisibleSymbols updates local priority immediately; the command forwards only the latest selection.
+func (s *quoteSession) setVisibleSymbols(symbols []string) tea.Cmd {
+	s.mu.Lock()
+	s.visible = slices.Clone(symbols)
+	s.mu.Unlock()
+	return func() tea.Msg {
+		select {
+		case <-s.ctx.Done():
+			return nil
+		case <-s.ready:
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.closed || s.ctx.Err() != nil || s.sub == nil {
+			return nil
+		}
+		return subscriptionMsg{err: s.sub.SetVisibleSymbols(s.visible)}
 	}
 }
 

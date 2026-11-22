@@ -25,6 +25,10 @@ type Cache interface {
 	Set(key string, value any, ttl time.Duration)
 }
 
+type MktFeedCfg struct {
+	QuoteQueueSize int `yaml:"quote-queue-size"`
+}
+
 type AppCfg struct {
 	// LogSize is the rotation threshold in megabytes; 0 (or absent) means
 	// logging.DefaultMaxSize.
@@ -35,6 +39,7 @@ type AppCfg struct {
 	LogKeepDays   *int        `yaml:"logKeepDays"`
 	Cache         string      `yaml:"cache"`
 	Databackend   string      `yaml:"databackend"`
+	MktFeed       MktFeedCfg  `yaml:"mkt-feed"`
 	MktDataFeed   QuoteSource `yaml:"mkt-data-feed"`
 	RandomMktData bool        `yaml:"random-mkt-data"`
 	FxPairs       []string    `yaml:"fx-pairs"`

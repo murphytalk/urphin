@@ -275,8 +275,8 @@ func TestModelInitCommandsRequireSessionAndSymbols(t *testing.T) {
 				}
 				if hasSession && hasSymbols {
 					batch, ok := cmd().(tea.BatchMsg)
-					if !ok || len(batch) != 3 {
-						t.Fatal("Init must start cursor, receiver, and subscription")
+					if !ok || len(batch) != 4 {
+						t.Fatal("Init must start cursor, visibility, receiver, and subscription")
 					}
 				}
 				if len(feed.snapshot().subscriptions) != 0 {

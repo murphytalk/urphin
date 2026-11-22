@@ -124,3 +124,46 @@ func TestQuoteSessionReportsValidationFailure(t *testing.T) {
 		t.Fatalf("validation result = %#v", msg)
 	}
 }
+
+type sessionVisibilityProvider struct {
+	sessionTestProvider
+	events chan []string
+}
+
+func (p *sessionVisibilityProvider) SetVisibleSymbols(_ context.Context, symbols []string) error {
+	p.events <- slices.Clone(symbols)
+	return nil
+}
+
+func TestQuoteSessionForwardsLatestVisibilityWithoutResubscribing(t *testing.T) {
+	feed := newSessionTestFeed(t)
+	provider := &sessionVisibilityProvider{events: make(chan []string, 8)}
+	feed.RegisterMktDataFeed(c.QuoteSourceYahoo, provider)
+	if err := feed.Service.Start(mktdata.MktDataConfig{RandomMktData: true}); err != nil {
+		t.Fatal(err)
+	}
+	session := newQuoteSession(context.Background(), feed, []string{"A", "B", "C"})
+	defer session.Close()
+	session.setVisibleSymbols([]string{"C"})
+	if msg := session.subscribe()(); msg != (subscriptionMsg{}) {
+		t.Fatalf("subscribe = %#v", msg)
+	}
+	if got := sessionTestAwait(t, provider.events, "initial visibility"); !slices.Equal(got, []string{"C"}) {
+		t.Fatalf("initial visibility = %v", got)
+	}
+	first := session.setVisibleSymbols([]string{"B"})
+	last := session.setVisibleSymbols([]string{"A", "B"})
+	first()
+	last()
+	if got := sessionTestAwait(t, provider.events, "latest visibility"); !slices.Equal(got, []string{"A", "B"}) {
+		t.Fatalf("stale switch applied: %v", got)
+	}
+	if got := len(feed.snapshot().subscriptions); got != 1 {
+		t.Fatalf("visibility created %d subscriptions", got)
+	}
+	canceled := session.setVisibleSymbols([]string{"C"})
+	session.requestStop()
+	if msg := canceled(); msg != nil {
+		t.Fatalf("canceled priority command = %#v", msg)
+	}
+}

@@ -332,7 +332,7 @@ func newTestMktData(t testing.TB, feeds map[c.QuoteSource]mktfeed.MktDataFeed) *
 
 func newTestMktDataState(t testing.TB, feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleState) *legacyTestService {
 	t.Helper()
-	service := &legacyTestService{Service: newService(feeds, state), legacy: make(map[string]*legacyTestSubscription)}
+	service := &legacyTestService{Service: newService(feeds, state, quoteChanSize), legacy: make(map[string]*legacyTestSubscription)}
 	t.Cleanup(func() {
 		if err := service.Stop(); err != nil {
 			t.Errorf("Stop() during cleanup: %v", err)
@@ -1388,5 +1388,19 @@ func TestFullSubscriptionQueuePreservesPriceWithNewMetadata(t *testing.T) {
 	got := <-sub.updates
 	if got.Name != "Apple" || got.Revision != 2 || got.QuotePrice == nil || got.QuotePrice.Price != 100 {
 		t.Fatalf("coalesced metadata lost queued price: %+v", got)
+	}
+}
+
+func TestQuoteQueueCapacity(t *testing.T) {
+	for _, tc := range []struct{ size, want int }{{20, 20}, {0, 10}, {-1, 10}} {
+		service := NewMktDataWithQuoteQueueSize(tc.size).(*Service)
+		t.Cleanup(func() {
+			if err := service.Stop(); err != nil {
+				t.Error(err)
+			}
+		})
+		if got := cap(service.chanQuotes); got != tc.want {
+			t.Errorf("quote channel capacity for %d = %d, want %d", tc.size, got, tc.want)
+		}
 	}
 }

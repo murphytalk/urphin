@@ -43,6 +43,8 @@ type providerRuntime struct {
 	mu             sync.Mutex
 	kick           chan struct{}
 	desired        []string
+	visible        []string
+	appliedVisible []string
 	applied        []string
 	desiredOptions []c.Option
 	appliedOptions []c.Option
@@ -78,6 +80,19 @@ func (p *providerRuntime) setDesired(symbols []string, seeds []seedTarget) {
 	}
 }
 
+func (p *providerRuntime) setVisible(symbols []string) {
+	if _, ok := p.feed.(mktfeed.VisibilityFeed); !ok {
+		return
+	}
+	p.mu.Lock()
+	changed := !slices.Equal(p.visible, symbols)
+	p.visible = slices.Clone(symbols)
+	p.mu.Unlock()
+	if changed {
+		p.signal()
+	}
+}
+
 func (p *providerRuntime) setDesiredOptions(options []c.Option) {
 	p.mu.Lock()
 	changed := !slices.Equal(p.desiredOptions, options)
@@ -104,7 +119,7 @@ func (p *providerRuntime) status() ProviderStatus {
 		DesiredSymbols: slices.Clone(p.desired), AppliedSymbols: slices.Clone(p.applied),
 		DesiredOptions: slices.Clone(p.desiredOptions), AppliedOptions: slices.Clone(p.appliedOptions),
 		Generation: p.generation,
-		Pending:    p.startNeeded && !p.started || p.needsSnapshot || !slices.Equal(p.desired, p.applied) || !slices.Equal(p.desiredOptions, p.appliedOptions) || p.lastErr != nil,
+		Pending:    p.startNeeded && !p.started || p.needsSnapshot || !slices.Equal(p.desired, p.applied) || !slices.Equal(p.desiredOptions, p.appliedOptions) || p.lastErr != nil || !slices.Equal(p.visible, p.appliedVisible),
 		LastError:  p.lastErr,
 	}
 }
@@ -125,6 +140,9 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 			p.mu.Lock()
 			symbols := slices.Clone(p.desired)
 			options := slices.Clone(p.desiredOptions)
+			visible := slices.Clone(p.visible)
+			setVisible := !slices.Equal(visible, p.appliedVisible)
+			appliedCount := len(p.applied)
 			setSymbols := !slices.Equal(symbols, p.applied)
 			setOptions := !slices.Equal(options, p.appliedOptions)
 			start := p.startNeeded && !p.started
@@ -137,11 +155,20 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 				generation = p.nextGen
 			}
 			p.mu.Unlock()
-			if !setSymbols && !setOptions && !start && !snapshot {
+			if !setSymbols && !setOptions && !setVisible && !start && !snapshot {
 				break
 			}
 			event := providerEvent{source: source, generation: generation, symbols: symbols, options: options, seeds: seeds, startup: startup}
-			if setSymbols {
+			visibleApplied := false
+			if setVisible {
+				if err := p.feed.(mktfeed.VisibilityFeed).SetVisibleSymbols(ctx, visible); err != nil {
+					event.stage, event.err = "set visibility", err
+				} else {
+					visibleApplied = true
+				}
+			}
+			if event.err == nil && setSymbols {
+				slog.Debug("Reconciling market-data subscriptions", "source", source, "generation", generation, "desired_count", len(symbols), "applied_count", appliedCount, "symbols", symbols)
 				if err := p.feed.SetSymbols(ctx, symbols, generation); err != nil {
 					event.stage, event.err = "set subscriptions", err
 				}
@@ -174,6 +201,9 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 				}
 			}
 			p.mu.Lock()
+			if visibleApplied {
+				p.appliedVisible = slices.Clone(visible)
+			}
 			if event.setSymbols {
 				p.applied, p.generation = slices.Clone(symbols), generation
 			}
@@ -205,6 +235,7 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 			case <-ctx.Done():
 				return
 			}
+			slog.Debug("Market-data reconciliation completed", "source", source, "generation", generation, "desired_count", len(symbols), "quote_count", len(event.quotes), "seed_targets", len(seeds), "stage", event.stage, "error", event.err)
 			if event.err != nil {
 				timer := time.NewTimer(backoff)
 				select {

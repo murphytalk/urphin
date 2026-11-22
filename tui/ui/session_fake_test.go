@@ -33,14 +33,22 @@ func newSessionTestFeed(t *testing.T) *sessionTestFeed {
 }
 
 func (f *sessionTestFeed) Subscribe(symbols []string) (*mktdata.Subscription, error) {
+	return f.SubscribeWithVisibility(symbols, nil)
+}
+
+func (f *sessionTestFeed) SubscribeWithVisibility(symbols, visible []string) (*mktdata.Subscription, error) {
 	f.mu.Lock()
 	f.calls.subscriptions = append(f.calls.subscriptions, slices.Clone(symbols))
 	fn := f.subscribeFn
 	f.mu.Unlock()
 	if fn != nil {
-		return fn(symbols)
+		sub, err := fn(symbols)
+		if err != nil {
+			return sub, err
+		}
+		return sub, sub.SetVisibleSymbols(visible)
 	}
-	return f.Service.Subscribe(symbols)
+	return f.Service.SubscribeWithVisibility(symbols, visible)
 }
 
 func (f *sessionTestFeed) snapshot() sessionTestCalls {

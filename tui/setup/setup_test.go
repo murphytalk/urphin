@@ -28,6 +28,8 @@ func TestLoadConfigParsesTaggedKeys(t *testing.T) {
   logSize: 20
   logKeepDays: 7
   mkt-data-feed: alpaca
+  mkt-feed:
+    quote-queue-size: 20
 postgres:
   neon: postgresql://user:pass@neon.lan/db
   router: postgresql://postgres:pass@router.lan:5432/urphin
@@ -49,6 +51,9 @@ alpaca:
 	}
 	if cfg.App.MktDataFeed != "alpaca" {
 		t.Errorf("App.MktDataFeed = %q, want alpaca", cfg.App.MktDataFeed)
+	}
+	if got := cfg.App.MktFeed.QuoteQueueSize; got != 20 {
+		t.Errorf("App.MktFeed.QuoteQueueSize = %d, want 20", got)
 	}
 	if want := "postgresql://user:pass@neon.lan/db"; cfg.Postgres["neon"] != want {
 		t.Errorf("Postgres[neon] = %q, want %q", cfg.Postgres["neon"], want)

@@ -18,11 +18,46 @@ const subscriptionChannelSize = 64
 type Subscription struct {
 	service *Service
 	symbols map[string]struct{}
+	visible []string
 	updates chan c.QuoteUpdate
 	closed  bool // guarded by service.mu
 }
 
 func (s *Subscription) Updates() <-chan c.QuoteUpdate { return s.updates }
+
+// SetVisibleSymbols changes ordered display priorities; all subscribed symbols remain desired.
+func (s *Subscription) SetVisibleSymbols(symbols []string) error {
+	s.service.mu.Lock()
+	defer s.service.mu.Unlock()
+	if s.closed {
+		return errors.New("market data subscription is closed")
+	}
+	for _, symbol := range symbols {
+		if _, exists := s.symbols[symbol]; !exists {
+			return fmt.Errorf("visible symbol %q is not subscribed", symbol)
+		}
+	}
+	if slices.Equal(s.visible, symbols) {
+		return nil
+	}
+	s.visible = slices.Clone(symbols)
+	s.service.reconcileSymbols()
+	return nil
+}
+
+func (m *Service) visibleUnion() []string {
+	seen := make(map[string]bool)
+	var symbols []string
+	for sub := range m.subscribers {
+		for _, symbol := range sub.visible {
+			if !seen[symbol] {
+				seen[symbol] = true
+				symbols = append(symbols, symbol)
+			}
+		}
+	}
+	return symbols
+}
 
 func (s *Subscription) Close() {
 	s.service.mu.Lock()
@@ -63,6 +98,10 @@ func (s *OptionSubscription) Close() {
 }
 
 func (m *Service) Subscribe(symbols []string) (*Subscription, error) {
+	return m.SubscribeWithVisibility(symbols, nil)
+}
+
+func (m *Service) SubscribeWithVisibility(symbols, visible []string) (*Subscription, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.state == lifecycleStopping || m.state == lifecycleStopped {
@@ -79,7 +118,12 @@ func (m *Service) Subscribe(symbols []string) (*Subscription, error) {
 			fx = append(fx, symbol)
 		}
 	}
-	sub := &Subscription{service: m, symbols: members, updates: make(chan c.QuoteUpdate, max(subscriptionChannelSize, len(members)))}
+	for _, symbol := range visible {
+		if _, exists := members[symbol]; !exists {
+			return nil, fmt.Errorf("visible symbol %q is not subscribed", symbol)
+		}
+	}
+	sub := &Subscription{service: m, symbols: members, visible: slices.Clone(visible), updates: make(chan c.QuoteUpdate, max(subscriptionChannelSize, len(members)))}
 	m.subscribers[sub] = struct{}{}
 	slog.Debug("Market-data subscription created", "symbol_count", len(members), "subscriber_count", len(m.subscribers))
 	for symbol := range members {
@@ -129,6 +173,7 @@ func (m *Service) reconcileSymbolsFor(sub *Subscription) {
 		if sub != nil {
 			seeds = m.captureSeedTargets(source, sub, sub.symbols)
 		}
+		m.feeds[source].setVisible(m.providerSymbols(source, m.visibleUnion()))
 		m.feeds[source].setDesired(m.providerSymbols(source, union), seeds)
 	}
 }

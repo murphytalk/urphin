@@ -222,7 +222,8 @@ func (m *Model) Init() tea.Cmd {
 	if m.session == nil || len(m.session.symbols) == 0 {
 		return cursor
 	}
-	return tea.Batch(cursor, m.session.receive(), m.session.subscribe())
+	visibility := m.session.setVisibleSymbols(m.visibleSymbols())
+	return tea.Batch(cursor, visibility, m.session.receive(), m.session.subscribe())
 }
 
 // Update consumes terminal events and quote-receiver batches; child renderers receive derived state.
@@ -496,6 +497,9 @@ func (m *Model) changeWatchlist(step int) tea.Cmd {
 		m.updateSummary()
 	}
 	m.resize()
+	if m.session != nil {
+		return tea.Batch(cmd, m.session.setVisibleSymbols(m.visibleSymbols()))
+	}
 	return cmd
 }
 

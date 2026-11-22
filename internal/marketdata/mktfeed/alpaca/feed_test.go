@@ -66,18 +66,20 @@ func (f *fakeSnapshotClient) callsSnapshot() [][]string {
 type fakeStreamClient struct {
 	mu sync.Mutex
 
-	initial        []string
-	current        map[string]struct{}
-	subscribed     [][]string
-	unsubscribed   [][]string
-	subscribeErr   error
-	unsubErrors    []error
-	terminated     chan error
-	callbacks      streamCallbacks
-	connectStart   chan struct{}
-	connectBlock   bool
-	subscribeStart chan struct{}
-	subscribeBlock <-chan struct{}
+	initial         []string
+	current         map[string]struct{}
+	subscribed      [][]string
+	unsubscribed    [][]string
+	subscribeErr    error
+	subscribeErrors []error
+	symbolLimit     int
+	unsubErrors     []error
+	terminated      chan error
+	callbacks       streamCallbacks
+	connectStart    chan struct{}
+	connectBlock    bool
+	subscribeStart  chan struct{}
+	subscribeBlock  <-chan struct{}
 }
 
 func newFakeStreamClient(initial []string, callbacks streamCallbacks) *fakeStreamClient {
@@ -117,6 +119,22 @@ func (f *fakeStreamClient) SubscribeToQuotes(_ func(stream.Quote), symbols ...st
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.subscribed = append(f.subscribed, append([]string(nil), symbols...))
+	if len(f.subscribeErrors) > 0 {
+		err := f.subscribeErrors[0]
+		f.subscribeErrors = f.subscribeErrors[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if f.symbolLimit > 0 {
+		next := symbolSet(keys(f.current))
+		for _, symbol := range symbols {
+			next[symbol] = struct{}{}
+		}
+		if len(next) > f.symbolLimit {
+			return stream.ErrSymbolLimitExceeded
+		}
+	}
 	if f.subscribeErr != nil {
 		return f.subscribeErr
 	}
@@ -215,8 +233,8 @@ func TestSetSymbolsSnapshotsAndUpdatesLiveSubscriptions(t *testing.T) {
 		t.Fatalf("Start() error = %v", err)
 	}
 	client := getStream()
-	if client == nil || !reflect.DeepEqual(client.initial, []string{"AAPL", "MSFT"}) {
-		t.Fatalf("initial stream symbols = %v, want [AAPL MSFT]", client.initial)
+	if client == nil || len(client.initial) != 0 || !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "MSFT"}) {
+		t.Fatalf("initial connection symbols = %v, want empty; acknowledged subscriptions should contain AAPL and MSFT", client.initial)
 	}
 
 	if err := feed.SetSymbols(context.Background(), []string{"NVDA", "AAPL"}, 12); err != nil {
@@ -225,7 +243,7 @@ func TestSetSymbolsSnapshotsAndUpdatesLiveSubscriptions(t *testing.T) {
 	if !reflect.DeepEqual(snapshotClient.callsSnapshot(), [][]string{{"AAPL", "MSFT"}, {"AAPL", "MSFT"}, {"NVDA"}}) {
 		t.Errorf("snapshot calls = %v", snapshotClient.callsSnapshot())
 	}
-	if !reflect.DeepEqual(client.subscribed, [][]string{{"NVDA"}}) || !reflect.DeepEqual(client.unsubscribed, [][]string{{"MSFT"}}) {
+	if !reflect.DeepEqual(client.subscribed, [][]string{{"AAPL", "MSFT"}, {"NVDA"}}) || !reflect.DeepEqual(client.unsubscribed, [][]string{{"MSFT"}}) {
 		t.Errorf("subscription changes = subscribe %v, unsubscribe %v", client.subscribed, client.unsubscribed)
 	}
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "NVDA"}) {
@@ -305,7 +323,7 @@ func TestStreamQuotesUpdateOwnedCacheAndIgnoreInvalidOrOldQuotes(t *testing.T) {
 	}
 }
 
-func TestFailedUnsubscribeRollsBackAddedSubscription(t *testing.T) {
+func TestFailedUnsubscribePreservesSubscription(t *testing.T) {
 	stamp := time.Date(2026, time.November, 3, 10, 0, 0, 0, time.UTC)
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
@@ -325,14 +343,14 @@ func TestFailedUnsubscribeRollsBackAddedSubscription(t *testing.T) {
 		t.Fatalf("SetSymbols() error = %v, want unsubscribe failure", err)
 	}
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "MSFT"}) {
-		t.Errorf("subscriptions after successful rollback = %v, want [AAPL MSFT]", client.currentSymbols())
+		t.Errorf("subscriptions after failed unsubscribe = %v, want [AAPL MSFT]", client.currentSymbols())
 	}
-	if !reflect.DeepEqual(client.subscribed, [][]string{{"NVDA"}}) || !reflect.DeepEqual(client.unsubscribed, [][]string{{"MSFT"}, {"NVDA"}}) {
-		t.Errorf("rollback calls = subscribe %v, unsubscribe %v", client.subscribed, client.unsubscribed)
+	if len(client.subscribed) != 1 || !reflect.DeepEqual(client.unsubscribed, [][]string{{"MSFT"}}) {
+		t.Errorf("failed unsubscribe calls = subscribe %v, unsubscribe %v", client.subscribed, client.unsubscribed)
 	}
 }
 
-func TestFailedRollbackKeepsAppliedSetForNextReconciliation(t *testing.T) {
+func TestFailedSubscribeKeepsAppliedSetForNextReconciliation(t *testing.T) {
 	stamp := time.Date(2026, time.November, 3, 10, 0, 0, 0, time.UTC)
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
 	factory, getStream := streamFactoryFor(t, nil)
@@ -345,14 +363,14 @@ func TestFailedRollbackKeepsAppliedSetForNextReconciliation(t *testing.T) {
 	}
 	client := getStream()
 	client.mu.Lock()
-	client.unsubErrors = []error{errors.New("unsubscribe failed"), errors.New("rollback failed")}
+	client.subscribeErrors = []error{errors.New("subscribe failed")}
 	client.mu.Unlock()
 	err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2)
-	if err == nil || !strings.Contains(err.Error(), "unsubscribe failed") || !strings.Contains(err.Error(), "rollback failed") {
-		t.Fatalf("SetSymbols() error = %v, want unsubscribe and rollback errors", err)
+	if err == nil || !strings.Contains(err.Error(), "subscribe failed") {
+		t.Fatalf("SetSymbols() error = %v, want subscribe error", err)
 	}
-	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "MSFT", "NVDA"}) {
-		t.Fatalf("applied subscriptions after failed rollback = %v", client.currentSymbols())
+	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL"}) {
+		t.Fatalf("applied subscriptions after failed subscribe = %v", client.currentSymbols())
 	}
 	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 3); err != nil {
 		t.Fatalf("SetSymbols(reconcile) error = %v", err)
@@ -378,11 +396,11 @@ func TestReconnectUsesSDKCurrentAcknowledgedSubscriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.reconnect()
-	waitForCondition(t, func() bool { return len(client.subscribed) == 1 })
+	waitForCondition(t, func() bool { return len(client.subscribed) == 2 })
 	if !reflect.DeepEqual(client.currentSymbols(), []string{"AAPL", "NVDA"}) {
 		t.Errorf("SDK restored subscriptions = %v", client.currentSymbols())
 	}
-	if !reflect.DeepEqual(client.subscribed, [][]string{{"NVDA"}}) {
+	if !reflect.DeepEqual(client.subscribed, [][]string{{"AAPL", "MSFT"}, {"NVDA"}}) {
 		t.Errorf("application replayed subscriptions after reconnect: %v", client.subscribed)
 	}
 }
@@ -391,18 +409,18 @@ func TestOwnerRemainsResponsiveWhileSubscriptionAckWaitsAndStopJoins(t *testing.
 	stamp := time.Date(2026, time.November, 3, 10, 0, 0, 0, time.UTC)
 	snapshotClient := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "NVDA": 20}, stamp)}
 	entered, release := make(chan struct{}, 1), make(chan struct{})
-	factory, _ := streamFactoryFor(t, func(client *fakeStreamClient) {
-		client.subscribeStart = entered
-		client.subscribeBlock = release
-	})
+	factory, getStream := streamFactoryFor(t, nil)
 	feed := newFeedForTest(t, snapshotClient, factory, nil, nil)
 	if err := feed.SetSymbols(context.Background(), []string{"AAPL"}, 1); err != nil {
 		t.Fatal(err)
 	}
-	// The initial set arrives through WithQuotes, so block only the later update.
+	// Block the later update after initial subscriptions have been acknowledged.
 	if err := feed.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	client := getStream()
+	client.subscribeStart = entered
+	client.subscribeBlock = release
 	setDone := make(chan error, 1)
 	go func() { setDone <- feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2) }()
 	select {
@@ -667,4 +685,181 @@ func waitForCondition(t *testing.T, condition func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition did not become true")
+}
+
+func TestSetSymbolsReplacesSubscriptionsAtSymbolLimit(t *testing.T) {
+	stamp := time.Now()
+	snapshots := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, stamp)}
+	factory, getStream := streamFactoryFor(t, func(client *fakeStreamClient) { client.symbolLimit = 2 })
+	feed := newFeedForTest(t, snapshots, factory, nil, nil)
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := getStream().currentSymbols(); !reflect.DeepEqual(got, []string{"AAPL", "NVDA"}) {
+		t.Fatalf("subscriptions = %v", got)
+	}
+}
+
+func TestLimitedSubscribeKeepsUnlimitedLogicalSymbols(t *testing.T) {
+	snapshots := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"AAPL": 10, "MSFT": 20, "NVDA": 30}, time.Now())}
+	factory, getStream := streamFactoryFor(t, func(client *fakeStreamClient) { client.symbolLimit = 1 })
+	feed := newFeedForTest(t, snapshots, factory, nil, nil)
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(context.Background(), []string{"AAPL", "NVDA"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := getStream().currentSymbols(); !reflect.DeepEqual(got, []string{"AAPL"}) {
+		t.Fatalf("subscriptions = %v", got)
+	}
+	quotes := receiveQuotes(t, feed)
+	if len(quotes) != 2 || quotes[1].Symbol != "NVDA" || quotes[1].Generation != 2 {
+		t.Fatalf("logical snapshot = %+v", quotes)
+	}
+}
+
+func TestLimitedStreamPrioritizesVisibleSymbolsAndKeepsLogicalGeneration(t *testing.T) {
+	ctx := context.Background()
+	snapshots := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"A": 10, "B": 20, "C": 30, "D": 40}, time.Now())}
+	factory, getStream := streamFactoryFor(t, func(client *fakeStreamClient) { client.symbolLimit = 2 })
+	feed := newFeedForTest(t, snapshots, factory, nil, nil)
+	if err := feed.SetVisibleSymbols(ctx, []string{"D"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(ctx, []string{"A", "B", "C", "D"}, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	client := getStream()
+	if got := client.currentSymbols(); !reflect.DeepEqual(got, []string{"A", "D"}) {
+		t.Fatalf("initial applied = %v", got)
+	}
+	if err := feed.SetVisibleSymbols(ctx, []string{"C", "D"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.currentSymbols(); !reflect.DeepEqual(got, []string{"C", "D"}) {
+		t.Fatalf("switched applied = %v", got)
+	}
+	if err := feed.SetVisibleSymbols(ctx, []string{"A", "B", "C", "D"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.currentSymbols(); !reflect.DeepEqual(got, []string{"A", "B"}) {
+		t.Fatalf("overflow applied = %v", got)
+	}
+	quotes := receiveQuotes(t, feed)
+	if len(quotes) != 4 {
+		t.Fatalf("logical quotes = %d", len(quotes))
+	}
+	for _, quote := range quotes {
+		if quote.Generation != 7 {
+			t.Fatalf("visibility changed generation: %+v", quote)
+		}
+	}
+	before := len(client.subscribed)
+	client.reconnect()
+	if err := feed.SetVisibleSymbols(ctx, []string{"A", "B", "C", "D"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.subscribed) != before {
+		t.Fatal("identical visibility or SDK reconnect retried rejected symbols")
+	}
+}
+
+func TestFailedVisibilityDoesNotChangeLaterPriorities(t *testing.T) {
+	ctx := context.Background()
+	snapshots := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"A": 10, "B": 20, "C": 30}, time.Now())}
+	factory, getStream := streamFactoryFor(t, func(client *fakeStreamClient) { client.symbolLimit = 2 })
+	feed := newFeedForTest(t, snapshots, factory, nil, nil)
+	if err := feed.SetVisibleSymbols(ctx, []string{"C"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(ctx, []string{"A", "B", "C"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	client := getStream()
+	client.mu.Lock()
+	client.unsubErrors = []error{errors.New("eviction failed")}
+	client.mu.Unlock()
+	if err := feed.SetVisibleSymbols(ctx, []string{"B"}); err == nil || !strings.Contains(err.Error(), "eviction failed") {
+		t.Fatalf("visibility error = %v", err)
+	}
+	if err := feed.SetSymbols(ctx, []string{"A", "B", "C"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.currentSymbols(); !reflect.DeepEqual(got, []string{"A", "C"}) {
+		t.Fatalf("failed visibility leaked into next update: %v", got)
+	}
+}
+
+func TestCanceledQueuedVisibilityDoesNotChangeLaterPriorities(t *testing.T) {
+	ctx := context.Background()
+	snapshots := &fakeSnapshotClient{snapshots: snapshotsAt(map[string]float64{"A": 10, "B": 20, "C": 30, "D": 40}, time.Now())}
+	factory, getStream := streamFactoryFor(t, func(client *fakeStreamClient) { client.symbolLimit = 2 })
+	feed := newFeedForTest(t, snapshots, factory, nil, nil)
+	if err := feed.SetVisibleSymbols(ctx, []string{"C"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(ctx, []string{"A", "B", "C"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	snapshots.mu.Lock()
+	snapshots.entered, snapshots.release = entered, release
+	snapshots.mu.Unlock()
+	setDone := make(chan error, 1)
+	go func() { setDone <- feed.SetSymbols(ctx, []string{"A", "B", "C", "D"}, 2) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("snapshot did not start")
+	}
+	visibilityCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	command := actor.NewCommand(visibilityCtx, 0, actor.SetVisibleSymbols, []string{"B"}, 0)
+	feed.commands <- command
+	// A later FIFO command proves the visibility request has reached the owner queue.
+	if _, err := feed.Snapshot(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	close(release)
+	if err := <-setDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := feed.SetSymbols(ctx, []string{"A", "B", "C", "D"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := getStream().currentSymbols(); !reflect.DeepEqual(got, []string{"A", "C"}) {
+		t.Fatalf("canceled visibility leaked into next update: %v", got)
+	}
+}
+
+func TestCanceledVisibilityResultDoesNotCommitPriority(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	command := actor.NewCommand(ctx, 11, actor.SetVisibleSymbols, []string{"B"}, 0)
+	owner := feedOwner{lifecycle: feedStarted, visible: []string{"A"}, version: 7,
+		active: &feedMutation{command: command, operationID: 11, kind: mutationVisibility, stage: mutationReconcile, visible: []string{"B"}}}
+	cancel()
+	owner.handleStreamResult(feedEvent{operationID: 11, streamKind: streamReconcile})
+	if !reflect.DeepEqual(owner.visible, []string{"A"}) || owner.active != nil || owner.version != 7 {
+		t.Fatalf("canceled visibility committed: %+v", owner)
+	}
 }

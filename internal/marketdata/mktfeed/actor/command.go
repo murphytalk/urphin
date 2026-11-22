@@ -17,6 +17,7 @@ const (
 	GetFreshSnapshot
 	Stop
 	SetQuoteUpdates
+	SetVisibleSymbols
 )
 
 type Command struct {

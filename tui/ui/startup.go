@@ -98,7 +98,7 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.app.session = newQuoteSession(m.ctx, result.data, m.app.subscriptionSymbols())
-		return m, tea.Batch(m.app.session.receive(), m.app.session.subscribe())
+		return m, m.app.Init()
 	}
 	if m.app != nil {
 		if m.app.marketLoading {

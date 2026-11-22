@@ -10,9 +10,10 @@ Channels carry work and results between components. Mutexes protect in-memory st
 |---|---|---|
 | Application ([`tui/main.go`](../tui/main.go)) | Application lifetime | Starts and stops market data; closes the backend after the UI returns. |
 | Service registry ([`mktdata.go`](../internal/marketdata/mktdata.go), [`subscription.go`](../internal/marketdata/subscription.go)) | Subscriptions, option subscriptions, FX quotes, service lifecycle | `Service.mu` guards local attach, fanout, channel close, status, and feed registration. `Subscribe` returns after local attach. |
-| Provider reconciler ([`provider.go`](../internal/marketdata/provider.go)) | One feed's desired/applied symbols and options, generation, retry delay, last error | One goroutine per provider coalesces kicks, calls its feed outside `Service.mu`, retries failures, and sends `providerEvent` results. `Status` exposes reconciliation state. |
-| Quote router ([`router.go`](../internal/marketdata/router.go)) | Provider generations, pending future-generation quotes, revisions, Yahoo names | The service ingress loop accepts live and seed quotes and prunes symbols that leave the registry. |
+| Provider reconciler ([`provider.go`](../internal/marketdata/provider.go)) | One feed's logical desired/applied symbols and options, ordered visibility, generation, retry delay, last error | One goroutine per provider coalesces kicks, calls its feed outside `Service.mu`, retries failures, and sends `providerEvent` results. `Status` exposes reconciliation state. |
+| Quote router ([`router.go`](../internal/marketdata/router.go)) | Provider generations, pending future-generation quotes, revisions, Yahoo metadata | The service ingress loop accepts live and seed quotes and prunes symbols that leave the registry. |
 | FX conversion ([`fx.go`](../internal/marketdata/fx.go)) | No mutable state | Converts rate maps to quotes and selects requested currency pairs. |
+| Shared stream policy ([`subscriptions.go`](../shared/streaming/subscriptions.go)) | Server-acknowledged and rejected symbols per connection | Runs inside each streaming feed worker. Subscribe/unsubscribe callbacks acknowledge atomic changes; provider adapters classify capacity errors. |
 | Alpaca feed owner ([`feed.go`](../internal/marketdata/mktfeed/alpaca/feed.go)) | Symbols, quote cache, timestamps, generations, feed lifecycle | Serializes feed commands and callback events; snapshot and stream workers do blocking work. |
 | Longport feed owner, extension build ([`longport.go`](../extension/mktfeed/longport/longport.go)) | Symbols, quote cache, revisions, feed lifecycle | Serializes subscription and snapshot work; SDK callbacks enqueue events. |
 | Schwab feed owner, extension build ([`feed.go`](../extension/mktfeed/schwab/feed.go)) | REST and stream episode state, option revisions | Serializes feed operations and acknowledges symbol changes to the reconciler. |
@@ -20,7 +21,7 @@ Channels carry work and results between components. Mutexes protect in-memory st
 | Yahoo FX owner ([`monitor.go`](../internal/marketdata/yahoo/monitor-currency-rates/monitor.go)) | Target currency and requested rates | Coalesces rate requests and publishes rate maps. |
 | Yahoo HTTP client ([`unary.go`](../internal/marketdata/yahoo/unary/unary.go)) | Cookies and crumb guarded by a mutex | Runs price, FX, and option requests concurrently; one refresh at a time establishes a session. |
 | Cache ([`cache.go`](../internal/marketdata/cache/cache.go)) | Entries and file writes guarded by a mutex | Returns copied payloads; callers decode their own values. |
-| UI session ([`session.go`](../tui/ui/session.go)) | One `Subscription` and a coalescing receiver | Calls `Subscribe` once, reads `Updates()`, and calls `Close()` on shutdown. |
+| UI session ([`session.go`](../tui/ui/session.go)) | One `Subscription`, ordered visibility and a coalescing receiver | Attaches all symbols with initial visibility, updates display priorities, reads `Updates()`, and calls `Close()` on shutdown. |
 | Home UI event loop ([`home-screen.go`](../tui/ui/home-screen.go)) | UI quote cache, portfolio, summaries, watchlists, layout | Converts transport updates to local quotes and refreshes affected views. |
 
 ## Wiring
@@ -28,9 +29,9 @@ Channels carry work and results between components. Mutexes protect in-memory st
 ```mermaid
 flowchart LR
     App[Application] -->|Start / Stop| Service[Service registry]
-    Session[UI quote session] -->|Subscribe / Subscription.Close| Service
-    Service -->|desired union and kick| Reconciler[Provider reconciler per feed]
-    Reconciler -->|SetSymbols / Snapshot / SetOptions| Feeds[Yahoo, Alpaca, Longport, Schwab feeds]
+    Session[UI quote session] -->|Subscribe / visibility / Close| Service
+    Service -->|desired union, visible priorities and kick| Reconciler[Provider reconciler per feed]
+    Reconciler -->|SetSymbols / SetVisibleSymbols / Snapshot / SetOptions| Feeds[Yahoo, Alpaca, Longport, Schwab feeds]
     Reconciler -->|providerEvent and seeds| Router[Service ingress router]
     Feeds -->|QuoteUpdate / OptionQuote| Router
     Feeds -->|Yahoo HTTP requests| HTTP[Yahoo HTTP client]
@@ -41,9 +42,21 @@ flowchart LR
     Session -->|coalesced QuoteBatchMsg| Home[Home UI]
 ```
 
-`Start` creates the configured feeds, default Yahoo feed, FX monitor, and provider reconcilers. Prestart subscriptions enter the registry before the providers start. Each reconciler reads the latest desired union when kicked, so a burst of changes can become one provider call. It publishes a generation and snapshot result to the ingress loop. Failures remain in `Status().LastError` and retry with backoff; they do not undo local subscriptions.
+`Start` creates the configured feeds, default Yahoo feed, FX monitor, and provider reconcilers. Prestart subscriptions enter the registry before the providers start. Each reconciler reads the latest desired union when kicked, so a burst of changes can become one provider call. It publishes a generation and snapshot result to the ingress loop. Ordinary failures remain in `Status().LastError` and retry with backoff. Logical subscriptions have no stream capacity limit; feeds handle capacity internally, so parked stream symbols do not cause service reconciliation failures.
 
 `Subscribe(symbols)` returns a service-owned `Subscription`. `SubscribeOption(options)` returns an `OptionSubscription`. Both expose `Updates()` and `Close()`. The selected option provider alone receives the option union through `SetOptions`; removing the last option subscription sends an empty union. Option quotes are normalized and delivered to matching option subscriptions without passing through the price-generation router.
+
+## Stream capacity and watchlist priorities
+
+Yahoo continues polling every logically subscribed ticker. The UI attaches its full symbol union and the initial ordered visible list atomically through `SubscribeWithVisibility`; later `Subscription.SetVisibleSymbols` calls change only priority metadata. The reconciler forwards visibility through the optional feed `VisibilityFeed` capability. It never chooses a stream subset, inspects quota errors, or changes Yahoo's polling set on watchlist switches. `Status().AppliedSymbols` continues to describe logical feed reconciliation, not physical stream capacity.
+
+Alpaca, Longport and Schwab use the same worker-owned stream policy. It tries visible symbols in watchlist order, then fills spare slots with background symbols. Successful subscriptions remain active until removed logically or until a higher-priority visible symbol needs their capacity. Atomic batch rejections are split into smaller attempts; only acknowledged successes enter the applied set. Per-request caps are separate from total capacity (Longport bounds requests to 500 symbols).
+
+On a capacity rejection, the helper evicts a background subscription, or a later visible symbol when the visible list itself exceeds capacity, and retries the higher-priority visible symbol. Visible overflow is covered by Yahoo, without rotation. Rejected background symbols remain logically desired and parked until inputs change. Repeating the same settled desired/visible set does not retry or churn subscriptions. Ordinary errors retain truthful partial state and remain retryable. Removing subscriptions also changes bookkeeping only after acknowledgment.
+
+Alpaca and Longport retain SDK reconnect replay of acknowledged subscriptions. Schwab replans desired symbols and current visibility on a fresh connection. Capacity is classified inside each adapter: Alpaca uses its SDK symbol-limit error, Longport uses documented business error 301605, and Schwab recognizes explicit capacity text in broker rejection acknowledgments without guessing undocumented numeric codes. Options retain their independent subscription path.
+
+Stream subscription acknowledgments, rejections, evictions and retries log at INFO. Symbol lists and operation details log at DEBUG. Canceled queued priority requests are ignored before execution. Alpaca and Longport commit priorities after successful worker reconciliation; Schwab accepts visibility as local desired metadata and reports asynchronous stream errors separately. A canceled UI session cannot forward later visibility updates.
 
 [`QuoteUpdate`](../internal/types.go) carries source, symbol, metadata, generation, revision, and an owned price payload. The router rejects stale generations and older revisions, preserves Yahoo names and missing fundamentals, and rejects seed quotes after a newer live quote or subscription close. Longport maps app symbols such as `AAPL` to provider symbols such as `AAPL.US` and preserves the provider symbol in metadata. Accepted updates are cloned per subscriber. A full channel is coalesced by symbol, preserving the newest quote for every subscribed symbol without blocking other subscribers.
 
@@ -51,7 +64,7 @@ There is no cross-provider price priority. Missing names, market capitalization,
 
 ## Shutdown and backpressure
 
-Live quote ingress has a 10-update buffer; subscription channels reserve at least 64 slots and at least one slot per subscribed symbol. Full quote channels coalesce repeated symbols, preserving their latest state; metadata-only updates retain a queued price. Option delivery remains nonblocking and may drop updates under sustained load. `Subscription.Close` removes its registry entry and closes its channel while holding `Service.mu`, so the ingress loop cannot send after close. Service stop closes remaining subscription channels, cancels reconcilers, waits for them, stops feeds and the FX monitor, and closes idle Yahoo HTTP connections. Repeated stop calls return the same result.
+Live quote ingress defaults to a 10-update buffer. Set `app.mkt-feed.quote-queue-size` to a positive integer to change that capacity. Subscription channels reserve at least 64 slots and at least one slot per subscribed symbol. Full quote channels coalesce repeated symbols, preserving their latest state; metadata-only updates retain a queued price. Option delivery remains nonblocking and may drop updates under sustained load. `Subscription.Close` removes its registry entry and closes its channel while holding `Service.mu`, so the ingress loop cannot send after close. Service stop closes remaining subscription channels, cancels reconcilers, waits for them, stops feeds and the FX monitor, and closes idle Yahoo HTTP connections. Repeated stop calls return the same result.
 
 ## Concurrency checks
 
@@ -87,7 +100,7 @@ The 2026-11-10 reference on Go `go1.27.3-X:nodwarf5`, Linux/amd64, Intel i5-1240
 
 ## Unchecked follow-ups
 
-- **FOLLOW.1:** Plan or fix Alpaca partial-symbol success, daily metadata refresh, and authoritative market-state mapping.
+- **FOLLOW.1:** Plan or fix Alpaca missing-snapshot handling, daily metadata refresh, and authoritative market-state mapping. Stream-capacity partial success is handled internally by the shared policy.
 - **FOLLOW.2:** Plan or fix FX expiry, periodic refresh and retry policy, and post-market percentage math.
 - **FOLLOW.3:** Define cross-process cache transaction guarantees. The in-process mutex and unique temporary files do not provide cross-process read/merge/write locking.
 - **PHASE2.1:** On explicit instruction, retain Yahoo metadata subscriptions, prefer valid non-Yahoo prices, preserve field provenance, and report fallback status.

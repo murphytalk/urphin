@@ -269,7 +269,7 @@ func run() (code int) {
 			return ctx, nil, nil, nil, err
 		}
 		ctx.Db = databackend
-		marketData := mktdata.NewMktData()
+		marketData := mktdata.NewMktDataWithQuoteQueueSize(ctx.Cfg.App.MktFeed.QuoteQueueSize)
 		start := func() error {
 			return marketData.Start(mktdata.MktDataConfig{CachePath: ctx.Cfg.App.Cache, TargetCurrency: ctx.Settings.BaseCurrency, FxPairs: ctx.Cfg.App.FxPairs, Cfg: ctx.Cfg, RandomMktData: ctx.Cfg.App.RandomMktData, RefreshInterval: time.Duration(ctx.Settings.RefreshInterval) * time.Second})
 		}

@@ -16,6 +16,7 @@ require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/longbridge/openapi-go v0.30.1
+	github.com/longbridge/openapi-protocol/go v0.5.0
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/muesli/reflow v0.2.1-0.20201126184510-3bcb929042f2
@@ -56,7 +57,6 @@ require (
 	github.com/joho/godotenv v1.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/longbridge/openapi-protobufs/gen/go v0.7.0 // indirect
-	github.com/longbridge/openapi-protocol/go v0.5.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

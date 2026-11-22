@@ -25,6 +25,11 @@ type MktDataFeed interface {
 	Stop() error
 }
 
+// VisibilityFeed receives ordered watchlist priorities without changing logical subscriptions.
+type VisibilityFeed interface {
+	SetVisibleSymbols(context.Context, []string) error
+}
+
 type OptionFeed interface {
 	SetOptions(context.Context, []c.Option) error
 	SetOptionQuotes(chan<- c.OptionQuote)

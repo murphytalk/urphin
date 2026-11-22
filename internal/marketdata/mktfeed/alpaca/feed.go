@@ -14,6 +14,7 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata/mktfeed"
 	"github.com/murphytalk/urphin/internal/marketdata/mktfeed/actor"
+	"github.com/murphytalk/urphin/shared/streaming"
 )
 
 const (
@@ -63,6 +64,7 @@ type MktDataFeed struct {
 	cancel               context.CancelFunc
 	snapshotClient       snapshotClient
 	streamClientFactory  streamClientFactory
+	optionFeed           *optionFeed
 	chanError            chan error
 	chanUpdateAssetQuote chan<- c.QuoteUpdate
 
@@ -79,6 +81,8 @@ type MktDataFeed struct {
 func (m *MktDataFeed) SupportsCurrency(currency string) bool { return currency == "USD" }
 
 var _ mktfeed.MktDataFeed = (*MktDataFeed)(nil)
+var _ mktfeed.OptionFeed = (*MktDataFeed)(nil)
+var _ mktfeed.VisibilityFeed = (*MktDataFeed)(nil)
 
 func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 	if config.Credentials.Key == "" || config.Credentials.Secret == "" {
@@ -102,6 +106,7 @@ func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 		cancel:               cancel,
 		snapshotClient:       snapshotter,
 		streamClientFactory:  streamFactory,
+		optionFeed:           newOptionFeed(ctx, config.Credentials, config.ChanError),
 		chanError:            config.ChanError,
 		chanUpdateAssetQuote: config.ChanUpdateAssetQuote,
 		commands:             make(chan actor.Command, commandBufferSize),
@@ -112,6 +117,14 @@ func NewMktDataFeed(config Config) (*MktDataFeed, error) {
 	}
 	go feed.run()
 	return feed, nil
+}
+
+func (m *MktDataFeed) SetOptions(ctx context.Context, options []c.Option) error {
+	return m.optionFeed.SetOptions(ctx, options)
+}
+
+func (m *MktDataFeed) SetOptionQuotes(quotes chan<- c.OptionQuote) {
+	m.optionFeed.SetOptionQuotes(quotes)
 }
 
 func newStreamClient(credentials c.KeySecretCfg) streamClientFactory {
@@ -139,6 +152,10 @@ func (m *MktDataFeed) Snapshot(ctx context.Context, fresh bool) ([]c.QuoteUpdate
 func (m *MktDataFeed) SetSymbols(ctx context.Context, symbols []string, versionVector int) error {
 	command := actor.NewCommand(ctx, 0, actor.SetSymbols, symbols, versionVector)
 	return m.request(command).Err
+}
+
+func (m *MktDataFeed) SetVisibleSymbols(ctx context.Context, symbols []string) error {
+	return m.request(actor.NewCommand(ctx, 0, actor.SetVisibleSymbols, symbols, 0)).Err
 }
 
 func (m *MktDataFeed) Start(ctx context.Context) error {
@@ -220,6 +237,7 @@ type mutationKind uint8
 const (
 	mutationStart mutationKind = iota
 	mutationSetSymbols
+	mutationVisibility
 )
 
 type mutationStage uint8
@@ -227,29 +245,25 @@ type mutationStage uint8
 const (
 	mutationSnapshot mutationStage = iota
 	mutationConnect
-	mutationSubscribe
-	mutationUnsubscribe
-	mutationRollback
+	mutationReconcile
 )
 
 type feedMutation struct {
-	command       actor.Command
-	operationID   uint64
-	kind          mutationKind
-	stage         mutationStage
-	symbols       []string
-	version       int
-	snapshot      map[string]quoteEntry
-	toSubscribe   []string
-	toUnsubscribe []string
-	rollbackErr   error
+	command     actor.Command
+	operationID uint64
+	kind        mutationKind
+	stage       mutationStage
+	symbols     []string
+	visible     []string
+	version     int
+	snapshot    map[string]quoteEntry
 }
 
 type feedOwner struct {
 	feed       *MktDataFeed
 	lifecycle  feedLifecycle
 	symbols    []string
-	applied    map[string]struct{}
+	visible    []string
 	quotes     map[string]quoteEntry
 	version    int
 	generation uint64
@@ -271,12 +285,12 @@ type streamJobKind uint8
 
 const (
 	streamConnect streamJobKind = iota
-	streamSubscribe
-	streamUnsubscribe
-	streamRollback
+	streamReconcile
 )
 
 type streamJob struct {
+	ctx         context.Context
+	visible     []string
 	operationID uint64
 	kind        streamJobKind
 	symbols     []string
@@ -314,7 +328,7 @@ func combineContexts(parent, operation context.Context) (context.Context, contex
 
 func (m *MktDataFeed) run() {
 	var workers sync.WaitGroup
-	workers.Add(2)
+	workers.Add(3)
 	go func() {
 		defer workers.Done()
 		m.runSnapshotWorker()
@@ -323,12 +337,15 @@ func (m *MktDataFeed) run() {
 		defer workers.Done()
 		m.runStreamWorker()
 	}()
+	go func() {
+		defer workers.Done()
+		m.optionFeed.run()
+	}()
 
 	owner := feedOwner{
-		feed:    m,
-		applied: make(map[string]struct{}),
-		quotes:  make(map[string]quoteEntry),
-		fresh:   make(map[uint64]actor.Command),
+		feed:   m,
+		quotes: make(map[string]quoteEntry),
+		fresh:  make(map[uint64]actor.Command),
 	}
 	terminal, stopCommands, pendingCommands := owner.loop()
 	m.cancel()
@@ -386,6 +403,7 @@ func (m *MktDataFeed) runSnapshotWorker() {
 func (m *MktDataFeed) runStreamWorker() {
 	var client streamClient
 	var callbacks streamCallbacks
+	var subscriptions *streaming.Subscriptions
 	for {
 		if client != nil {
 			select {
@@ -404,7 +422,11 @@ func (m *MktDataFeed) runStreamWorker() {
 				}
 				return
 			case job := <-m.streamJobs:
-				m.runStreamJob(job, client, callbacks)
+				if job.kind == streamConnect {
+					m.sendStreamResult(job, nil)
+				} else {
+					m.sendStreamResult(job, subscriptions.Reconcile(job.ctx, job.symbols, job.visible))
+				}
 			}
 			continue
 		}
@@ -428,29 +450,24 @@ func (m *MktDataFeed) runStreamWorker() {
 					m.emitCallback(feedEvent{kind: eventDisconnected})
 				},
 			}
-			client = m.streamClientFactory(job.symbols, callbacks)
+			client = m.streamClientFactory(nil, callbacks)
 			err := client.Connect(m.ctx)
+			slog.Debug("Alpaca quote stream connection completed", "symbol_count", len(job.symbols), "error", err)
 			if err != nil {
 				client = nil
 				m.sendStreamResult(job, err)
 				continue
 			}
+			subscriptions = streaming.New("alpaca", streaming.Operations{
+				Subscribe: func(ctx context.Context, symbols []string) error {
+					return client.SubscribeToQuotes(callbacks.quote, symbols...)
+				},
+				Unsubscribe: func(ctx context.Context, symbols []string) error { return client.UnsubscribeFromQuotes(symbols...) },
+				IsLimit:     func(err error) bool { return errors.Is(err, stream.ErrSymbolLimitExceeded) },
+			})
 			m.sendStreamResult(job, nil)
 		}
 	}
-}
-
-func (m *MktDataFeed) runStreamJob(job streamJob, client streamClient, callbacks streamCallbacks) {
-	var err error
-	switch job.kind {
-	case streamSubscribe:
-		err = client.SubscribeToQuotes(callbacks.quote, job.symbols...)
-	case streamUnsubscribe, streamRollback:
-		err = client.UnsubscribeFromQuotes(job.symbols...)
-	default:
-		err = errors.New("invalid Alpaca stream operation")
-	}
-	m.sendStreamResult(job, err)
 }
 
 func (m *MktDataFeed) sendStreamResult(job streamJob, err error) {
@@ -538,6 +555,12 @@ func (o *feedOwner) handleCommand(command actor.Command) {
 			return
 		}
 		o.queued = append(o.queued, &feedMutation{command: command, operationID: o.nextID, kind: mutationStart})
+	case actor.SetVisibleSymbols:
+		if len(o.queued) >= commandBufferSize {
+			command.Complete(actor.Result{Err: errors.New("too many pending Alpaca feed commands")})
+			return
+		}
+		o.queued = append(o.queued, &feedMutation{command: command, operationID: o.nextID, kind: mutationVisibility})
 	case actor.SetSymbols:
 		if len(o.queued) >= commandBufferSize {
 			command.Complete(actor.Result{Generation: o.version, Err: errors.New("too many pending Alpaca feed commands")})
@@ -566,6 +589,23 @@ func (o *feedOwner) startNextMutation() {
 	o.active = o.queued[0]
 	o.queued = o.queued[1:]
 	mutation := o.active
+	if err := mutation.command.Context.Err(); err != nil {
+		o.finishMutation(err)
+		return
+	}
+	mutation.visible = slices.Clone(o.visible)
+	if mutation.kind == mutationVisibility {
+		mutation.visible = slices.Clone(mutation.command.Symbols)
+		mutation.symbols = slices.Clone(o.symbols)
+		mutation.version = o.version
+		if o.lifecycle == feedNew {
+			o.visible = slices.Clone(mutation.visible)
+			o.finishMutation(nil)
+			return
+		}
+		o.beginSubscriptionChanges(mutation)
+		return
+	}
 	if mutation.kind == mutationStart {
 		if o.lifecycle != feedNew {
 			o.finishMutation(errors.New("Alpaca market data feed already started"))
@@ -574,11 +614,7 @@ func (o *feedOwner) startNextMutation() {
 		o.lifecycle = feedStarting
 		mutation.symbols = slices.Clone(o.symbols)
 		mutation.version = o.version
-	} else if o.lifecycle == feedStarted || o.lifecycle == feedNew {
-		if o.lifecycle == feedNew {
-			mutation.toSubscribe = slices.Clone(mutation.symbols)
-		}
-	} else {
+	} else if o.lifecycle != feedStarted && o.lifecycle != feedNew {
 		o.finishMutation(errors.New("Alpaca market data feed is not available"))
 		return
 	}
@@ -660,6 +696,13 @@ func (o *feedOwner) handleSnapshot(event feedEvent) {
 	if mutation == nil || mutation.operationID != event.operationID || mutation.stage != mutationSnapshot {
 		return
 	}
+	if err := mutation.command.Context.Err(); err != nil {
+		if mutation.kind == mutationStart {
+			o.lifecycle = feedNew
+		}
+		o.finishMutation(err)
+		return
+	}
 	if event.err != nil {
 		if mutation.kind == mutationStart {
 			o.lifecycle = feedNew
@@ -690,27 +733,12 @@ func (o *feedOwner) handleSnapshot(event feedEvent) {
 }
 
 func (o *feedOwner) beginSubscriptionChanges(mutation *feedMutation) {
-	mutation.toSubscribe = difference(mutation.symbols, keys(o.applied))
-	if len(mutation.toSubscribe) > 0 {
-		mutation.stage = mutationSubscribe
-		o.sendStreamJob(mutation, streamSubscribe, mutation.toSubscribe)
-		return
-	}
-	o.beginUnsubscribe(mutation)
-}
-
-func (o *feedOwner) beginUnsubscribe(mutation *feedMutation) {
-	mutation.toUnsubscribe = difference(keys(o.applied), mutation.symbols)
-	if len(mutation.toUnsubscribe) == 0 {
-		o.commitSymbols(mutation)
-		return
-	}
-	mutation.stage = mutationUnsubscribe
-	o.sendStreamJob(mutation, streamUnsubscribe, mutation.toUnsubscribe)
+	mutation.stage = mutationReconcile
+	o.sendStreamJob(mutation, streamReconcile, mutation.symbols)
 }
 
 func (o *feedOwner) sendStreamJob(mutation *feedMutation, kind streamJobKind, symbols []string) {
-	job := streamJob{operationID: mutation.operationID, kind: kind, symbols: slices.Clone(symbols)}
+	job := streamJob{ctx: mutation.command.Context, visible: slices.Clone(mutation.visible), operationID: mutation.operationID, kind: kind, symbols: slices.Clone(symbols)}
 	select {
 	case o.feed.streamJobs <- job:
 	default:
@@ -723,56 +751,41 @@ func (o *feedOwner) handleStreamResult(event feedEvent) {
 	if mutation == nil || mutation.operationID != event.operationID {
 		return
 	}
+	if err := mutation.command.Context.Err(); err != nil {
+		if mutation.kind == mutationStart {
+			o.lifecycle = feedNew
+		}
+		o.finishMutation(err)
+		return
+	}
 	if mutation.stage == mutationConnect && event.streamKind == streamConnect {
 		if event.err != nil {
 			o.lifecycle = feedNew
-			o.applied = make(map[string]struct{})
 			o.finishMutation(fmt.Errorf("connect Alpaca quote stream: %w", event.err))
 			return
 		}
-		o.applied = symbolSet(mutation.symbols)
-		o.lifecycle = feedStarted
-		o.generation++
-		o.finishMutation(nil)
+		o.beginSubscriptionChanges(mutation)
 		return
 	}
-	if mutation.stage == mutationSubscribe && event.streamKind == streamSubscribe {
+	if mutation.stage == mutationReconcile && event.streamKind == streamReconcile {
 		if event.err != nil {
-			o.finishMutation(fmt.Errorf("subscribe to Alpaca quotes: %w", event.err))
-			return
-		}
-		for _, symbol := range mutation.toSubscribe {
-			o.applied[symbol] = struct{}{}
-		}
-		o.beginUnsubscribe(mutation)
-		return
-	}
-	if mutation.stage == mutationUnsubscribe && event.streamKind == streamUnsubscribe {
-		if event.err != nil {
-			mutation.rollbackErr = fmt.Errorf("unsubscribe from Alpaca quotes: %w", event.err)
-			if len(mutation.toSubscribe) == 0 {
-				o.finishMutation(mutation.rollbackErr)
-				return
+			if mutation.kind == mutationStart {
+				o.lifecycle = feedNew
 			}
-			mutation.stage = mutationRollback
-			o.sendStreamJob(mutation, streamRollback, mutation.toSubscribe)
+			o.finishMutation(fmt.Errorf("reconcile Alpaca quote stream: %w", event.err))
 			return
 		}
-		for _, symbol := range mutation.toUnsubscribe {
-			delete(o.applied, symbol)
+		switch mutation.kind {
+		case mutationStart:
+			o.lifecycle = feedStarted
+			o.generation++
+			o.finishMutation(nil)
+		case mutationVisibility:
+			o.visible = slices.Clone(mutation.visible)
+			o.finishMutation(nil)
+		default:
+			o.commitSymbols(mutation)
 		}
-		o.commitSymbols(mutation)
-		return
-	}
-	if mutation.stage == mutationRollback && event.streamKind == streamRollback {
-		if event.err == nil {
-			for _, symbol := range mutation.toSubscribe {
-				delete(o.applied, symbol)
-			}
-			o.finishMutation(mutation.rollbackErr)
-			return
-		}
-		o.finishMutation(errors.Join(mutation.rollbackErr, fmt.Errorf("rollback added Alpaca subscriptions: %w", event.err)))
 	}
 }
 

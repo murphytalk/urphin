@@ -36,11 +36,22 @@ type MktData interface {
 	Status() map[c.QuoteSource]ProviderStatus
 }
 
+// VisibleSubscriber attaches an ordered visible set atomically with logical subscriptions.
+type VisibleSubscriber interface {
+	SubscribeWithVisibility(symbols, visible []string) (*Subscription, error)
+}
+
 type MktFeedFactoryMap = mktfeed.MktFeedFactoryMap
 
 // NewMktData creates an independent market-data service instance.
 func NewMktData() MktData {
-	return newService(nil, lifecycleNew)
+	return NewMktDataWithQuoteQueueSize(quoteChanSize)
+}
+
+// NewMktDataWithQuoteQueueSize sets the shared asset quote channel capacity.
+// A nonpositive size uses the default.
+func NewMktDataWithQuoteQueueSize(size int) MktData {
+	return newService(nil, lifecycleNew, size)
 }
 
 // YahooGetLastPrices fetches one fresh Yahoo quote batch and returns prices keyed by symbol.
@@ -154,7 +165,10 @@ type Service struct {
 	workers        sync.WaitGroup
 }
 
-func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleState) *Service {
+func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleState, quoteQueueSize int) *Service {
+	if quoteQueueSize <= 0 {
+		quoteQueueSize = quoteChanSize
+	}
 	m := &Service{
 		results: make(chan providerEvent, 64),
 		prune:   make(chan struct{}, 1),
@@ -165,7 +179,7 @@ func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleStat
 		feeds:     make(map[c.QuoteSource]*providerRuntime),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		router:    newRouter(),
-		chanError: make(chan error, errChanSize), chanQuotes: make(chan c.QuoteUpdate, quoteChanSize),
+		chanError: make(chan error, errChanSize), chanQuotes: make(chan c.QuoteUpdate, quoteQueueSize),
 		chanOptionQuotes: make(chan c.OptionQuote, quoteChanSize), chanRates: make(chan c.CurrencyRates, quoteChanSize),
 		fxRequests: make(chan []string, quoteChanSize),
 	}
@@ -407,6 +421,7 @@ func (o *Service) start(config mktfeed.MktDataConfig) error {
 	o.startRemaining = len(sources)
 	for _, source := range sources {
 		provider := o.feeds[source]
+		provider.setVisible(o.providerSymbols(source, o.visibleUnion()))
 		provider.setDesired(o.providerSymbols(source, cloneSymbols(union)), o.captureSeedTargets(source, nil, union))
 		provider.start()
 	}
@@ -441,6 +456,7 @@ func (o *Service) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 	if o.state == lifecycleStarting || o.state == lifecycleRunning {
 		union := o.symbolUnion()
 		provider := o.feeds[source]
+		provider.setVisible(o.providerSymbols(source, o.visibleUnion()))
 		provider.setDesired(o.providerSymbols(source, cloneSymbols(union)), o.captureSeedTargets(source, nil, union))
 		if source == o.optionProvider {
 			provider.setDesiredOptions(o.optionUnion())
