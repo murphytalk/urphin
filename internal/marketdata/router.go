@@ -2,6 +2,8 @@ package mktdata
 
 import (
 	"log/slog"
+	"math"
+	"strings"
 	"sync/atomic"
 
 	c "github.com/murphytalk/urphin/internal"
@@ -201,14 +203,68 @@ func (o *Service) LatestPrice(symbol string) (float64, bool) {
 }
 
 func (o *Service) LatestOptionPrice(option c.Option) (float64, bool) {
+	quote, ok := o.latestOptionQuote(option)
+	if !ok {
+		return 0, false
+	}
+	if price, ok := optionMidPrice(quote); ok {
+		return price, true
+	}
+	if validOptionPrice(quote.LastPrice) {
+		return quote.LastPrice, true
+	}
+	if validOptionPrice(quote.BidPrice) {
+		return quote.BidPrice, true
+	}
+	return quote.AskPrice, validOptionPrice(quote.AskPrice)
+}
+
+func (o *Service) LatestOptionClosePrice(option c.Option, side string) (float64, bool) {
+	quote, ok := o.latestOptionQuote(option)
+	if !ok {
+		slog.Debug("Option close price unavailable", "option", option, "side", side, "reason", "no cached quote")
+		return 0, false
+	}
+	switch strings.ToUpper(strings.TrimSpace(side)) {
+	case "B":
+		if validOptionPrice(quote.BidPrice) {
+			return quote.BidPrice, true
+		}
+	case "S":
+		if validOptionPrice(quote.AskPrice) {
+			return quote.AskPrice, true
+		}
+	}
+	if price, ok := optionMidPrice(quote); ok {
+		return price, true
+	}
+	if validOptionPrice(quote.LastPrice) {
+		return quote.LastPrice, true
+	}
+	slog.Debug("Option close price unavailable", "option", option, "side", side, "bid", quote.BidPrice, "ask", quote.AskPrice, "last", quote.LastPrice)
+	return 0, false
+}
+
+func (o *Service) latestOptionQuote(option c.Option) (c.OptionQuote, bool) {
 	option, err := normalizeOption(option)
 	if err != nil {
-		return 0, false
+		return c.OptionQuote{}, false
 	}
 	o.priceMu.RLock()
 	defer o.priceMu.RUnlock()
-	price, ok := o.optionPrices[option]
-	return price, ok
+	quote, ok := o.optionPrices[option]
+	return quote, ok
+}
+
+func optionMidPrice(quote c.OptionQuote) (float64, bool) {
+	if quote.BidPrice < 0 || quote.AskPrice < 0 ||
+		quote.BidPrice == 0 && quote.AskPrice == 0 ||
+		quote.BidPrice > 0 && quote.AskPrice > 0 && quote.BidPrice > quote.AskPrice ||
+		math.IsNaN(quote.BidPrice) || math.IsInf(quote.BidPrice, 0) ||
+		math.IsNaN(quote.AskPrice) || math.IsInf(quote.AskPrice, 0) {
+		return 0, false
+	}
+	return quote.BidPrice/2 + quote.AskPrice/2, true
 }
 
 func (o *Service) routingUnion() map[string]struct{} {

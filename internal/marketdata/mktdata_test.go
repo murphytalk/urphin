@@ -415,7 +415,7 @@ func TestOwnedOptionSubscriptionCloseRemovesTargetAndClosesChannel(t *testing.T)
 		t.Fatal(err)
 	}
 	service.mu.RLock()
-	service.handleOptionQuote(c.OptionQuote{Option: option, Price: 1})
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 1})
 	service.mu.RUnlock()
 	select {
 	case <-sub.Updates():
@@ -425,10 +425,38 @@ func TestOwnedOptionSubscriptionCloseRemovesTargetAndClosesChannel(t *testing.T)
 	sub.Close()
 	sub.Close()
 	service.mu.RLock()
-	service.handleOptionQuote(c.OptionQuote{Option: option, Price: 2})
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 2})
 	service.mu.RUnlock()
 	if _, open := <-sub.Updates(); open {
 		t.Fatal("option channel remained open")
+	}
+}
+
+func TestLatestOptionClosePriceUsesLegSideQuote(t *testing.T) {
+	service := newTestMktData(t, nil)
+	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
+	service.handleOptionQuote(c.OptionQuote{Option: option, BidPrice: 1.25, AskPrice: 1.75, LastPrice: 1.5})
+	if got, ok := service.LatestOptionPrice(option); !ok || got != 1.5 {
+		t.Fatalf("LatestOptionPrice() = (%v, %t), want midpoint 1.5", got, ok)
+	}
+
+	for _, test := range []struct {
+		side string
+		want float64
+	}{{"B", 1.25}, {"S", 1.75}} {
+		if got, ok := service.LatestOptionClosePrice(option, test.side); !ok || got != test.want {
+			t.Errorf("LatestOptionClosePrice(%q) = (%v, %t), want %v", test.side, got, ok, test.want)
+		}
+	}
+
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 1.6})
+	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 1.6 {
+		t.Fatalf("LatestOptionClosePrice() fallback = (%v, %t), want last trade 1.6", got, ok)
+	}
+
+	service.handleOptionQuote(c.OptionQuote{Option: option, AskPrice: 2})
+	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 1 {
+		t.Fatalf("LatestOptionClosePrice() one-sided fallback = (%v, %t), want midpoint 1", got, ok)
 	}
 }
 

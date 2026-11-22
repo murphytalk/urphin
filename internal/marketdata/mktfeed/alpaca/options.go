@@ -30,7 +30,7 @@ type optionFeed struct {
 	quotes    chan<- c.OptionQuote
 	bySymbol  map[string]c.Option
 	seen      map[string]time.Time
-	lastPrice map[string]float64
+	lastQuote map[string]c.OptionQuote
 }
 
 type optionCommand struct {
@@ -50,7 +50,7 @@ func newOptionFeed(ctx context.Context, credentials c.KeySecretCfg, chanError ch
 	return &optionFeed{
 		ctx: ctx, credentials: credentials, chanError: chanError, commands: make(chan optionCommand), done: make(chan struct{}),
 		bySymbol: make(map[string]c.Option), seen: make(map[string]time.Time),
-		lastPrice: make(map[string]float64),
+		lastQuote: make(map[string]c.OptionQuote),
 	}
 }
 
@@ -159,7 +159,7 @@ func (feed *optionFeed) setOptions(ctx context.Context, options []c.Option, clie
 			feed.mu.Unlock()
 			return fmt.Errorf("subscribe to Alpaca option quotes: %w", err)
 		}
-		latest, err := feed.latestQuotes(ctx, added)
+		latest, err := feed.latestSnapshots(ctx, added)
 		if err != nil {
 			_ = (*client).UnsubscribeFromQuotes(added...)
 			feed.mu.Lock()
@@ -169,9 +169,21 @@ func (feed *optionFeed) setOptions(ctx context.Context, options []c.Option, clie
 			feed.mu.Unlock()
 			return err
 		}
-		for symbol, quote := range latest {
-			feed.publish(symbol, desired[symbol], quote.BidPrice, quote.AskPrice, quote.Timestamp)
+		priced := 0
+		var unpriced []string
+		for _, symbol := range added {
+			snapshot, returned := latest[symbol]
+			quote, timestamp, ok := optionSnapshotQuote(snapshot)
+			slog.Debug("Alpaca option snapshot quote", "symbol", symbol, "returned", returned, "bid", quote.BidPrice, "ask", quote.AskPrice, "last", quote.LastPrice)
+			if returned && ok {
+				feed.publishQuote(symbol, desired[symbol], quote, timestamp)
+				priced++
+			} else {
+				unpriced = append(unpriced, symbol)
+			}
 		}
+		slices.Sort(unpriced)
+		slog.Debug("Alpaca option snapshots received", "requested_count", len(added), "snapshot_count", len(latest), "priced_count", priced, "unpriced_symbols", unpriced)
 	}
 	if len(removed) > 0 {
 		if err := (*client).UnsubscribeFromQuotes(removed...); err != nil {
@@ -189,7 +201,7 @@ func (feed *optionFeed) setOptions(ctx context.Context, options []c.Option, clie
 		for _, symbol := range removed {
 			delete(feed.bySymbol, symbol)
 			delete(feed.seen, symbol)
-			delete(feed.lastPrice, symbol)
+			delete(feed.lastQuote, symbol)
 		}
 		feed.mu.Unlock()
 	}
@@ -200,23 +212,23 @@ func (feed *optionFeed) setOptions(ctx context.Context, options []c.Option, clie
 	return nil
 }
 
-func (feed *optionFeed) latestQuotes(ctx context.Context, symbols []string) (map[string]marketdata.OptionQuote, error) {
+func (feed *optionFeed) latestSnapshots(ctx context.Context, symbols []string) (map[string]marketdata.OptionSnapshot, error) {
 	api := marketdata.NewClient(marketdata.ClientOpts{
 		APIKey: feed.credentials.Key, APISecret: feed.credentials.Secret, RetryLimit: 1, RetryDelay: 100 * time.Millisecond,
 		HTTPClient: &http.Client{Timeout: 10 * time.Second, Transport: contextRoundTripper{ctx: ctx, base: http.DefaultTransport}},
 	})
-	quotes := make(map[string]marketdata.OptionQuote, len(symbols))
+	snapshots := make(map[string]marketdata.OptionSnapshot, len(symbols))
 	for start := 0; start < len(symbols); start += optionSnapshotBatchSize {
 		end := min(start+optionSnapshotBatchSize, len(symbols))
-		batch, err := api.GetLatestOptionQuotes(symbols[start:end], marketdata.GetLatestOptionQuoteRequest{Feed: marketdata.Indicative})
+		batch, err := api.GetOptionSnapshots(symbols[start:end], marketdata.GetOptionSnapshotRequest{Feed: marketdata.Indicative})
 		if err != nil {
-			return nil, fmt.Errorf("get Alpaca latest option quotes: %w", err)
+			return nil, fmt.Errorf("get Alpaca option snapshots: %w", err)
 		}
-		for symbol, quote := range batch {
-			quotes[symbol] = quote
+		for symbol, snapshot := range batch {
+			snapshots[symbol] = snapshot
 		}
 	}
-	return quotes, nil
+	return snapshots, nil
 }
 
 func (feed *optionFeed) publishStreamQuote(quote stream.OptionQuote) {
@@ -224,15 +236,38 @@ func (feed *optionFeed) publishStreamQuote(quote stream.OptionQuote) {
 	option, exists := feed.bySymbol[quote.Symbol]
 	feed.mu.Unlock()
 	if exists {
-		feed.publish(quote.Symbol, option, quote.BidPrice, quote.AskPrice, quote.Timestamp)
+		feed.publishQuote(quote.Symbol, option, c.OptionQuote{BidPrice: quote.BidPrice, AskPrice: quote.AskPrice}, quote.Timestamp)
 	}
 }
 
-func (feed *optionFeed) publish(symbol string, option c.Option, bid, ask float64, timestamp time.Time) {
-	if !validQuote(bid, ask) {
+func optionSnapshotQuote(snapshot marketdata.OptionSnapshot) (c.OptionQuote, time.Time, bool) {
+	quote := c.OptionQuote{}
+	var timestamp time.Time
+	if latestQuote := snapshot.LatestQuote; latestQuote != nil {
+		if validPositivePrice(latestQuote.BidPrice) {
+			quote.BidPrice = latestQuote.BidPrice
+		}
+		if validPositivePrice(latestQuote.AskPrice) {
+			quote.AskPrice = latestQuote.AskPrice
+		}
+		timestamp = latestQuote.Timestamp
+	}
+	if trade := snapshot.LatestTrade; trade != nil && validPositivePrice(trade.Price) {
+		quote.LastPrice = trade.Price
+		if timestamp.IsZero() {
+			timestamp = trade.Timestamp
+		}
+	}
+	if !validPositivePrice(quote.BidPrice) && !validPositivePrice(quote.AskPrice) && !validPositivePrice(quote.LastPrice) {
+		return c.OptionQuote{}, time.Time{}, false
+	}
+	return quote, timestamp, true
+}
+
+func (feed *optionFeed) publishQuote(symbol string, option c.Option, quote c.OptionQuote, timestamp time.Time) {
+	if !validPositivePrice(quote.BidPrice) && !validPositivePrice(quote.AskPrice) && !validPositivePrice(quote.LastPrice) {
 		return
 	}
-	price := midpoint(bid, ask)
 	feed.mu.Lock()
 	defer feed.mu.Unlock()
 	if current, exists := feed.bySymbol[symbol]; !exists {
@@ -241,18 +276,23 @@ func (feed *optionFeed) publish(symbol string, option c.Option, bid, ask float64
 		option = current
 	}
 	if previous, exists := feed.seen[symbol]; exists && !timestamp.After(previous) {
+		slog.Debug("Alpaca option quote skipped as stale", "symbol", symbol, "timestamp", timestamp, "latest_timestamp", previous)
 		return
 	}
-	feed.seen[symbol] = timestamp
-	if feed.lastPrice[symbol] == price {
+	quote.Option = option
+	if previous, exists := feed.lastQuote[symbol]; exists && previous.BidPrice == quote.BidPrice && previous.AskPrice == quote.AskPrice && previous.LastPrice == quote.LastPrice {
+		feed.seen[symbol] = timestamp
 		return
 	}
-	feed.lastPrice[symbol] = price
-	if feed.quotes != nil {
-		select {
-		case feed.quotes <- c.OptionQuote{Option: option, Price: price}:
-		default:
-		}
+	if feed.quotes == nil {
+		return
+	}
+	select {
+	case feed.quotes <- quote:
+		feed.seen[symbol] = timestamp
+		feed.lastQuote[symbol] = quote
+		slog.Debug("Alpaca option quote published", "symbol", symbol, "bid", quote.BidPrice, "ask", quote.AskPrice, "last", quote.LastPrice)
+	case <-feed.ctx.Done():
 	}
 }
 

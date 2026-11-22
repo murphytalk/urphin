@@ -15,12 +15,13 @@ import (
 )
 
 type AppCtx struct {
-	Cfg      *c.Config               // loaded from --config, app only reads it
-	Settings *c.Settings             // loaded from settings.yaml, app updates it with lastest settings
-	Debug    bool                    // set by --debug-log, app only reads it
-	Styles   theme.Styles            // resolved once during application startup
-	Db       databackend.DataBackend // initialized in setup, used by app
-	MktData  mktdata.MktData
+	Cfg                *c.Config               // loaded from --config, app only reads it
+	Settings           *c.Settings             // loaded from settings.yaml, app updates it with lastest settings
+	Debug              bool                    // set by --debug-log, app only reads it
+	Styles             theme.Styles            // resolved once during application startup
+	Db                 databackend.DataBackend // initialized in setup, used by app
+	MktData            mktdata.MktData
+	OnMarketDataUpdate func()
 }
 
 // LoadConfig reads the YAML file at path into a Config.

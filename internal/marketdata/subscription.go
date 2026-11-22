@@ -255,12 +255,17 @@ func normalizeOption(option c.Option) (c.Option, error) {
 
 func (o *Service) handleOptionQuote(update c.OptionQuote) {
 	option, err := normalizeOption(update.Option)
-	if err != nil || update.Price <= 0 || math.IsNaN(update.Price) || math.IsInf(update.Price, 0) {
+	if err != nil || !validOptionPrice(update.BidPrice) && !validOptionPrice(update.AskPrice) && !validOptionPrice(update.LastPrice) {
 		return
 	}
 	update.Option = option
 	o.priceMu.Lock()
-	o.optionPrices[option] = update.Price
+	if previous, exists := o.optionPrices[option]; exists {
+		if !validOptionPrice(update.LastPrice) {
+			update.LastPrice = previous.LastPrice
+		}
+	}
+	o.optionPrices[option] = update
 	o.priceMu.Unlock()
 	for sub := range o.optionSubscribers {
 		if _, subscribed := sub.options[option]; !subscribed {
@@ -271,6 +276,10 @@ func (o *Service) handleOptionQuote(update c.OptionQuote) {
 		default:
 		}
 	}
+}
+
+func validOptionPrice(price float64) bool {
+	return price > 0 && !math.IsNaN(price) && !math.IsInf(price, 0)
 }
 
 func (o *Service) snapshot() *ownerSnapshot {

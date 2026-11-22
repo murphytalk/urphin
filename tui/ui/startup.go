@@ -97,6 +97,7 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.app.marketError = result.err
 			return m, nil
 		}
+		m.app.app.MktData = result.data
 		m.app.session = newQuoteSession(m.ctx, result.data, m.app.subscriptionSymbols())
 		return m, m.app.Init()
 	}

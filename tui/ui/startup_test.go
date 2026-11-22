@@ -34,6 +34,9 @@ func TestStartupDefersQuoteSubscriptionUntilMarketDataReady(t *testing.T) {
 	if m.app.session == nil {
 		t.Fatal("ready market data has no quote session")
 	}
+	if m.app.app.MktData != feed {
+		t.Fatal("ready market data was not attached to command context")
+	}
 	defer m.app.session.Close()
 	m.app.session.subscribe()()
 	if got := len(feed.snapshot().subscriptions); got != 1 {

@@ -576,7 +576,7 @@ func (owner *priceOwner) refreshOptions() {
 					errs = append(errs, fmt.Errorf("%s %s %s %.8g: %w", option.Ticker, option.CP, option.Expiry, option.Strike, err))
 					continue
 				}
-				fetch.quotes = append(fetch.quotes, c.OptionQuote{Option: option, Price: snapshot.Price})
+				fetch.quotes = append(fetch.quotes, c.OptionQuote{Option: option, LastPrice: snapshot.Price})
 			}
 			fetch.err = errors.Join(errs...)
 		}
@@ -594,10 +594,10 @@ func (owner *priceOwner) finishOptionFetch(result optionFetchResult) {
 	owner.optionActive = false
 	if result.configID == owner.optionConfigID {
 		for _, quote := range result.quotes {
-			if previous, exists := owner.lastOptionPrices[quote.Option]; exists && previous == quote.Price {
+			if previous, exists := owner.lastOptionPrices[quote.Option]; exists && previous == quote.LastPrice {
 				continue
 			}
-			owner.lastOptionPrices[quote.Option] = quote.Price
+			owner.lastOptionPrices[quote.Option] = quote.LastPrice
 			select {
 			case owner.monitor.config.chanUpdateOptionQuote <- quote:
 			default:
