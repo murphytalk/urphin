@@ -561,17 +561,18 @@ func TestCommandHistoryNavigation(t *testing.T) {
 	}
 
 	for _, step := range []struct {
-		key  rune
+		key  tea.KeyPressMsg
 		want string
 	}{
-		{tea.KeyUp, "TX AMZN"},
-		{tea.KeyUp, "TX AAPL"},
-		{tea.KeyDown, "TX AMZN"},
-		{tea.KeyDown, "draft"},
+		{uiTestKey(tea.KeyUp), "TX AMZN"},
+		{uiTestKey('p', tea.ModCtrl), "TX AAPL"},
+		{uiTestKey('n', tea.ModCtrl), "TX AMZN"},
+		{uiTestKey(tea.KeyDown), "draft"},
 	} {
-		uiTestUpdate(t, m, uiTestKey(step.key))
+		uiTestUpdate(t, m, step.key)
+		t.Logf("key=%q value=%q browsing=%t", step.key.Keystroke(), m.commandInput.Value(), m.commandHistoryBrowsing)
 		if got := m.commandInput.Value(); got != step.want {
-			t.Errorf("key %q command = %q, want %q", step.key, got, step.want)
+			t.Errorf("key %q command = %q, want %q", step.key.Keystroke(), got, step.want)
 		}
 	}
 }

@@ -422,10 +422,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncCommandPromptStyle()
 			m.resize()
 			return m, nil
-		case "up", "down", "pgup", "pgdown", "ctrl+home", "ctrl+end":
-			if m.commandInput.Focused() && (msg.Keystroke() == "up" || msg.Keystroke() == "down") {
+		case "up", "down", "ctrl+p", "ctrl+n", "pgup", "pgdown", "ctrl+home", "ctrl+end":
+			keystroke := msg.Keystroke()
+			if m.commandInput.Focused() && (keystroke == "up" || keystroke == "ctrl+p" || keystroke == "down" || keystroke == "ctrl+n") {
 				if m.commandHistory != nil {
-					if msg.Keystroke() == "up" {
+					if keystroke == "up" || keystroke == "ctrl+p" {
 						if !m.commandHistoryBrowsing {
 							m.commandHistoryDraft = m.commandInput.Value()
 							m.commandHistoryBrowsing = true

@@ -149,27 +149,27 @@ func (h *FileHistory) appendLine(entry string) error {
 	return err
 }
 
-// Previous moves to the next older entry, staying on the oldest one.
+// Previous moves to the next older entry, wrapping from oldest to newest.
 func (h *FileHistory) Previous() string {
 	if h == nil || len(h.entries) == 0 {
 		return ""
 	}
-	h.cursor = min(h.cursor, len(h.entries))
-	if h.cursor > 0 {
+	if h.cursor >= len(h.entries) {
+		h.cursor = len(h.entries) - 1
+	} else if h.cursor == 0 {
+		h.cursor = len(h.entries) - 1
+	} else {
 		h.cursor--
 	}
 	return h.entries[h.cursor]
 }
 
-// Next moves to the next newer entry; past the newest it returns "".
+// Next moves to the next newer entry, wrapping from newest to oldest.
 func (h *FileHistory) Next() string {
-	if h == nil || h.cursor >= len(h.entries) {
+	if h == nil || len(h.entries) == 0 {
 		return ""
 	}
-	h.cursor++
-	if h.cursor >= len(h.entries) {
-		return ""
-	}
+	h.cursor = (min(h.cursor, len(h.entries)-1) + 1) % len(h.entries)
 	return h.entries[h.cursor]
 }
 

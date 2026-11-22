@@ -61,12 +61,12 @@ func TestFileHistoryNavigation(t *testing.T) {
 	h.Add("y")
 	h.Add("z")
 
-	for i, want := range []string{"z", "y", "x", "x"} {
+	for i, want := range []string{"z", "y", "x", "z"} {
 		if got := h.Previous(); got != want {
 			t.Fatalf("Previous #%d = %q, want %q", i, got, want)
 		}
 	}
-	for i, want := range []string{"y", "z", "", ""} {
+	for i, want := range []string{"x", "y", "z", "x"} {
 		if got := h.Next(); got != want {
 			t.Fatalf("Next #%d = %q, want %q", i, got, want)
 		}
