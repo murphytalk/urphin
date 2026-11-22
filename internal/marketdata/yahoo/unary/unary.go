@@ -229,10 +229,12 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 		if !ok {
 			return nil, nil, errors.New("Yahoo request returned a quote without a price")
 		}
+		slog.Debug("Yahoo quote decoded", "symbol", quote.Symbol, "name", quote.Name, "market_cap", quote.QuoteExtended.MarketCap, "fifty_two_week_low", quote.QuoteExtended.FiftyTwoWeekLow, "fifty_two_week_high", quote.QuoteExtended.FiftyTwoWeekHigh)
 		quotes[i] = quote
 		quoteCopy := quote
 		quotesBySymbol[quote.Symbol] = &quoteCopy
 	}
+	slog.Debug("Yahoo quote batch decoded", "requested_count", len(symbols), "returned_count", len(quotes), "symbols", symbols)
 	return quotes, quotesBySymbol, nil
 }
 

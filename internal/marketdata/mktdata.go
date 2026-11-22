@@ -541,10 +541,35 @@ func deliverQuote(sub *Subscription, quote c.QuoteUpdate, symbols map[string]str
 		return
 	}
 	quote.Symbol = symbol
+	quote = quote.Clone()
 	select {
-	case sub.updates <- quote.Clone():
+	case sub.updates <- quote:
+		return
 	default:
 	}
+	// Capacity reserves one slot per symbol; coalesce duplicates instead of losing unseen symbols.
+	latest := make(map[string]c.QuoteUpdate)
+	keep := func(update c.QuoteUpdate) {
+		key := quoteSymbol(update)
+		if update.QuotePrice == nil {
+			update.QuotePrice = latest[key].QuotePrice
+		}
+		latest[key] = update
+	}
+drain:
+	for range cap(sub.updates) {
+		select {
+		case queued := <-sub.updates:
+			keep(queued)
+		default:
+			break drain
+		}
+	}
+	keep(quote)
+	for _, queued := range latest {
+		sub.updates <- queued
+	}
+	slog.Debug("Market-data quote queue coalesced", "symbol_count", len(latest), "queue_capacity", cap(sub.updates))
 }
 
 func cloneSymbols(symbols map[string]struct{}) []string {

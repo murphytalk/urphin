@@ -32,6 +32,7 @@ func (s *Subscription) Close() {
 	}
 	s.closed = true
 	delete(s.service.subscribers, s)
+	slog.Debug("Market-data subscription closed", "symbol_count", len(s.symbols), "subscriber_count", len(s.service.subscribers))
 	close(s.updates)
 	s.service.reconcileSymbols()
 	select {
@@ -78,8 +79,9 @@ func (m *Service) Subscribe(symbols []string) (*Subscription, error) {
 			fx = append(fx, symbol)
 		}
 	}
-	sub := &Subscription{service: m, symbols: members, updates: make(chan c.QuoteUpdate, subscriptionChannelSize)}
+	sub := &Subscription{service: m, symbols: members, updates: make(chan c.QuoteUpdate, max(subscriptionChannelSize, len(members)))}
 	m.subscribers[sub] = struct{}{}
+	slog.Debug("Market-data subscription created", "symbol_count", len(members), "subscriber_count", len(m.subscribers))
 	for symbol := range members {
 		if quote, ok := m.fxQuotes[symbol]; ok {
 			deliverQuote(sub, c.NewQuoteUpdate(quote, 0, 0), members)

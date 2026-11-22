@@ -1,6 +1,7 @@
 package mktdata
 
 import (
+	"log/slog"
 	"sync/atomic"
 
 	c "github.com/murphytalk/urphin/internal"
@@ -14,17 +15,17 @@ type quoteVersion struct {
 
 // router state is touched by Service.run, apart from the test ingress hook.
 type router struct {
-	versions    map[c.QuoteSource]map[string]quoteVersion
-	names       map[string]string
-	generations map[c.QuoteSource]int
-	pending     map[c.QuoteSource]map[int][]c.QuoteUpdate
-	sequence    uint64
-	latest      atomic.Uint64
+	versions     map[c.QuoteSource]map[string]quoteVersion
+	fundamentals map[string]c.AssetQuote
+	generations  map[c.QuoteSource]int
+	pending      map[c.QuoteSource]map[int][]c.QuoteUpdate
+	sequence     uint64
+	latest       atomic.Uint64
 }
 
 func newRouter() router {
 	return router{
-		versions: make(map[c.QuoteSource]map[string]quoteVersion), names: make(map[string]string),
+		versions: make(map[c.QuoteSource]map[string]quoteVersion), fundamentals: make(map[string]c.AssetQuote),
 		generations: make(map[c.QuoteSource]int), pending: make(map[c.QuoteSource]map[int][]c.QuoteUpdate),
 	}
 }
@@ -65,11 +66,25 @@ func (r *router) accept(source c.QuoteSource, update c.QuoteUpdate, symbol strin
 	if current.generation == update.Generation && update.Revision > 0 && current.revision > update.Revision {
 		return c.QuoteUpdate{}, false
 	}
-	if source == c.QuoteSourceYahoo && update.Name != "" {
-		r.names[symbol] = update.Name
+	if yahoo, ok := r.fundamentals[symbol]; ok {
+		if yahoo.Name != "" && (source != c.QuoteSourceYahoo || update.Name == "") {
+			update.Name = yahoo.Name
+		}
+		if update.QuoteExtended.MarketCap == 0 {
+			update.QuoteExtended.MarketCap = yahoo.QuoteExtended.MarketCap
+		}
+		if update.QuoteExtended.FiftyTwoWeekHigh == 0 {
+			update.QuoteExtended.FiftyTwoWeekHigh = yahoo.QuoteExtended.FiftyTwoWeekHigh
+		}
+		if update.QuoteExtended.FiftyTwoWeekLow == 0 {
+			update.QuoteExtended.FiftyTwoWeekLow = yahoo.QuoteExtended.FiftyTwoWeekLow
+		}
+		if update.QuoteExtended.Volume == 0 {
+			update.QuoteExtended.Volume = yahoo.QuoteExtended.Volume
+		}
 	}
-	if name := r.names[symbol]; name != "" {
-		update.Name = name
+	if source == c.QuoteSourceYahoo {
+		r.fundamentals[symbol] = c.AssetQuote{Name: update.Name, QuoteExtended: update.QuoteExtended}
 	}
 	if r.versions[source] == nil {
 		r.versions[source] = make(map[string]quoteVersion)
@@ -91,9 +106,9 @@ func (r *router) prune(union map[string]struct{}) {
 			delete(r.versions, source)
 		}
 	}
-	for symbol := range r.names {
+	for symbol := range r.fundamentals {
 		if _, ok := union[symbol]; !ok {
-			delete(r.names, symbol)
+			delete(r.fundamentals, symbol)
 		}
 	}
 }
@@ -147,6 +162,7 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 			}
 		}
 		if len(valid) == 0 {
+			slog.Debug("Market-data seed skipped", "source", source, "symbol", symbol, "seed_targets", len(targets), "current_sequence", current.sequence)
 			return
 		}
 		targets = valid

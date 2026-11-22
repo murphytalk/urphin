@@ -66,7 +66,6 @@ func (m *startupModel) Init() tea.Cmd {
 			return startupResult{err: err, close: closeFn}
 		}
 		slog.Info("UI startup complete")
-		model.session = newQuoteSession(m.ctx, data, model.subscriptionSymbols())
 		if home, e := os.UserHomeDir(); e == nil {
 			model.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history.log"), slog.Default())
 		}

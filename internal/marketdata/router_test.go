@@ -30,7 +30,24 @@ func TestRouterGenerationRevisionNameAndPrune(t *testing.T) {
 		t.Fatal("older revision accepted")
 	}
 	r.prune(nil)
-	if len(r.versions) != 0 || len(r.names) != 0 {
-		t.Fatalf("router retained removed symbol: versions=%v names=%v", r.versions, r.names)
+	if len(r.versions) != 0 || len(r.fundamentals) != 0 {
+		t.Fatalf("router retained removed symbol: versions=%v names=%v", r.versions, r.fundamentals)
+	}
+}
+
+func TestRouterPreservesYahooFundamentalsAndProviderVolume(t *testing.T) {
+	r := newRouter()
+	yahoo := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", Name: "Apple", QuoteExtended: c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 300}}, 0, 0)
+	r.accept(c.QuoteSourceYahoo, yahoo, "AAPL", 0)
+	live := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuoteExtended: c.QuoteExtended{Volume: 400}}, 0, 0)
+	got, ok := r.accept(c.QuoteSourceAlpaca, live, "AAPL", 0)
+	if !ok || got.Name != "Apple" || got.QuoteExtended != (c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 400}) {
+		t.Fatalf("merged quote = %+v", got)
+	}
+	yahoo.QuoteExtended.MarketCap = 2000
+	r.accept(c.QuoteSourceYahoo, yahoo, "AAPL", 0)
+	got, _ = r.accept(c.QuoteSourceAlpaca, live, "AAPL", 0)
+	if got.QuoteExtended.MarketCap != 2000 {
+		t.Fatalf("stale market cap = %v", got.QuoteExtended.MarketCap)
 	}
 }

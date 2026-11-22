@@ -619,7 +619,8 @@ func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
 func TestLatestProviderQuoteKeepsYahooNameFromSnapshot(t *testing.T) {
 	yahooQuote := c.AssetQuote{
 		Symbol: "AAPL", Name: "Apple Inc.", Class: c.AssetClassStock,
-		QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100},
+		QuoteExtended: c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 300},
+		QuoteSource:   c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100},
 	}
 	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{
 		c.QuoteSourceYahoo:  &testMktDataFeed{quotes: []c.AssetQuote{yahooQuote}},
@@ -635,6 +636,7 @@ func TestLatestProviderQuoteKeepsYahooNameFromSnapshot(t *testing.T) {
 	}
 	service.routeQuote(c.QuoteSourceAlpaca, latest)
 	latest.Name = "Apple Inc."
+	latest.QuoteExtended = yahooQuote.QuoteExtended
 	wantQuote(t, updates, latest)
 }
 
@@ -893,7 +895,7 @@ func TestQuoteFanoutUsesIndependentPricesForEveryPublication(t *testing.T) {
 	}
 }
 
-func TestDroppedQuoteDeliveryRetainsPublisherOwnership(t *testing.T) {
+func TestCoalescedQuoteDeliveryRetainsPublisherOwnership(t *testing.T) {
 	updates := make(chan c.QuoteUpdate, 1)
 	sentinel := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: 1}}, 0, 0)
 	updates <- sentinel
@@ -901,10 +903,10 @@ func TestDroppedQuoteDeliveryRetainsPublisherOwnership(t *testing.T) {
 	price := owned.QuotePrice
 	deliverQuote(&Subscription{updates: updates}, owned, map[string]struct{}{"AAPL": {}})
 	if owned.QuotePrice != price || owned.QuotePrice.Price != 2 {
-		t.Fatal("failed enqueue changed or transferred publisher-owned object")
+		t.Fatal("coalescing changed publisher-owned object")
 	}
-	if got := <-updates; got.QuotePrice == nil || got.QuotePrice.Price != 1 {
-		t.Fatal("full subscriber channel lost existing item")
+	if got := <-updates; got.QuotePrice == nil || got.QuotePrice.Price != 2 || got.QuotePrice == price {
+		t.Fatal("full subscriber channel did not retain an owned copy of the latest quote")
 	}
 }
 
@@ -1314,5 +1316,77 @@ func TestFXSubscriptionDeliversCurrencyRateQuotes(t *testing.T) {
 		case <-timeout.C:
 			t.Fatalf("missing FX quotes: %v", waiting)
 		}
+	}
+}
+
+func TestLargeSubscriptionRetainsEveryInitialQuote(t *testing.T) {
+	const count = 118
+	symbols := make([]string, count)
+	quotes := make([]c.AssetQuote, count)
+	for i := range count {
+		symbols[i] = fmt.Sprintf("STOCK%03d", i)
+		quotes[i] = c.AssetQuote{Symbol: symbols[i], Name: symbols[i] + " Inc.", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}}
+	}
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{
+		c.QuoteSourceYahoo: &testMktDataFeed{quotes: quotes},
+	})
+	sub, err := service.Service.Subscribe(symbols)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	// Let the entire seed arrive before the UI begins consuming.
+	deadline := time.Now().Add(2 * time.Second)
+	for service.router.latest.Load() < count && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	service.Service.mu.RLock()
+	defer service.Service.mu.RUnlock()
+	if service.router.latest.Load() != count {
+		t.Fatal("initial seed did not complete")
+	}
+	seen := make(map[string]bool)
+	for len(sub.Updates()) > 0 {
+		quote := <-sub.Updates()
+		if quote.Name == "" {
+			t.Fatalf("missing name for %s", quote.Symbol)
+		}
+		seen[quote.Symbol] = true
+	}
+	if len(seen) != count {
+		t.Fatalf("received %d of %d initial quotes", len(seen), count)
+	}
+}
+
+func TestFullSubscriptionQueueKeepsLatestQuoteForEverySymbol(t *testing.T) {
+	members := map[string]struct{}{"A": {}, "B": {}, "C": {}}
+	sub := &Subscription{updates: make(chan c.QuoteUpdate, len(members))}
+	for _, symbol := range []string{"A", "B", "C", "A", "A", "B", "C"} {
+		deliverQuote(sub, c.NewQuoteUpdate(c.AssetQuote{Symbol: symbol, Name: symbol, QuotePrice: c.QuotePrice{Price: float64(symbol[0])}}, 0, 0), members)
+	}
+	latest := c.NewQuoteUpdate(c.AssetQuote{Symbol: "A", Name: "Latest A", QuotePrice: c.QuotePrice{Price: 999}}, 0, 0)
+	deliverQuote(sub, latest, members)
+	seen := make(map[string]c.QuoteUpdate)
+	for len(sub.updates) > 0 {
+		quote := <-sub.updates
+		seen[quote.Symbol] = quote
+	}
+	if len(seen) != 3 || seen["A"].Name != "Latest A" || seen["A"].QuotePrice.Price != 999 {
+		t.Fatalf("queued quotes = %+v", seen)
+	}
+	seen["A"].QuotePrice.Price = 1
+	if latest.QuotePrice.Price != 999 {
+		t.Fatal("queued quote shares publisher price")
+	}
+}
+
+func TestFullSubscriptionQueuePreservesPriceWithNewMetadata(t *testing.T) {
+	members := map[string]struct{}{"AAPL": {}}
+	sub := &Subscription{updates: make(chan c.QuoteUpdate, 1)}
+	deliverQuote(sub, c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuotePrice: c.QuotePrice{Price: 100}}, 0, 0), members)
+	deliverQuote(sub, c.QuoteUpdate{Symbol: "AAPL", Name: "Apple", Revision: 2}, members)
+	got := <-sub.updates
+	if got.Name != "Apple" || got.Revision != 2 || got.QuotePrice == nil || got.QuotePrice.Price != 100 {
+		t.Fatalf("coalesced metadata lost queued price: %+v", got)
 	}
 }
