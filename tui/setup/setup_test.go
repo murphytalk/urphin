@@ -169,3 +169,17 @@ func TestLoadOrCreateWritesDefaultConfig(t *testing.T) {
 		t.Fatalf("loaded = %#v, want %#v", loaded, defaultCfg)
 	}
 }
+
+func TestLoadSettingsDefaultsTableAlignmentToLeft(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.yaml")
+	if err := os.WriteFile(path, []byte("interval: 10\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	settings, err := LoadSettings(path)
+	if err != nil {
+		t.Fatalf("LoadSettings: %v", err)
+	}
+	if settings.TableAlignment != "left" {
+		t.Fatalf("TableAlignment = %q, want %q", settings.TableAlignment, "left")
+	}
+}

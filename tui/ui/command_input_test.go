@@ -407,6 +407,37 @@ func TestTxCommandUsesPaginatedTableResult(t *testing.T) {
 	}
 }
 
+func TestTxCommandAppliesTableAlignmentSetting(t *testing.T) {
+	txs := []databackend.Tx{
+		{Ticker: "AAPL", Ccy: "USD", Side: databackend.SideBuy, Shares: 1, Price: 100},
+	}
+	app := uiTestApp(&uiTestBackend{txs: txs})
+	app.Settings.TableAlignment = "center"
+	m, err := NewModel(context.Background(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Init()
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 120, Height: 12})
+	m.commandInput.SetValue("TX")
+	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+	uiTestRunCommand(t, m, cmd)
+
+	if !m.result.Active() {
+		t.Fatal("TX table did not open")
+	}
+	view := ansi.Strip(m.result.View())
+	lines := strings.Split(view, "\n")
+	if len(lines) < 4 {
+		t.Fatalf("unexpected view lines: %q", view)
+	}
+	tableFirstLine := lines[3]
+	leading := len(tableFirstLine) - len(strings.TrimLeft(tableFirstLine, " "))
+	if leading == 0 {
+		t.Fatalf("expected centered table to have leading spaces, got line: %q", tableFirstLine)
+	}
+}
+
 func TestCommandErrorColorsPromptWithActiveTheme(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	m.app.Styles = theme.BuildStyles(theme.Default(), "")

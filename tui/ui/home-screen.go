@@ -152,6 +152,9 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 			Styles: app.Styles,
 		}),
 	}
+	if app.Settings != nil && app.Settings.TableAlignment != "" {
+		m.result.SetTableAlignment(app.Settings.TableAlignment)
+	}
 	m.app.OnMarketDataUpdate = func() {
 		select {
 		case m.marketDataUpdates <- struct{}{}:
@@ -323,7 +326,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncCommandPromptStyle()
 		if msg.err == nil && msg.name != "" && (msg.content != "" || msg.table != nil) {
-			m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: commandResultHeader(msg.name), Content: msg.content, Table: msg.table})
+			align := ""
+			if m.app.Settings != nil {
+				align = m.app.Settings.TableAlignment
+			}
+			m.result, _ = m.result.Update(cmdview.SetResultMsg{
+				Header:         commandResultHeader(msg.name),
+				Content:        msg.content,
+				Table:          msg.table,
+				TableAlignment: align,
+			})
 			m.resize()
 		} else if m.result.Active() {
 			m.result.Clear()

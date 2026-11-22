@@ -17,8 +17,16 @@ type tuiCommand interface {
 	ExecuteTUI(context.Context, *setup.AppCtx, map[string]string) (TUIResult, error)
 }
 
+type tuiTableCommand interface {
+	ExecuteTUITable(context.Context, *setup.AppCtx, map[string]string) (*table.Model, error)
+}
+
 func RunTUI(ctx context.Context, appCtx *setup.AppCtx, cmdName string, args map[string]string) (TUIResult, error) {
 	if cmd, ok := cmdReg.Get(cmdName); ok {
+		if cmd, ok := cmd.(tuiTableCommand); ok {
+			table, err := cmd.ExecuteTUITable(ctx, appCtx, args)
+			return TUIResult{Table: table}, err
+		}
 		if cmd, ok := cmd.(tuiCommand); ok {
 			return cmd.ExecuteTUI(ctx, appCtx, args)
 		}

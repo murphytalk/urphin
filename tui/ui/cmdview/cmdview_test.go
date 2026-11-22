@@ -115,21 +115,37 @@ func TestTableResultPaginatesUsingAvailableHeight(t *testing.T) {
 	}
 }
 
-func TestTableResultIsCenterAligned(t *testing.T) {
+func TestTableResultAlignment(t *testing.T) {
 	tableModel := table.New([]table.Column{table.NewColumn("col", "Col", 10)}).
 		WithRows([]table.Row{table.NewRow(table.RowData{"col": "123"})})
 	rawTableWidth := ansi.StringWidth(strings.Split(tableModel.View(), "\n")[0])
-
-	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
 	width := rawTableWidth + 20
-	m.Update(tea.WindowSizeMsg{Width: width, Height: 10})
-	m.Update(SetResultMsg{Header: "TX", Table: &tableModel})
 
-	wantPadding := (width - rawTableWidth) / 2
-	content := m.viewport.GetContent()
-	firstLine := ansi.Strip(strings.Split(content, "\n")[0])
-	leadingSpaces := len(firstLine) - len(strings.TrimLeft(firstLine, " "))
-	if leadingSpaces != wantPadding {
-		t.Fatalf("table leading spaces = %d, want %d (first line: %q)", leadingSpaces, wantPadding, firstLine)
+	tests := []struct {
+		name        string
+		alignment   string
+		wantPadding int
+	}{
+		{name: "default is left", alignment: "", wantPadding: 0},
+		{name: "explicit left", alignment: "left", wantPadding: 0},
+		{name: "center alignment", alignment: "center", wantPadding: (width - rawTableWidth) / 2},
+		{name: "right alignment", alignment: "right", wantPadding: width - rawTableWidth},
+		{name: "unknown defaults to left", alignment: "invalid", wantPadding: 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+			m.Update(tea.WindowSizeMsg{Width: width, Height: 10})
+			m.Update(SetResultMsg{Header: "TX", Table: &tableModel, TableAlignment: tc.alignment})
+
+			content := m.viewport.GetContent()
+			firstLine := ansi.Strip(strings.Split(content, "\n")[0])
+			leadingSpaces := len(firstLine) - len(strings.TrimLeft(firstLine, " "))
+			if leadingSpaces != tc.wantPadding {
+				t.Fatalf("table leading spaces = %d, want %d (alignment: %q, line: %q)",
+					leadingSpaces, tc.wantPadding, tc.alignment, firstLine)
+			}
+		})
 	}
 }

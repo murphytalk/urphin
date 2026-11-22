@@ -237,6 +237,7 @@ func run() (code int) {
 		ExtraInfoFundamentals:             true,
 		ShowSummary:                       true,
 		ShowPositions:                     true,
+		TableAlignment:                    "left",
 		CurrencyConvertSummaryOnly:        true,
 		CurrencyDisableUnitCostConversion: true,
 		Sort:                              "ticker",

@@ -51,13 +51,16 @@ func LoadConfig(path string) (*c.Config, error) {
 }
 
 func LoadSettings(path string) (*c.Settings, error) {
-	settings := &c.Settings{FollowWatchlist: true}
+	settings := &c.Settings{FollowWatchlist: true, TableAlignment: "left"}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	if err := yaml.Unmarshal(data, settings); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if settings.TableAlignment == "" {
+		settings.TableAlignment = "left"
 	}
 	return settings, nil
 }

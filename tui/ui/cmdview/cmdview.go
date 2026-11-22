@@ -14,9 +14,10 @@ import (
 )
 
 type SetResultMsg struct {
-	Header  string
-	Content string
-	Table   *table.Model
+	Header         string
+	Content        string
+	Table          *table.Model
+	TableAlignment string
 }
 
 type StartResultMsg struct {
@@ -24,15 +25,16 @@ type StartResultMsg struct {
 }
 
 type Model struct {
-	header       string
-	content      string
-	width        int
-	styles       theme.Styles
-	viewport     viewport.Model
-	spinner      spinner.Model
-	spinnerIndex int
-	table        *table.Model
-	running      bool
+	header         string
+	content        string
+	width          int
+	styles         theme.Styles
+	viewport       viewport.Model
+	spinner        spinner.Model
+	spinnerIndex   int
+	table          *table.Model
+	running        bool
+	tableAlignment string
 }
 
 var spinners = [...]spinner.Spinner{
@@ -43,7 +45,12 @@ var spinners = [...]spinner.Spinner{
 func NewModel(styles theme.Styles) *Model {
 	v := viewport.New()
 	v.FillHeight = true
-	return &Model{styles: styles, viewport: v, spinnerIndex: -1}
+	return &Model{styles: styles, viewport: v, spinnerIndex: -1, tableAlignment: "left"}
+}
+
+func (m *Model) SetTableAlignment(align string) {
+	m.tableAlignment = align
+	m.refreshContent()
 }
 
 func (m *Model) Active() bool { return m.header != "" }
@@ -74,6 +81,9 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 	case SetResultMsg:
 		m.header, m.content = msg.Header, msg.Content
 		m.table = msg.Table
+		if msg.TableAlignment != "" {
+			m.tableAlignment = msg.TableAlignment
+		}
 		m.running = false
 		m.resizeTable()
 		m.refreshContent()
@@ -130,7 +140,8 @@ func (m *Model) View() string {
 
 func (m *Model) refreshContent() {
 	if m.table != nil {
-		m.viewport.SetContent(lipgloss.PlaceHorizontal(m.width, lipgloss.Center, m.table.View()))
+		pos := tablePosition(m.tableAlignment)
+		m.viewport.SetContent(lipgloss.PlaceHorizontal(m.width, pos, m.table.View()))
 		return
 	}
 	content := m.content
@@ -138,6 +149,17 @@ func (m *Model) refreshContent() {
 		content = m.spinner.View() + " " + m.styles.Accent.Render(content)
 	}
 	m.viewport.SetContent(ansi.Wordwrap(content, max(1, m.width), " "))
+}
+
+func tablePosition(alignment string) lipgloss.Position {
+	switch strings.ToLower(strings.TrimSpace(alignment)) {
+	case "center":
+		return lipgloss.Center
+	case "right":
+		return lipgloss.Right
+	default:
+		return lipgloss.Left
+	}
 }
 
 func (m *Model) resizeTable() {

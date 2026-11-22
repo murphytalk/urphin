@@ -54,6 +54,7 @@ type Settings struct {
 	ExtraInfoFundamentals             bool   `yaml:"show-fundamentals"`
 	ShowSummary                       bool   `yaml:"show-summary"`
 	ShowPositions                     bool   `yaml:"show-positions"`
+	TableAlignment                    string `yaml:"table-alignment"`
 	Sort                              string `yaml:"sort"`
 	SelectedWatchlist                 string `yaml:"selected-watchlist"`
 	FollowWatchlist                   bool   `yaml:"follow-watchlist"`
