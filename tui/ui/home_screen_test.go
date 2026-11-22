@@ -521,15 +521,31 @@ func TestModelFooterIsSingleLineUTF8SafeAndPrioritizesQuitAtEveryWidth(t *testin
 			if !utf8.ValidString(footer) || strings.ContainsAny(footer, "\r\n") || ansi.StringWidth(footer) > width {
 				t.Fatalf("footer width %d rendered %d: %q", width, ansi.StringWidth(footer), footer)
 			}
-			if width >= ansi.StringWidth("F10 Exit") && !strings.HasPrefix(footer, "F10") {
+			if width >= ansi.StringWidth("F10 Exit · Yahoo") && !strings.HasPrefix(footer, "F10") {
 				t.Fatal("quit must survive before any other help")
 			}
+			if width >= ansi.StringWidth("Yahoo") && !strings.Contains(ansi.Strip(footer), "Yahoo") {
+				t.Fatal("market-data feed name missing from footer")
+			}
 			if width >= 80 {
-				if ansi.StringWidth(footer) != width || !strings.Contains(ansi.Strip(footer), "Syntax check") || !strings.Contains(footer, "F10/^C/^D Exit") {
+				if ansi.StringWidth(footer) != width || strings.Contains(ansi.Strip(footer), "Syntax check") || !strings.Contains(footer, "F10/^C/^D Exit") {
 					t.Fatalf("command field not right-aligned or exit help missing: %q", footer)
 				}
 			}
 		})
+	}
+}
+
+func TestFooterShowsConfiguredMarketDataFeedInAccentColor(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	m.app.Cfg = &c.Config{App: c.AppCfg{MktDataFeed: c.QuoteSourceAlpaca}}
+	m.app.Styles = theme.BuildStyles(theme.Default(), "")
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
+
+	footer := m.footer()
+	feed := m.app.Styles.Accent.Render("Alpaca")
+	if !strings.Contains(footer, feed) {
+		t.Fatalf("footer does not render configured feed in accent color: %q", footer)
 	}
 }
 

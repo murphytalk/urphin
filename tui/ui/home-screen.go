@@ -63,6 +63,8 @@ type Model struct {
 	marketLoading          bool
 	marketSpinner          spinner.Model
 	marketError            error
+	marketDataUpdates      chan struct{}
+	lastOptionCommand      string
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
@@ -74,7 +76,10 @@ type commandResultMsg struct {
 	content string
 	table   *table.Model
 	err     error
+	refresh bool
 }
+
+type optionPriceUpdateMsg struct{}
 
 // NewModel loads each unique position once, independently of the visible watchlist.
 func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
@@ -139,13 +144,19 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	m := &Model{
 		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
-		mismatches: make(map[string]bool), selected: selected,
+		mismatches: make(map[string]bool), selected: selected, marketDataUpdates: make(chan struct{}, 1),
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
 			ExtraInfoExchange: app.Settings.ExtraInfoExchange, ExtraInfoFundamentals: app.Settings.ExtraInfoFundamentals,
 			Styles: app.Styles,
 		}),
+	}
+	m.app.OnMarketDataUpdate = func() {
+		select {
+		case m.marketDataUpdates <- struct{}{}:
+		default:
+		}
 	}
 	for _, symbol := range m.symbols {
 		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
@@ -177,7 +188,6 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	if _, noColor := app.Styles.ErrorColor.(lipgloss.NoColor); noColor {
 		m.commandInput.SetVirtualCursor(false)
 	}
-	m.commandInput.Placeholder = "Syntax check"
 	m.commandInput.AutoCase = true
 	m.commandInput.ShowSuggestions = true
 	m.commandInput.KeyMap.NextSuggestion.SetEnabled(false)
@@ -322,6 +332,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
+		if msg.name == "OPT" && msg.err == nil {
+			m.lastOptionCommand = msg.line
+			return m, waitForOptionPriceUpdate(m.ctx, m.marketDataUpdates)
+		}
+		if msg.refresh && msg.err == nil {
+			return m, waitForOptionPriceUpdate(m.ctx, m.marketDataUpdates)
+		}
+	case optionPriceUpdateMsg:
+		line := m.lastOptionCommand
+		if line == "" {
+			return m, nil
+		}
+		return m, func() tea.Msg {
+			name, args, err := commands.Parse(line)
+			if err != nil {
+				return commandResultMsg{line: line, name: "OPT", err: err, refresh: true}
+			}
+			result, err := commands.RunTUI(m.ctx, &m.app, name, args)
+			return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err, refresh: true}
+		}
 	case spinner.TickMsg:
 		if m.marketLoading {
 			var cmd tea.Cmd
@@ -393,6 +423,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.resetCommandHistoryNavigation()
 			line := m.commandInput.Value()
+			if strings.ToUpper(strings.TrimSpace(line)) != "OPT" && !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "OPT ") {
+				m.lastOptionCommand = ""
+			}
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
 			}
@@ -522,6 +555,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) resetCommandHistoryNavigation() {
 	m.commandHistoryBrowsing = false
 	m.commandHistoryPrefix = ""
+}
+
+func waitForOptionPriceUpdate(ctx context.Context, updates <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-updates:
+			return optionPriceUpdateMsg{}
+		}
+	}
 }
 
 func (m *Model) visibleSymbols() []string {
@@ -720,28 +764,45 @@ func (m *Model) footer() string {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		budget = max(0, m.width-region-1)
 	}
+	feedName := ansi.Truncate(m.marketDataFeedName(), budget, "")
+	feedWidth := ansi.StringWidth(feedName)
+	helpBudget := max(0, budget-feedWidth-3)
 	text := ""
 	for _, part := range parts {
 		next := part
 		if text != "" {
 			next = text + " · " + part
 		}
-		if ansi.StringWidth(next) > budget {
+		if ansi.StringWidth(next) > helpBudget {
 			break
 		}
 		text = next
 	}
 	if text == "" {
-		text = ansi.Truncate("F10 Exit", m.width, "")
+		if helpBudget >= ansi.StringWidth("F10 Exit") {
+			text = "F10 Exit"
+		}
+	}
+	feed := m.app.Styles.Accent.Render(feedName)
+	if text != "" {
+		text += " · "
 	}
 	if m.commandVisible() {
 		region := min(48, m.width/2, max(0, m.width-ansi.StringWidth("F10 Exit")-1))
 		right := m.commandInput.View()
 		leftBudget := max(0, m.width-region-1)
 		text = ansi.Truncate(text, leftBudget, "")
-		return text + strings.Repeat(" ", max(1, m.width-ansi.StringWidth(text)-ansi.StringWidth(right))) + right
+		left := text + feed
+		return left + strings.Repeat(" ", max(1, m.width-ansi.StringWidth(left)-ansi.StringWidth(right))) + right
 	}
-	return m.app.Styles.TextLight(text)
+	return m.app.Styles.TextLight(text) + feed
+}
+
+func (m *Model) marketDataFeedName() string {
+	if m.app.Cfg == nil || m.app.Cfg.App.RandomMktData || m.app.Cfg.App.MktDataFeed == "" {
+		return "Yahoo"
+	}
+	return cases.Title(language.English).String(string(m.app.Cfg.App.MktDataFeed))
 }
 
 func (m *Model) displayedCommandError() error {
