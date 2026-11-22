@@ -802,7 +802,7 @@ func (m *Model) marketDataFeedName() string {
 	if m.app.Cfg == nil || m.app.Cfg.App.RandomMktData || m.app.Cfg.App.MktDataFeed == "" {
 		return "Yahoo"
 	}
-	return cases.Title(language.English).String(string(m.app.Cfg.App.MktDataFeed))
+	return cases.Title(language.English).String("📈 " + string(m.app.Cfg.App.MktDataFeed))
 }
 
 func (m *Model) displayedCommandError() error {
