@@ -543,7 +543,7 @@ func TestFooterShowsConfiguredMarketDataFeedInAccentColor(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 24})
 
 	footer := m.footer()
-	feed := m.app.Styles.Accent.Render("Alpaca")
+	feed := m.app.Styles.Accent.Render("📈 Alpaca")
 	if !strings.Contains(footer, feed) {
 		t.Fatalf("footer does not render configured feed in accent color: %q", footer)
 	}
