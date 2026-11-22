@@ -18,8 +18,14 @@ type TextHistory interface {
 	// Previous returns the previous entry in the history.
 	Previous() string
 
+	// PreviousMatching returns the previous entry with the matching command.
+	PreviousMatching(prefix string) string
+
 	// Next returns the next entry in the history.
 	Next() string
+
+	// NextMatching returns the next entry with the matching command.
+	NextMatching(prefix string) string
 
 	// Best returns the best match for the given entry in the history.
 	// - the longest prefix of the entry that matches any entry in the history wins
@@ -173,6 +179,56 @@ func (h *FileHistory) Next() string {
 	return h.entries[h.cursor]
 }
 
+// PreviousMatching moves to the previous entry with the matching command.
+func (h *FileHistory) PreviousMatching(prefix string) string {
+	return h.moveMatching(prefix, -1)
+}
+
+// NextMatching moves to the next entry with the matching command.
+func (h *FileHistory) NextMatching(prefix string) string {
+	return h.moveMatching(prefix, 1)
+}
+
+func (h *FileHistory) moveMatching(prefix string, step int) string {
+	if h == nil || len(h.entries) == 0 {
+		return ""
+	}
+	prefix = historyPrefix(prefix)
+	if prefix == "" {
+		return ""
+	}
+
+	n := len(h.entries)
+	cursor := h.cursor
+	if cursor >= n {
+		if step > 0 {
+			cursor = -1
+		} else {
+			cursor = 0
+		}
+	}
+	for offset := 1; offset <= n; offset++ {
+		index := (cursor + step*offset) % n
+		if index < 0 {
+			index += n
+		}
+		if matchesHistoryCommand(h.entries[index], prefix) {
+			h.cursor = index
+			return h.entries[index]
+		}
+	}
+	return ""
+}
+
+func matchesHistoryCommand(entry, prefix string) bool {
+	commandPrefix, _, complete := strings.Cut(prefix, " ")
+	command, _, _ := strings.Cut(entry, " ")
+	if complete {
+		return command == commandPrefix
+	}
+	return strings.HasPrefix(command, commandPrefix)
+}
+
 // Best returns the entry sharing the longest prefix with entry, the newest
 // winning ties, or "" if no entry shares a prefix. Matching is case-sensitive.
 func (h *FileHistory) Best(entry string) string {
@@ -180,13 +236,8 @@ func (h *FileHistory) Best(entry string) string {
 		return ""
 	}
 
-	// A trailing space means "the next word starts here" and is kept.
-	in := normalizeEntry(entry)
-	if in != "" && strings.TrimRightFunc(entry, unicode.IsSpace) != entry {
-		in += " "
-	}
+	in := historyPrefix(entry)
 	input := []rune(in)
-
 	best, bestLen := "", 0
 	var commandMatches []string
 	for _, e := range h.entries {
@@ -208,6 +259,15 @@ func (h *FileHistory) Best(entry string) string {
 		return commandMatches[len(commandMatches)-2]
 	}
 	return best
+}
+
+func historyPrefix(entry string) string {
+	// A trailing space means "the next word starts here" and is kept.
+	in := normalizeEntry(entry)
+	if in != "" && strings.TrimRightFunc(entry, unicode.IsSpace) != entry {
+		in += " "
+	}
+	return in
 }
 
 // Persist atomically rewrites the history file with the normalised,

@@ -554,9 +554,8 @@ func TestCommandHistoryNavigation(t *testing.T) {
 	history.Add("TX AMZN")
 	m.commandHistory = history
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
-	m.commandInput.SetValue("draft")
 	uiTestUpdate(t, m, uiTestKey(tea.KeyDown))
-	if got := m.commandInput.Value(); got != "draft" {
+	if got := m.commandInput.Value(); got != "" {
 		t.Fatalf("down without history navigation changed command to %q", got)
 	}
 
@@ -568,6 +567,38 @@ func TestCommandHistoryNavigation(t *testing.T) {
 		{uiTestKey('p', tea.ModCtrl), "TX AAPL"},
 		{uiTestKey('n', tea.ModCtrl), "TX AMZN"},
 		{uiTestKey(tea.KeyDown), "TX AAPL"},
+	} {
+		uiTestUpdate(t, m, step.key)
+		if got := m.commandInput.Value(); got != step.want {
+			t.Errorf("key %q command = %q, want %q", step.key.Keystroke(), got, step.want)
+		}
+	}
+}
+
+func TestCommandHistoryNavigationMatchesPrefix(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	history := textinput.NewFileHistory(filepath.Join(t.TempDir(), "history"), nil)
+	history.Add("TX AAPL")
+	history.Add("TX NIO")
+	history.Add("TX NVDA")
+	history.Add("MKT USD")
+	m.commandHistory = history
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+
+	m.commandInput.SetValue("ZZ Z")
+	uiTestUpdate(t, m, uiTestKey(tea.KeyDown))
+	if got := m.commandInput.Value(); got != "ZZ Z" {
+		t.Fatalf("no matching command changed input to %q", got)
+	}
+
+	m.commandInput.SetValue("TX A")
+	for _, step := range []struct {
+		key  tea.KeyPressMsg
+		want string
+	}{
+		{uiTestKey(tea.KeyDown), "TX NVDA"},
+		{uiTestKey(tea.KeyDown), "TX AAPL"},
+		{uiTestKey(tea.KeyUp), "TX NVDA"},
 	} {
 		uiTestUpdate(t, m, step.key)
 		if got := m.commandInput.Value(); got != step.want {

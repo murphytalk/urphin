@@ -80,6 +80,33 @@ func TestFileHistoryNavigation(t *testing.T) {
 	}
 }
 
+func TestFileHistoryMatchingNavigation(t *testing.T) {
+	h := NewFileHistory(histPath(t), nil)
+	h.Add("TX AAPL")
+	h.Add("TX NIO")
+	h.Add("TX NVDA")
+	h.Add("MKT USD")
+
+	for _, step := range []struct {
+		move   func(string) string
+		prefix string
+		want   string
+	}{
+		{h.PreviousMatching, "TX  A", "TX NVDA"},
+		{h.NextMatching, "TX  A", "TX AAPL"},
+		{h.NextMatching, "ZZ Z", ""},
+		{h.PreviousMatching, "TX A", "TX NVDA"},
+	} {
+		cursor := h.cursor
+		if got := step.move(step.prefix); got != step.want {
+			t.Errorf("matching navigation = %q, want %q", got, step.want)
+		}
+		if step.want == "" && h.cursor != cursor {
+			t.Fatal("no match changed history cursor")
+		}
+	}
+}
+
 func TestFileHistoryBest(t *testing.T) {
 	h := NewFileHistory(histPath(t), nil)
 	h.add("git status")

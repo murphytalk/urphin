@@ -56,6 +56,7 @@ type Model struct {
 	commandErr             error
 	commandHint            string
 	commandHistory         textinput.TextHistory
+	commandHistoryPrefix   string
 	commandHistoryBrowsing bool
 	result                 *cmdview.Model
 	commandRunning         bool
@@ -357,6 +358,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			if m.commandInput.CurrentSuggestion() != "" {
+				m.resetCommandHistoryNavigation()
 				oldDiagnostic := m.commandDiagnosticRows()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
@@ -389,7 +391,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.commandRunning {
 				return m, nil
 			}
-			m.commandHistoryBrowsing = false
+			m.resetCommandHistoryNavigation()
 			line := m.commandInput.Value()
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
@@ -411,7 +413,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err}
 			})
 		case "esc":
-			m.commandHistoryBrowsing = false
+			m.resetCommandHistoryNavigation()
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
 			m.commandErr = nil
@@ -428,18 +430,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				navigationMsg = tea.KeyPressMsg(tea.Key{Code: tea.KeyDown})
 			}
 			if m.commandInput.Focused() && (keystroke == "up" || keystroke == "ctrl+p" || keystroke == "down" || keystroke == "ctrl+n") {
-				if m.commandHistory != nil {
-					if keystroke == "up" || keystroke == "ctrl+p" {
-						m.commandHistoryBrowsing = true
-						m.commandInput.SetValue(m.commandHistory.Previous())
-					} else if m.commandHistoryBrowsing {
-						m.commandInput.SetValue(m.commandHistory.Next())
-					}
-					m.commandInput.SetCursor(len([]rune(m.commandInput.Value())))
-					m.refreshCommandSuggestions()
-					m.syncCommandPromptStyle()
-					m.resize()
+				if m.commandHistory == nil {
+					return m, nil
 				}
+				previous := keystroke == "up" || keystroke == "ctrl+p"
+				prefix := m.commandHistoryPrefix
+				if !m.commandHistoryBrowsing {
+					prefix = m.commandInput.Value()
+				}
+				if !previous && !m.commandHistoryBrowsing && prefix == "" {
+					return m, nil
+				}
+				var line string
+				if prefix == "" {
+					if previous {
+						line = m.commandHistory.Previous()
+					} else {
+						line = m.commandHistory.Next()
+					}
+				} else if previous || !m.commandHistoryBrowsing {
+					line = m.commandHistory.PreviousMatching(prefix)
+				} else {
+					line = m.commandHistory.NextMatching(prefix)
+				}
+				if line == "" {
+					return m, nil
+				}
+				m.commandHistoryPrefix = prefix
+				m.commandHistoryBrowsing = true
+				m.commandInput.SetValue(line)
+				m.commandInput.SetCursor(len([]rune(line)))
+				m.refreshCommandSuggestions()
+				m.syncCommandPromptStyle()
+				m.resize()
 				return m, nil
 			}
 			if m.result.Active() {
@@ -459,6 +482,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		default:
 			if m.commandVisible() {
+				m.resetCommandHistoryNavigation()
 				oldDiagnostic := m.commandDiagnosticRows()
 				var cmd tea.Cmd
 				m.commandInput, cmd = m.commandInput.Update(msg)
@@ -481,6 +505,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	if _, isKey := msg.(tea.KeyPressMsg); !isKey && m.commandVisible() {
+		m.resetCommandHistoryNavigation()
 		oldDiagnostic := m.commandDiagnosticRows()
 		var cmd tea.Cmd
 		m.commandInput, cmd = m.commandInput.Update(msg)
@@ -492,6 +517,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m *Model) resetCommandHistoryNavigation() {
+	m.commandHistoryBrowsing = false
+	m.commandHistoryPrefix = ""
 }
 
 func (m *Model) visibleSymbols() []string {
