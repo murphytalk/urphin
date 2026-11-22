@@ -567,10 +567,9 @@ func TestCommandHistoryNavigation(t *testing.T) {
 		{uiTestKey(tea.KeyUp), "TX AMZN"},
 		{uiTestKey('p', tea.ModCtrl), "TX AAPL"},
 		{uiTestKey('n', tea.ModCtrl), "TX AMZN"},
-		{uiTestKey(tea.KeyDown), "draft"},
+		{uiTestKey(tea.KeyDown), "TX AAPL"},
 	} {
 		uiTestUpdate(t, m, step.key)
-		t.Logf("key=%q value=%q browsing=%t", step.key.Keystroke(), m.commandInput.Value(), m.commandHistoryBrowsing)
 		if got := m.commandInput.Value(); got != step.want {
 			t.Errorf("key %q command = %q, want %q", step.key.Keystroke(), got, step.want)
 		}

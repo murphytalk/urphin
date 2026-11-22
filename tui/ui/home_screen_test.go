@@ -431,18 +431,21 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 	for i := range tickers {
 		tickers[i] = fmt.Sprintf("T%02d", i)
 	}
-	for _, code := range []rune{tea.KeyDown, tea.KeyPgDown, tea.KeyEnd} {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
+	for _, step := range []struct {
+		name string
+		key  tea.KeyPressMsg
+	}{
+		{"down", uiTestKey(tea.KeyDown)},
+		{"ctrl+n", uiTestKey('n', tea.ModCtrl)},
+		{"page down", uiTestKey(tea.KeyPgDown)},
+		{"end", uiTestKey(tea.KeyEnd, tea.ModCtrl)},
+	} {
+		t.Run(step.name, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: tickers}, {Tickers: slices.Clone(tickers)}}, nil)
 			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
 			m.commandInput.Blur()
 			before := m.viewport.View()
-			uiTestUpdate(t, m, uiTestKey(code, func() tea.KeyMod {
-				if code == tea.KeyEnd {
-					return tea.ModCtrl
-				}
-				return 0
-			}()))
+			uiTestUpdate(t, m, step.key)
 			if m.viewport.YOffset() <= 0 || m.viewport.View() == before {
 				t.Fatal("navigation did not scroll the actual rendered watchlist")
 			}
@@ -452,9 +455,9 @@ func TestModelActualViewportScrollingAndNavigationReset(t *testing.T) {
 			}
 			uiTestUpdate(t, m, uiTestKey(tea.KeyEnd, tea.ModCtrl))
 			bottom := m.viewport.YOffset()
-			uiTestUpdate(t, m, uiTestKey(tea.KeyUp))
+			uiTestUpdate(t, m, uiTestKey('p', tea.ModCtrl))
 			if m.viewport.YOffset() >= bottom {
-				t.Fatal("up did not scroll")
+				t.Fatal("ctrl+p did not scroll up")
 			}
 			uiTestUpdate(t, m, uiTestKey(tea.KeyPgUp))
 			if m.viewport.YOffset() >= bottom-1 {

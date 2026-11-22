@@ -56,7 +56,6 @@ type Model struct {
 	commandErr             error
 	commandHint            string
 	commandHistory         textinput.TextHistory
-	commandHistoryDraft    string
 	commandHistoryBrowsing bool
 	result                 *cmdview.Model
 	commandRunning         bool
@@ -391,7 +390,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.commandHistoryBrowsing = false
-			m.commandHistoryDraft = ""
 			line := m.commandInput.Value()
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
@@ -414,7 +412,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 		case "esc":
 			m.commandHistoryBrowsing = false
-			m.commandHistoryDraft = ""
 			m.commandInput.Reset()
 			m.commandInput.Err = nil
 			m.commandErr = nil
@@ -424,26 +421,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "up", "down", "ctrl+p", "ctrl+n", "pgup", "pgdown", "ctrl+home", "ctrl+end":
 			keystroke := msg.Keystroke()
+			navigationMsg := msg
+			if keystroke == "ctrl+p" {
+				navigationMsg = tea.KeyPressMsg(tea.Key{Code: tea.KeyUp})
+			} else if keystroke == "ctrl+n" {
+				navigationMsg = tea.KeyPressMsg(tea.Key{Code: tea.KeyDown})
+			}
 			if m.commandInput.Focused() && (keystroke == "up" || keystroke == "ctrl+p" || keystroke == "down" || keystroke == "ctrl+n") {
 				if m.commandHistory != nil {
 					if keystroke == "up" || keystroke == "ctrl+p" {
-						if !m.commandHistoryBrowsing {
-							m.commandHistoryDraft = m.commandInput.Value()
-							m.commandHistoryBrowsing = true
-						}
-						line := m.commandHistory.Previous()
-						if line == "" {
-							m.commandHistoryBrowsing = false
-							line = m.commandHistoryDraft
-						}
-						m.commandInput.SetValue(line)
+						m.commandHistoryBrowsing = true
+						m.commandInput.SetValue(m.commandHistory.Previous())
 					} else if m.commandHistoryBrowsing {
-						line := m.commandHistory.Next()
-						if line == "" {
-							m.commandHistoryBrowsing = false
-							line = m.commandHistoryDraft
-						}
-						m.commandInput.SetValue(line)
+						m.commandInput.SetValue(m.commandHistory.Next())
 					}
 					m.commandInput.SetCursor(len([]rune(m.commandInput.Value())))
 					m.refreshCommandSuggestions()
@@ -454,7 +444,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.result.Active() {
 				var cmd tea.Cmd
-				m.result, cmd = m.result.Update(msg)
+				m.result, cmd = m.result.Update(navigationMsg)
 				return m, cmd
 			}
 			if msg.Keystroke() == "ctrl+home" {
@@ -463,7 +453,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.viewport.GotoBottom()
 			} else {
 				var cmd tea.Cmd
-				m.viewport, cmd = m.viewport.Update(msg)
+				m.viewport, cmd = m.viewport.Update(navigationMsg)
 				return m, cmd
 			}
 			return m, nil
