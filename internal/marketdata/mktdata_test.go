@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -496,6 +497,34 @@ func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
 	}
 }
 
+func TestOptionCoverageEndsWithLastSubscription(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
+	first, _ := service.Service.SubscribeOption([]c.Option{option})
+	second, _ := service.Service.SubscribeOption([]c.Option{{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "CALL"}})
+	post := func(source c.QuoteSource, last float64) {
+		service.mu.Lock()
+		service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: last, QuoteSource: source})
+		service.mu.Unlock()
+	}
+	post(c.QuoteSourceAlpaca, 2)
+	first.Close()
+	post(c.QuoteSourceYahoo, 1)
+	if got, ok := service.LatestOptionPrice(option); !ok || got != 2 {
+		t.Fatalf("coverage ended before last close: %v %t", got, ok)
+	}
+	second.Close()
+	third, err := service.Service.SubscribeOption([]c.Option{option})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close()
+	post(c.QuoteSourceYahoo, 3)
+	if got, ok := service.LatestOptionPrice(option); !ok || got != 3 {
+		t.Fatalf("new subscription did not accept Yahoo: %v %t", got, ok)
+	}
+}
+
 func TestMktDataConfigIsClonedBeforeOwnerDispatch(t *testing.T) {
 	config := MktDataConfig{
 		FxPairs: []string{"EURUSD"},
@@ -607,6 +636,51 @@ func TestEquityCoverageEndsWithLastSubscription(t *testing.T) {
 		t.Fatalf("new subscription did not accept Yahoo: %v, %t", got, ok)
 	}
 }
+
+func TestEquityCoverageRequiresAcceptedUsablePriceAndDemand(t *testing.T) {
+	for _, test := range []struct {
+		name, symbol string
+		price        *float64
+		class        c.AssetClass
+		generation   int
+		want         bool
+	}{
+		{name: "nil price", symbol: "AAPL", class: c.AssetClassStock},
+		{name: "zero price", symbol: "AAPL", price: ptrFloat(0), class: c.AssetClassStock},
+		{name: "NaN price", symbol: "AAPL", price: ptrFloat(math.NaN()), class: c.AssetClassStock},
+		{name: "unsubscribed", symbol: "MSFT", price: ptrFloat(10), class: c.AssetClassStock},
+		{name: "positive equity", symbol: "AAPL", price: ptrFloat(10), class: c.AssetClassStock, want: true},
+		{name: "signed future", symbol: "AAPL", price: ptrFloat(-1), class: c.AssetClassFutures, want: true},
+		{name: "pending generation", symbol: "AAPL", price: ptrFloat(10), class: c.AssetClassStock, generation: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+			subscribeQuotes(t, service, "watch", make(chan c.QuoteUpdate, 4), "AAPL")
+			var price *c.QuotePrice
+			if test.price != nil {
+				price = &c.QuotePrice{Price: *test.price}
+			}
+			if test.generation != 0 {
+				service.mu.Lock()
+				service.router.generations[c.QuoteSourceAlpaca] = 1
+				service.feeds[c.QuoteSourceAlpaca].mu.Lock()
+				service.feeds[c.QuoteSourceAlpaca].nextGen = 2
+				service.feeds[c.QuoteSourceAlpaca].mu.Unlock()
+				service.mu.Unlock()
+			}
+			update := c.QuoteUpdate{Symbol: test.symbol, Class: test.class, QuotePrice: price, QuoteSource: c.QuoteSourceAlpaca, Generation: test.generation}
+			service.mu.Lock()
+			service.handleQuote(c.QuoteSourceAlpaca, update)
+			_, got := service.coveredSymbols[test.symbol]
+			service.mu.Unlock()
+			if got != test.want {
+				t.Fatalf("coverage = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func ptrFloat(value float64) *float64 { return &value }
 
 func TestSubscribersMergeSymbolsAndKeepSharedProviderSymbols(t *testing.T) {
 	yahoo := &testMktDataFeed{}
