@@ -1,6 +1,7 @@
 package mktdata
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -69,6 +70,12 @@ func (s *Subscription) Close() {
 	delete(s.service.subscribers, s)
 	slog.Debug("Market-data subscription closed", "symbol_count", len(s.symbols), "subscriber_count", len(s.service.subscribers))
 	close(s.updates)
+	union := s.service.routingUnion()
+	for symbol := range s.symbols {
+		if _, remains := union[symbol]; !remains {
+			delete(s.service.coveredSymbols, symbol)
+		}
+	}
 	s.service.reconcileSymbols()
 	select {
 	case s.service.prune <- struct{}{}:
@@ -94,6 +101,12 @@ func (s *OptionSubscription) Close() {
 	s.closed = true
 	delete(s.service.optionSubscribers, s)
 	close(s.updates)
+	union := s.service.optionUnionSet()
+	for option := range s.options {
+		if _, remains := union[option]; !remains {
+			delete(s.service.coveredOptions, option)
+		}
+	}
 	s.service.reconcileOptions()
 }
 
@@ -129,6 +142,9 @@ func (m *Service) SubscribeWithVisibility(symbols, visible []string) (*Subscript
 	for symbol := range members {
 		if quote, ok := m.fxQuotes[symbol]; ok {
 			deliverQuote(sub, c.NewQuoteUpdate(quote, 0, 0), members)
+		}
+		if quote, ok := m.coveredSymbols[symbol]; ok {
+			deliverQuote(sub, quote, members)
 		}
 	}
 	if len(fx) > 0 && m.state == lifecycleRunning {
@@ -174,7 +190,22 @@ func (m *Service) reconcileSymbolsFor(sub *Subscription) {
 			seeds = m.captureSeedTargets(source, sub, sub.symbols)
 		}
 		m.feeds[source].setVisible(m.providerSymbols(source, m.visibleUnion()))
-		m.feeds[source].setDesired(m.providerSymbols(source, union), seeds)
+		desired := m.providerSymbols(source, union)
+		m.feeds[source].setDesired(desired, seeds)
+		if source == c.QuoteSourceYahoo {
+			if _, ok := m.feeds[source].feed.(interface {
+				SetPeriodicSymbols(context.Context, []string) error
+			}); !ok {
+				continue
+			}
+			periodic := make([]string, 0, len(desired))
+			for _, symbol := range desired {
+				if _, covered := m.coveredSymbols[symbol]; !covered {
+					periodic = append(periodic, symbol)
+				}
+			}
+			m.feeds[source].setDesiredPeriodic(periodic)
+		}
 	}
 }
 
@@ -182,8 +213,20 @@ func (m *Service) reconcileOptions() {
 	if m.state != lifecycleStarting && m.state != lifecycleRunning {
 		return
 	}
+	options := m.optionUnion()
 	if provider := m.feeds[m.optionProvider]; provider != nil {
-		provider.setDesiredOptions(m.optionUnion())
+		provider.setDesiredOptions(options)
+	}
+	if m.optionProvider != "" && m.optionProvider != c.QuoteSourceYahoo {
+		if yahoo := m.feeds[c.QuoteSourceYahoo]; yahoo != nil {
+			uncovered := make([]c.Option, 0, len(options))
+			for _, option := range options {
+				if _, covered := m.coveredOptions[option]; !covered {
+					uncovered = append(uncovered, option)
+				}
+			}
+			yahoo.setDesiredOptions(uncovered)
+		}
 	}
 }
 
@@ -259,8 +302,25 @@ func (o *Service) handleOptionQuote(update c.OptionQuote) {
 		return
 	}
 	update.Option = option
+	firstHandoff := false
+	if _, covered := o.coveredOptions[option]; covered && (update.QuoteSource == c.QuoteSourceYahoo || update.QuoteSource == "") {
+		return
+	}
+	if update.QuoteSource == c.QuoteSourceYahoo {
+		if _, covered := o.coveredOptions[option]; covered {
+			return
+		}
+	} else if update.QuoteSource != "" && o.feeds[update.QuoteSource] != nil {
+		if _, demanded := o.optionUnionSet()[option]; demanded {
+			if _, covered := o.coveredOptions[option]; !covered {
+				o.coveredOptions[option] = struct{}{}
+				firstHandoff = true
+				o.reconcileOptions()
+			}
+		}
+	}
 	o.priceMu.Lock()
-	if previous, exists := o.optionPrices[option]; exists {
+	if previous, exists := o.optionPrices[option]; exists && !firstHandoff {
 		if !validOptionPrice(update.LastPrice) {
 			update.LastPrice = previous.LastPrice
 		}
@@ -276,6 +336,16 @@ func (o *Service) handleOptionQuote(update c.OptionQuote) {
 		default:
 		}
 	}
+}
+
+func (o *Service) optionUnionSet() map[c.Option]struct{} {
+	union := make(map[c.Option]struct{})
+	for sub := range o.optionSubscribers {
+		for option := range sub.options {
+			union[option] = struct{}{}
+		}
+	}
+	return union
 }
 
 func validOptionPrice(price float64) bool {

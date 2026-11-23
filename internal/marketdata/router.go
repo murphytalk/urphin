@@ -179,6 +179,25 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	if !ok {
 		return
 	}
+	if source == c.QuoteSourceYahoo {
+		if live, covered := o.coveredSymbols[symbol]; covered {
+			enriched := mergeYahooMetadata(live, accepted)
+			if enriched.Name == live.Name && enriched.QuoteExtended == live.QuoteExtended {
+				return
+			}
+			o.coveredSymbols[symbol] = enriched.Clone()
+			accepted = enriched
+		}
+	} else if accepted.QuotePrice != nil && usableQuotePrice(accepted.Class, accepted.QuotePrice.Price) {
+		if _, demanded := o.routingUnion()[symbol]; demanded {
+			if _, covered := o.coveredSymbols[symbol]; !covered {
+				o.coveredSymbols[symbol] = accepted.Clone()
+				o.reconcileSymbols()
+			} else {
+				o.coveredSymbols[symbol] = accepted.Clone()
+			}
+		}
+	}
 	if accepted.QuotePrice != nil {
 		o.priceMu.Lock()
 		o.prices[symbol] = accepted.QuotePrice.Price
@@ -193,6 +212,31 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	for sub := range o.subscribers {
 		deliverQuote(sub, accepted, sub.symbols)
 	}
+}
+
+func mergeYahooMetadata(live, yahoo c.QuoteUpdate) c.QuoteUpdate {
+	if live.Name == "" {
+		live.Name = yahoo.Name
+	}
+	if live.QuoteExtended.MarketCap == 0 {
+		live.QuoteExtended.MarketCap = yahoo.QuoteExtended.MarketCap
+	}
+	if live.QuoteExtended.Volume == 0 {
+		live.QuoteExtended.Volume = yahoo.QuoteExtended.Volume
+	}
+	if live.QuoteExtended.FiftyTwoWeekHigh == 0 {
+		live.QuoteExtended.FiftyTwoWeekHigh = yahoo.QuoteExtended.FiftyTwoWeekHigh
+	}
+	if live.QuoteExtended.FiftyTwoWeekLow == 0 {
+		live.QuoteExtended.FiftyTwoWeekLow = yahoo.QuoteExtended.FiftyTwoWeekLow
+	}
+	return live
+}
+
+func finiteQuotePrice(price float64) bool { return !math.IsNaN(price) && !math.IsInf(price, 0) }
+
+func usableQuotePrice(class c.AssetClass, price float64) bool {
+	return finiteQuotePrice(price) && (price > 0 || class == c.AssetClassFutures)
 }
 
 func (o *Service) LatestPrice(symbol string) (float64, bool) {

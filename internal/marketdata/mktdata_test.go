@@ -279,7 +279,7 @@ func (f *testOptionFeed) SetOptions(_ context.Context, options []c.Option) error
 
 func (*testOptionFeed) SetOptionQuotes(chan<- c.OptionQuote) {}
 
-func TestOptionSubscriptionsUseOnlySelectedProviderAndForwardEmptyUnion(t *testing.T) {
+func TestOptionSubscriptionsUseSelectedProviderAndYahooFallback(t *testing.T) {
 	selected := &testOptionFeed{}
 	yahoo := &testOptionFeed{}
 	owner := newTestMktDataState(t, map[c.QuoteSource]mktfeed.MktDataFeed{"selected": selected, c.QuoteSourceYahoo: yahoo}, lifecycleNew)
@@ -293,10 +293,14 @@ func TestOptionSubscriptionsUseOnlySelectedProviderAndForwardEmptyUnion(t *testi
 	awaitProviderStatus(t, owner, "selected", func(status ProviderStatus) bool {
 		return slices.Equal(status.AppliedOptions, options) && !status.Pending
 	})
+	awaitProviderStatus(t, owner, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
+		return slices.Equal(status.AppliedOptions, options) && !status.Pending
+	})
 	if err := owner.Unsubscribe("watch"); err != nil {
 		t.Fatal(err)
 	}
 	awaitProviderStatus(t, owner, "selected", func(status ProviderStatus) bool { return len(status.AppliedOptions) == 0 && !status.Pending })
+	awaitProviderStatus(t, owner, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return len(status.AppliedOptions) == 0 && !status.Pending })
 	selected.mu.Lock()
 	defer selected.mu.Unlock()
 	if len(selected.optionSets) != 2 || !slices.Equal(selected.optionSets[0], options) || len(selected.optionSets[1]) != 0 {
@@ -304,8 +308,8 @@ func TestOptionSubscriptionsUseOnlySelectedProviderAndForwardEmptyUnion(t *testi
 	}
 	yahoo.mu.Lock()
 	defer yahoo.mu.Unlock()
-	if len(yahoo.optionSets) != 0 {
-		t.Fatalf("Yahoo received option sets: %#v", yahoo.optionSets)
+	if len(yahoo.optionSets) != 2 || !slices.Equal(yahoo.optionSets[0], options) || len(yahoo.optionSets[1]) != 0 {
+		t.Fatalf("Yahoo fallback option sets = %#v", yahoo.optionSets)
 	}
 }
 
@@ -460,6 +464,38 @@ func TestLatestOptionClosePriceUsesLegSideQuote(t *testing.T) {
 	}
 }
 
+func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
+	sub, err := service.Service.SubscribeOption([]c.Option{option})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	service.mu.Lock()
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 1, QuoteSource: c.QuoteSourceYahoo})
+	service.mu.Unlock()
+	<-sub.Updates()
+	service.mu.Lock()
+	service.handleOptionQuote(c.OptionQuote{Option: option, BidPrice: 2, QuoteSource: c.QuoteSourceAlpaca})
+	service.mu.Unlock()
+	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 2 {
+		t.Fatalf("live option close = %v, %t; quote=%+v; want 2", got, ok, service.optionPrices[option])
+	}
+	<-sub.Updates()
+	service.mu.Lock()
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 1.5, QuoteSource: c.QuoteSourceYahoo})
+	service.mu.Unlock()
+	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 2 {
+		t.Fatalf("delayed Yahoo option close = %v, %t; want 2", got, ok)
+	}
+	select {
+	case update := <-sub.Updates():
+		t.Fatalf("delayed Yahoo update delivered: %+v", update)
+	default:
+	}
+}
+
 func TestMktDataConfigIsClonedBeforeOwnerDispatch(t *testing.T) {
 	config := MktDataConfig{
 		FxPairs: []string{"EURUSD"},
@@ -495,6 +531,81 @@ func TestServiceRejectsOlderProviderRevision(t *testing.T) {
 	wantQuote(t, updates, c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100}})
 	post(9, 99)
 	wantNoQuote(t, updates)
+}
+
+func TestYahooEquityHandoff(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{
+		c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{},
+	})
+	updates := make(chan c.QuoteUpdate, 4)
+	subscribeQuotes(t, service, "watch", updates, "AAPL", "MSFT")
+	post := func(source c.QuoteSource, symbol string, price float64) {
+		t.Helper()
+		quote := c.NewQuoteUpdate(c.AssetQuote{Symbol: symbol, QuoteSource: source, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: price}}, 0, 0)
+		service.mu.Lock()
+		service.handleQuote(source, quote)
+		service.mu.Unlock()
+	}
+	post(c.QuoteSourceYahoo, "AAPL", 90)
+	wantQuote(t, updates, c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceYahoo, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 90}})
+	post(c.QuoteSourceAlpaca, "AAPL", 100)
+	wantQuote(t, updates, c.AssetQuote{Symbol: "AAPL", QuoteSource: c.QuoteSourceAlpaca, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}})
+	post(c.QuoteSourceYahoo, "AAPL", 91)
+	wantNoQuote(t, updates)
+	if got, ok := service.LatestPrice("AAPL"); !ok || got != 100 {
+		t.Fatalf("LatestPrice(AAPL) = %v, %t; want 100", got, ok)
+	}
+	post(c.QuoteSourceYahoo, "MSFT", 200)
+	wantQuote(t, updates, c.AssetQuote{Symbol: "MSFT", QuoteSource: c.QuoteSourceYahoo, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 200}})
+}
+
+func TestYahooMetadataEnrichesCoveredLiveQuoteAndSeedsLateSubscriber(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	first := make(chan c.QuoteUpdate, 2)
+	subscribeQuotes(t, service, "first", first, "AAPL")
+	post := func(source c.QuoteSource, quote c.AssetQuote) {
+		quote.QuoteSource = source
+		service.mu.Lock()
+		service.handleQuote(source, c.NewQuoteUpdate(quote, 0, 0))
+		service.mu.Unlock()
+	}
+	post(c.QuoteSourceAlpaca, c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}})
+	wantQuote(t, first, c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca})
+	post(c.QuoteSourceYahoo, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 90}, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
+	wantQuote(t, first, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
+	second, err := service.Service.Subscribe([]string{"AAPL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	wantQuote(t, second.Updates(), c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
+}
+
+func TestEquityCoverageEndsWithLastSubscription(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	first, _ := service.Service.Subscribe([]string{"AAPL"})
+	second, _ := service.Service.Subscribe([]string{"AAPL"})
+	post := func(source c.QuoteSource, price float64) {
+		service.mu.Lock()
+		service.handleQuote(source, c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: price}}, 0, 0))
+		service.mu.Unlock()
+	}
+	post(c.QuoteSourceAlpaca, 100)
+	first.Close()
+	post(c.QuoteSourceYahoo, 90)
+	if got, ok := service.LatestPrice("AAPL"); !ok || got != 100 {
+		t.Fatalf("coverage ended before last close: %v, %t", got, ok)
+	}
+	second.Close()
+	third, err := service.Service.Subscribe([]string{"AAPL"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.Close()
+	post(c.QuoteSourceYahoo, 91)
+	if got, ok := service.LatestPrice("AAPL"); !ok || got != 91 {
+		t.Fatalf("new subscription did not accept Yahoo: %v, %t", got, ok)
+	}
 }
 
 func TestSubscribersMergeSymbolsAndKeepSharedProviderSymbols(t *testing.T) {

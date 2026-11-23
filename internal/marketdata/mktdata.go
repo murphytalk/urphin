@@ -133,10 +133,12 @@ type registry struct {
 }
 
 type Service struct {
-	mu           sync.RWMutex
-	priceMu      sync.RWMutex
-	prices       map[string]float64
-	optionPrices map[c.Option]c.OptionQuote
+	mu             sync.RWMutex
+	priceMu        sync.RWMutex
+	prices         map[string]float64
+	optionPrices   map[c.Option]c.OptionQuote
+	coveredSymbols map[string]c.QuoteUpdate
+	coveredOptions map[c.Option]struct{}
 	registry
 	results  chan providerEvent
 	prune    chan struct{}
@@ -184,6 +186,7 @@ func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleStat
 			fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote)},
 		feeds:  make(map[c.QuoteSource]*providerRuntime),
 		prices: make(map[string]float64), optionPrices: make(map[c.Option]c.OptionQuote),
+		coveredSymbols: make(map[string]c.QuoteUpdate), coveredOptions: make(map[c.Option]struct{}),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		router:    newRouter(),
 		chanError: make(chan error, errChanSize), chanQuotes: make(chan c.QuoteUpdate, quoteQueueSize),
@@ -304,13 +307,13 @@ func (o *Service) run() {
 			o.mu.Unlock()
 			return
 		case update := <-o.chanQuotes:
-			o.mu.RLock()
+			o.mu.Lock()
 			o.handleQuote(update.QuoteSource, update)
-			o.mu.RUnlock()
+			o.mu.Unlock()
 		case update := <-o.chanOptionQuotes:
-			o.mu.RLock()
+			o.mu.Lock()
 			o.handleOptionQuote(update)
-			o.mu.RUnlock()
+			o.mu.Unlock()
 		case rates := <-o.chanRates:
 			o.mu.Lock()
 			o.handleRates(rates)
@@ -414,7 +417,7 @@ func (o *Service) start(config mktfeed.MktDataConfig) error {
 			}
 		}
 	}
-	o.feeds[o.optionProvider].setDesiredOptions(o.optionUnion())
+	o.reconcileOptions()
 	if err := o.currencyRates.Start(); err != nil {
 		o.beginCleanup(fmt.Errorf("start Yahoo currency-rate monitor: %w", err))
 		return nil
@@ -424,12 +427,31 @@ func (o *Service) start(config mktfeed.MktDataConfig) error {
 	}
 
 	union := o.symbolUnion()
+	if yahoo := o.feeds[c.QuoteSourceYahoo]; yahoo != nil {
+		periodic := make([]string, 0, len(union))
+		for symbol := range union {
+			if _, covered := o.coveredSymbols[symbol]; !covered {
+				periodic = append(periodic, symbol)
+			}
+		}
+		slices.Sort(periodic)
+		yahoo.setDesiredPeriodic(periodic)
+	}
 	sources := o.sources()
 	o.startRemaining = len(sources)
 	for _, source := range sources {
 		provider := o.feeds[source]
 		provider.setVisible(o.providerSymbols(source, o.visibleUnion()))
 		provider.setDesired(o.providerSymbols(source, cloneSymbols(union)), o.captureSeedTargets(source, nil, union))
+		if source == c.QuoteSourceYahoo {
+			periodic := make([]string, 0, len(union))
+			for symbol := range union {
+				if _, covered := o.coveredSymbols[symbol]; !covered {
+					periodic = append(periodic, symbol)
+				}
+			}
+			provider.setDesiredPeriodic(o.providerSymbols(source, periodic))
+		}
 		provider.start()
 	}
 	if o.startRemaining == 0 {
@@ -467,6 +489,16 @@ func (o *Service) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 		provider.setDesired(o.providerSymbols(source, cloneSymbols(union)), o.captureSeedTargets(source, nil, union))
 		if source == o.optionProvider {
 			provider.setDesiredOptions(o.optionUnion())
+		}
+		if source == c.QuoteSourceYahoo && source != o.optionProvider {
+			options := o.optionUnion()
+			uncovered := make([]c.Option, 0, len(options))
+			for _, option := range options {
+				if _, covered := o.coveredOptions[option]; !covered {
+					uncovered = append(uncovered, option)
+				}
+			}
+			provider.setDesiredOptions(uncovered)
 		}
 		provider.start()
 	}
