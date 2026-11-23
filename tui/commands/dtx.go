@@ -32,6 +32,11 @@ func (*DtxCmd) Execute(ctx context.Context, app *setup.AppCtx, args map[string]s
 			return "", fmt.Errorf("unexpected DTX argument %q", key)
 		}
 	}
+	if _, hasTicker := args["ticker"]; hasTicker {
+		if _, hasBroker := args["broker"]; !hasBroker {
+			return "", fmt.Errorf("DTX ticker requires broker")
+		}
+	}
 	date, ok := args["date"]
 	if !ok {
 		return "", fmt.Errorf("DTX requires date")

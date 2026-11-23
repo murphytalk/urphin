@@ -66,3 +66,13 @@ func TestPublicReportDispatch(t *testing.T) {
 		t.Fatalf("MTX dispatch result = %+v, %v", result, err)
 	}
 }
+
+func TestDtxAndFxtxRejectDirectInvalidArguments(t *testing.T) {
+	app := &setup.AppCtx{Db: &reportSpyBackend{}}
+	if _, err := (&DtxCmd{}).Execute(context.Background(), app, map[string]string{"date": "20240101", "ticker": "AAPL"}, true); err == nil {
+		t.Fatal("DTX accepted ticker without broker")
+	}
+	if _, err := (&FxtxCmd{}).Execute(context.Background(), app, map[string]string{"ccy_pair": "EUR.USD"}, true); err == nil {
+		t.Fatal("FXTX accepted unsupported currency pair")
+	}
+}

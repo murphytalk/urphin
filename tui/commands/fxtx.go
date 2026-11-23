@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
@@ -49,6 +50,10 @@ func (*FxtxCmd) transactions(ctx context.Context, app *setup.AppCtx, args map[st
 		broker = &value
 	}
 	if value, ok := args["ccy_pair"]; ok {
+		if !isCurrencyPair(value) {
+			return nil, fmt.Errorf("invalid FXTX currency pair %q", value)
+		}
+		value = strings.ToUpper(value)
 		pair = &value
 	}
 	since := time.Unix(0, 0)
