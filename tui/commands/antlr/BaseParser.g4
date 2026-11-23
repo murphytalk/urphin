@@ -5,8 +5,7 @@ prog: cmd EOF;
 cmd     : baseCmd ;
 baseCmd
   : mkt | dtx | tx | fxtx | atx | trans | pos | mtx
-  | goal | splitCmd | next |  rebalance | dbuy
-  | ratioCmd
+  | splitCmd
   | help
   | prop
   | watch
@@ -29,17 +28,12 @@ atx       : ATX b=brokers s=SIDE d=DATE t=tickerArg price=number sh=number fee=n
 trans     : TRANS t=tickerArg d=DATE b1=brokers b2=brokers (sh=number)? ;
 pos       : POS (b=brokers (t=tickerArg)? | t=tickerArg)? ;
 mtx       : MTX (m=INT (ts=tickerList)? | ts=tickerList)? ;
-goal      : GOAL (a=number)? ;
 splitCmd  : SPLIT t=tickerArg ratio=number ;
-next      : NEXT (a=number (fo=number (fs=forceSpend)?)? | fs=forceSpend)? ;
-rebalance : REBALANCE (pct=number (fo=number)?)? ;
-dbuy      : DBUY ;
 
 // FX
 fxtx      : FXTX (b=brokers (ccyPair=CCY_PAIR)? | ccyPair=CCY_PAIR)? ;
 
 // METAL
-ratioCmd  : RATIO ;
 
 // urphin
 help      : HELP ;

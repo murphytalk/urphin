@@ -3,18 +3,12 @@ lexer grammar BaseLexer;
 // ──────────────────────────── default mode: command names ────────────────────────────
 WS: [ \t\r\n]+ -> skip;
 
-DBUY     : 'DBUY'      -> pushMode(ARGS);
 DTX      : 'DTX'       -> pushMode(ARGS);
 FXTX     : 'FXTX'      -> pushMode(ARGS);
-GOAL     : 'GOAL'      -> pushMode(ARGS);
 HELP     : 'HELP'      -> pushMode(ARGS);
 MKT      : 'MKT'       -> pushMode(ARGS);
 MTX      : 'MTX'       -> pushMode(ARGS);
-MNQ      : 'MNQ'       -> pushMode(ARGS);
-NEXT     : 'NEXT'      -> pushMode(ARGS);
 POS      : 'POS'       -> pushMode(ARGS);
-RATIO    : 'RATIO'     -> pushMode(ARGS);
-REBALANCE: 'REBALANCE' -> pushMode(ARGS);
 SPLIT    : 'SPLIT'     -> pushMode(ARGS);
 TRANS    : 'TRANS'     -> pushMode(ARGS);
 TX       : 'TX'        -> pushMode(ARGS);
