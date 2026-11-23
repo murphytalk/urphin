@@ -209,6 +209,62 @@ func TestEmptyYahooMonitorStartsAndResumesPolling(t *testing.T) {
 	}
 }
 
+func TestFreshSnapshotWaitsForFullSetAfterSubsetFetch(t *testing.T) {
+	started := make(chan string, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
+		query, _ := url.ParseQuery(request.URL.RawQuery)
+		symbols := query.Get("symbols")
+		call := calls.Add(1)
+		if call == 3 {
+			started <- symbols
+			<-release
+		}
+		quotes := make([]unary.ResponseQuote, 0)
+		for _, symbol := range strings.Split(symbols, ",") {
+			if symbol != "" {
+				quotes = append(quotes, quoteResponse(symbol, symbol, "USD", float64(call)))
+			}
+		}
+		return response(t, request, quotes...), nil
+	})
+	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api}, WithRefreshInterval(30*time.Millisecond))
+	t.Cleanup(func() { _ = monitor.Stop() })
+	if err := monitor.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.SetPeriodicSymbols(context.Background(), []string{"MSFT"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case symbols := <-started:
+		if symbols != "MSFT" {
+			t.Fatalf("active periodic symbols = %q", symbols)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subset fetch did not start")
+	}
+	freshDone := make(chan commandResult, 1)
+	go func() {
+		quotes, err := monitor.Snapshot(context.Background(), true)
+		freshDone <- commandResult{quotes: quotes, err: err}
+	}()
+	time.Sleep(10 * time.Millisecond)
+	close(release)
+	select {
+	case result := <-freshDone:
+		if result.err != nil || len(result.quotes) != 2 || result.quotes[0].Symbol != "AAPL" || result.quotes[1].Symbol != "MSFT" {
+			t.Fatalf("fresh full snapshot = %v, %v", result.quotes, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("fresh full snapshot did not complete")
+	}
+}
+
 func TestSnapshotsOwnIndependentPricesAndConcurrentCallsAreSafe(t *testing.T) {
 	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
 		return response(t, request, quoteResponse("AAPL", "Apple", "USD", 42)), nil
