@@ -29,6 +29,7 @@ type MktFeedFactory = mktfeed.MktFeedFactory
 
 // Fundamental contains company identity and classification metadata.
 type Fundamental struct {
+	Ticker   string
 	Name     string
 	Sector   string
 	Industry string
@@ -44,6 +45,8 @@ type MktData interface {
 	LatestPrice(symbol string) (float64, bool)
 	// Fundamental returns the latest company metadata for symbol.
 	Fundamental(symbol string) (Fundamental, bool)
+	// Fundamentals returns all company metadata ordered by ticker.
+	Fundamentals() []Fundamental
 	LatestOptionPrice(option c.Option) (float64, bool)
 	LatestOptionClosePrice(option c.Option, side string) (float64, bool)
 }

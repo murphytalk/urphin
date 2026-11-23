@@ -3,6 +3,7 @@ package mktdata
 import (
 	"log/slog"
 	"math"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -190,6 +191,7 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	if source == c.QuoteSourceYahoo {
 		previous := o.fundamentals[symbol]
 		current := previous
+		current.Ticker = symbol
 		if accepted.Name != "" {
 			current.Name = accepted.Name
 		}
@@ -283,6 +285,22 @@ func (o *Service) Fundamental(symbol string) (Fundamental, bool) {
 	defer o.mu.RUnlock()
 	fundamental, ok := o.fundamentals[symbol]
 	return fundamental, ok
+}
+
+// Fundamentals returns a snapshot ordered by ticker.
+func (o *Service) Fundamentals() []Fundamental {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	tickers := make([]string, 0, len(o.fundamentals))
+	for ticker := range o.fundamentals {
+		tickers = append(tickers, ticker)
+	}
+	slices.Sort(tickers)
+	fundamentals := make([]Fundamental, 0, len(tickers))
+	for _, ticker := range tickers {
+		fundamentals = append(fundamentals, o.fundamentals[ticker])
+	}
+	return fundamentals
 }
 
 func (o *Service) LatestOptionPrice(option c.Option) (float64, bool) {
