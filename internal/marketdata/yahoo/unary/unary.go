@@ -229,7 +229,12 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 		if !ok {
 			return nil, nil, errors.New("Yahoo request returned a quote without a price")
 		}
-		slog.Debug("Yahoo quote decoded", "symbol", quote.Symbol, "name", quote.Name, "market_cap", quote.QuoteExtended.MarketCap, "fifty_two_week_low", quote.QuoteExtended.FiftyTwoWeekLow, "fifty_two_week_high", quote.QuoteExtended.FiftyTwoWeekHigh)
+		var fiftyTwoWeekHigh, fiftyTwoWeekLow float64
+		if quote.Fundamental != nil {
+			fiftyTwoWeekHigh = quote.Fundamental.FiftyTwoWeekHigh
+			fiftyTwoWeekLow = quote.Fundamental.FiftyTwoWeekLow
+		}
+		slog.Debug("Yahoo quote decoded", "symbol", quote.Symbol, "name", quote.Name, "market_cap", quote.QuoteExtended.MarketCap, "fifty_two_week_low", fiftyTwoWeekLow, "fifty_two_week_high", fiftyTwoWeekHigh)
 		quotes[i] = quote
 		quoteCopy := quote
 		quotesBySymbol[quote.Symbol] = &quoteCopy
@@ -246,7 +251,7 @@ func (u *UnaryAPI) GetOptionLastPrice(ctx context.Context, ticker, optionType, e
 }
 
 func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
-	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "marketState", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
+	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "marketState", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap", "sector", "industry"})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get quotes: %w", err)

@@ -18,7 +18,13 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 	assetQuote := c.AssetQuote{
 		Name:   responseQuote.ShortName,
 		Symbol: responseQuote.Symbol,
-		Class:  assetClass,
+		Fundamental: &c.Fundamental{
+			Ticker: responseQuote.Symbol, Name: responseQuote.ShortName,
+			Sector: responseQuote.Sector, Industry: responseQuote.Industry,
+			FiftyTwoWeekHigh: responseQuote.FiftyTwoWeekHigh.Raw,
+			FiftyTwoWeekLow:  responseQuote.FiftyTwoWeekLow.Raw,
+		},
+		Class: assetClass,
 		Currency: c.Currency{
 			FromCurrencyCode: responseQuote.Currency,
 		},
@@ -32,10 +38,8 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 			ChangePercent:  responseQuote.RegularMarketChangePercent.Raw,
 		},
 		QuoteExtended: c.QuoteExtended{
-			FiftyTwoWeekHigh: responseQuote.FiftyTwoWeekHigh.Raw,
-			FiftyTwoWeekLow:  responseQuote.FiftyTwoWeekLow.Raw,
-			MarketCap:        responseQuote.MarketCap.Raw,
-			Volume:           responseQuote.RegularMarketVolume.Raw,
+			MarketCap: responseQuote.MarketCap.Raw,
+			Volume:    responseQuote.RegularMarketVolume.Raw,
 		},
 		QuoteSource: c.QuoteSourceYahoo,
 		Exchange: c.Exchange{

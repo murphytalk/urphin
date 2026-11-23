@@ -103,10 +103,18 @@ type QuotePrice struct {
 }
 
 type QuoteExtended struct {
+	MarketCap float64
+	Volume    float64
+}
+
+// Fundamental contains ticker identity, classification, and 52-week range.
+type Fundamental struct {
+	Ticker           string
+	Name             string
+	Sector           string
+	Industry         string
 	FiftyTwoWeekHigh float64
 	FiftyTwoWeekLow  float64
-	MarketCap        float64
-	Volume           float64
 }
 
 type QuoteFutures struct {
@@ -169,6 +177,7 @@ type Meta struct {
 type AssetQuote struct {
 	Name          string
 	Symbol        string
+	Fundamental   *Fundamental
 	Class         AssetClass
 	Currency      Currency
 	QuotePrice    QuotePrice
@@ -184,6 +193,7 @@ type AssetQuote struct {
 type QuoteUpdate struct {
 	Name          string
 	Symbol        string
+	Fundamental   *Fundamental
 	Class         AssetClass
 	Currency      Currency
 	QuotePrice    *QuotePrice
@@ -214,8 +224,13 @@ type OptionQuote struct {
 // NewQuoteUpdate copies quote data and gives the transport its own price object.
 func NewQuoteUpdate(quote AssetQuote, generation int, revision int64) QuoteUpdate {
 	price := quote.QuotePrice
+	var fundamental *Fundamental
+	if quote.Fundamental != nil {
+		value := *quote.Fundamental
+		fundamental = &value
+	}
 	return QuoteUpdate{
-		Name: quote.Name, Symbol: quote.Symbol, Class: quote.Class,
+		Name: quote.Name, Symbol: quote.Symbol, Fundamental: fundamental, Class: quote.Class,
 		Currency: quote.Currency, QuotePrice: &price,
 		QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
 		QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
@@ -229,6 +244,10 @@ func (quote QuoteUpdate) Clone() QuoteUpdate {
 		price := *quote.QuotePrice
 		quote.QuotePrice = &price
 	}
+	if quote.Fundamental != nil {
+		fundamental := *quote.Fundamental
+		quote.Fundamental = &fundamental
+	}
 	return quote
 }
 
@@ -240,6 +259,13 @@ func (quote QuoteUpdate) ToAssetQuote(previous *AssetQuote) (AssetQuote, bool) {
 		Currency: quote.Currency, QuoteExtended: quote.QuoteExtended,
 		QuoteFutures: quote.QuoteFutures, QuoteSource: quote.QuoteSource,
 		Exchange: quote.Exchange, Meta: quote.Meta,
+	}
+	if quote.Fundamental != nil {
+		fundamental := *quote.Fundamental
+		result.Fundamental = &fundamental
+	} else if previous != nil && previous.Fundamental != nil {
+		fundamental := *previous.Fundamental
+		result.Fundamental = &fundamental
 	}
 	if quote.QuotePrice != nil {
 		result.QuotePrice = *quote.QuotePrice
@@ -314,6 +340,7 @@ type Position struct {
 type Asset struct {
 	Name          string
 	Symbol        string
+	Fundamental   *Fundamental
 	Class         AssetClass
 	Currency      Currency
 	Position      Position

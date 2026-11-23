@@ -37,6 +37,8 @@ type ResponseQuote struct {
 	FiftyTwoWeekLow            ResponseFieldFloat  `json:"fiftyTwoWeekLow"`
 	QuoteType                  string              `json:"quoteType"`
 	MarketCap                  ResponseFieldFloat  `json:"marketCap"`
+	Sector                     string              `json:"sector"`
+	Industry                   string              `json:"industry"`
 }
 
 type ResponseFieldFloat struct {

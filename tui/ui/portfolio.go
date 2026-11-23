@@ -77,7 +77,8 @@ func (m *Model) assets(symbols []string) []c.Asset {
 		usable := m.quoteUsable(symbol)
 		asset := c.Asset{
 			Symbol: symbol, Name: quote.Name, Class: quote.Class, Currency: quote.Currency,
-			QuotePrice: quote.QuotePrice, QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
+			Fundamental: quote.Fundamental,
+			QuotePrice:  quote.QuotePrice, QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
 			QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
 			QuoteUnavailable: !usable, PositionUnavailable: !usable || m.mismatches[symbol] || !finite(position.VWAP) || !finite(position.AvgCost),
 			PositionError: m.positionErrors[symbol],

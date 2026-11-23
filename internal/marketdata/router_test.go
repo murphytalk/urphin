@@ -37,11 +37,11 @@ func TestRouterGenerationRevisionNameAndPrune(t *testing.T) {
 
 func TestRouterPreservesYahooFundamentalsAndProviderVolume(t *testing.T) {
 	r := newRouter()
-	yahoo := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", Name: "Apple", QuoteExtended: c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 300}}, 0, 0)
+	yahoo := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", Name: "Apple", Fundamental: &c.Fundamental{Ticker: "AAPL", Name: "Apple", FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80}, QuoteExtended: c.QuoteExtended{MarketCap: 1000, Volume: 300}}, 0, 0)
 	r.accept(c.QuoteSourceYahoo, yahoo, "AAPL", 0)
 	live := c.NewQuoteUpdate(c.AssetQuote{Symbol: "AAPL", QuoteExtended: c.QuoteExtended{Volume: 400}}, 0, 0)
 	got, ok := r.accept(c.QuoteSourceAlpaca, live, "AAPL", 0)
-	if !ok || got.Name != "Apple" || got.QuoteExtended != (c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 400}) {
+	if !ok || got.Name != "Apple" || got.QuoteExtended != (c.QuoteExtended{MarketCap: 1000, Volume: 400}) || got.Fundamental == nil || got.Fundamental.FiftyTwoWeekHigh != 200 || got.Fundamental.FiftyTwoWeekLow != 80 {
 		t.Fatalf("merged quote = %+v", got)
 	}
 	yahoo.QuoteExtended.MarketCap = 2000
