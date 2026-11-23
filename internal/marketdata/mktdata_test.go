@@ -135,10 +135,27 @@ type testOptionFeed struct {
 
 type testPeriodicFeed struct {
 	testOptionFeed
-	periodic []string
+	periodic        []string
+	periodicCalls   int
+	blockNext       bool
+	periodicEntered chan struct{}
+	periodicRelease chan struct{}
+	failNext        bool
 }
 
 func (f *testPeriodicFeed) SetPeriodicSymbols(_ context.Context, symbols []string) error {
+	f.mu.Lock()
+	f.periodicCalls++
+	block, fail := f.blockNext, f.failNext
+	f.blockNext, f.failNext = false, false
+	f.mu.Unlock()
+	if block {
+		f.periodicEntered <- struct{}{}
+		<-f.periodicRelease
+	}
+	if fail {
+		return errors.New("test periodic apply failed")
+	}
 	f.mu.Lock()
 	f.periodic = slices.Clone(symbols)
 	f.mu.Unlock()
@@ -295,12 +312,16 @@ func (*testOptionFeed) SetOptionQuotes(chan<- c.OptionQuote) {}
 func TestOptionSubscriptionsUseSelectedProviderAndYahooFallback(t *testing.T) {
 	selected := &testOptionFeed{}
 	yahoo := &testOptionFeed{}
-	owner := newTestMktDataState(t, map[c.QuoteSource]mktfeed.MktDataFeed{"selected": selected, c.QuoteSourceYahoo: yahoo}, lifecycleNew)
+	unrelated := &testOptionFeed{}
+	owner := newTestMktDataState(t, map[c.QuoteSource]mktfeed.MktDataFeed{
+		"selected": selected, c.QuoteSourceYahoo: yahoo, "unrelated": unrelated,
+	}, lifecycleNew)
 	if err := owner.Start(MktDataConfig{CachePath: filepath.Join(t.TempDir(), "cache.json"), Cfg: &c.Config{App: c.AppCfg{MktDataFeed: "selected"}}}); err != nil {
 		t.Fatal(err)
 	}
 	options := []c.Option{{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}}
-	if err := owner.SubscribeOption("watch", options, make(chan c.OptionQuote, 1)); err != nil {
+	optionUpdates := make(chan c.OptionQuote, 1)
+	if err := owner.SubscribeOption("watch", options, optionUpdates); err != nil {
 		t.Fatal(err)
 	}
 	awaitProviderStatus(t, owner, "selected", func(status ProviderStatus) bool {
@@ -309,6 +330,20 @@ func TestOptionSubscriptionsUseSelectedProviderAndYahooFallback(t *testing.T) {
 	awaitProviderStatus(t, owner, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
 		return slices.Equal(status.AppliedOptions, options) && !status.Pending
 	})
+	awaitProviderStatus(t, owner, "unrelated", func(status ProviderStatus) bool {
+		return len(status.AppliedOptions) == 0 && !status.Pending
+	})
+	owner.mu.Lock()
+	owner.handleOptionQuote(c.OptionQuote{Option: options[0], LastPrice: 2, QuoteSource: c.QuoteSourceYahoo})
+	owner.mu.Unlock()
+	select {
+	case quote := <-optionUpdates:
+		if quote.LastPrice != 2 || quote.QuoteSource != c.QuoteSourceYahoo {
+			t.Fatalf("Yahoo fallback quote while selected provider was silent = %+v", quote)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Yahoo fallback quote was not delivered while the selected provider was silent")
+	}
 	if err := owner.Unsubscribe("watch"); err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +513,7 @@ func TestLatestOptionClosePriceUsesLegSideQuote(t *testing.T) {
 }
 
 func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
-	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testOptionFeed{}, c.QuoteSourceAlpaca: &testOptionFeed{}})
 	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
 	sub, err := service.Service.SubscribeOption([]c.Option{option})
 	if err != nil {
@@ -492,8 +527,14 @@ func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
 	service.mu.Lock()
 	service.handleOptionQuote(c.OptionQuote{Option: option, BidPrice: 2, QuoteSource: c.QuoteSourceAlpaca})
 	service.mu.Unlock()
+	if quote, ok := service.latestOptionQuote(option); !ok || quote.LastPrice != 0 {
+		t.Fatalf("first alternate option quote = %+v, %t; Yahoo last price was carried into bid-only update", quote, ok)
+	}
 	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 2 {
 		t.Fatalf("live option close = %v, %t; quote=%+v; want 2", got, ok, service.optionPrices[option])
+	}
+	if got, ok := service.LatestOptionClosePrice(option, "S"); !ok || got != 1 {
+		t.Fatalf("live option ask-side fallback = %v, %t; want bid/ask midpoint fallback 1", got, ok)
 	}
 	<-sub.Updates()
 	service.mu.Lock()
@@ -503,6 +544,12 @@ func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
 	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 2 {
 		t.Fatalf("delayed Yahoo option close = %v, %t; want 2", got, ok)
 	}
+	if got, ok := service.LatestOptionClosePrice(option, "S"); !ok || got != 1 {
+		t.Fatalf("delayed Yahoo option ask-side close = %v, %t; want unchanged midpoint fallback 1", got, ok)
+	}
+	if got, ok := service.LatestOptionPrice(option); !ok || got != 1 {
+		t.Fatalf("delayed Yahoo option latest price = %v, %t; want unchanged bid/ask midpoint 1", got, ok)
+	}
 	select {
 	case update := <-sub.Updates():
 		t.Fatalf("delayed Yahoo update delivered: %+v", update)
@@ -510,24 +557,95 @@ func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
 	}
 }
 
+func TestOptionCoverageRequiresDemandValidPriceAndRegisteredSource(t *testing.T) {
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{
+		c.QuoteSourceYahoo:  &testOptionFeed{},
+		c.QuoteSourceAlpaca: &testOptionFeed{},
+	})
+	contracts := []c.Option{
+		{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "CALL"},
+		{Ticker: "SPY", Expiry: "2027-02-19", Strike: 100, CP: "C"},
+		{Ticker: "SPY", Expiry: "2027-01-15", Strike: 105, CP: "C"},
+		{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "PUT"},
+		{Ticker: "SPY", Expiry: "2027-01-15", Strike: 110, CP: "C"},
+	}
+	sub, err := service.Service.SubscribeOption(contracts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	post := func(quote c.OptionQuote) {
+		service.mu.Lock()
+		service.handleOptionQuote(quote)
+		service.mu.Unlock()
+	}
+	post(c.OptionQuote{Option: contracts[0], BidPrice: 1, QuoteSource: c.QuoteSourceAlpaca})
+	post(c.OptionQuote{Option: contracts[1], AskPrice: 2, QuoteSource: c.QuoteSourceAlpaca})
+	post(c.OptionQuote{Option: contracts[2], LastPrice: 3, QuoteSource: c.QuoteSourceAlpaca})
+	post(c.OptionQuote{Option: contracts[3], LastPrice: 4, QuoteSource: c.QuoteSourceAlpaca})
+	post(c.OptionQuote{Option: contracts[4], LastPrice: math.NaN(), QuoteSource: c.QuoteSourceAlpaca})
+	post(c.OptionQuote{Option: contracts[4], LastPrice: 5})
+	post(c.OptionQuote{Option: contracts[4], LastPrice: 6, QuoteSource: "unregistered"})
+
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	for _, option := range contracts[:4] {
+		normalized, _ := normalizeOption(option)
+		if _, covered := service.coveredOptions[normalized]; !covered {
+			t.Errorf("valid alternate quote did not cover normalized contract %+v", option)
+		}
+	}
+	uncovered, _ := normalizeOption(contracts[4])
+	if _, covered := service.coveredOptions[uncovered]; covered {
+		t.Fatal("invalid, unattributed, or unregistered quote disabled Yahoo fallback")
+	}
+	if len(service.coveredSymbols) != 0 {
+		t.Fatalf("option handoff covered underlying equity symbols: %v", service.coveredSymbols)
+	}
+}
+
 func TestOptionCoverageEndsWithLastSubscription(t *testing.T) {
-	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testOptionFeed{}, c.QuoteSourceAlpaca: &testOptionFeed{}})
+	service.mu.Lock()
+	service.optionProvider = c.QuoteSourceAlpaca
+	service.mu.Unlock()
 	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
 	first, _ := service.Service.SubscribeOption([]c.Option{option})
 	second, _ := service.Service.SubscribeOption([]c.Option{{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "CALL"}})
+	newOption := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 105, CP: "P"}
 	post := func(source c.QuoteSource, last float64) {
 		service.mu.Lock()
 		service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: last, QuoteSource: source})
 		service.mu.Unlock()
 	}
 	post(c.QuoteSourceAlpaca, 2)
+	third, err := service.Service.SubscribeOption([]c.Option{newOption})
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
+		return !status.Pending && slices.Equal(status.AppliedOptions, []c.Option{newOption})
+	})
+	service.mu.RLock()
+	_, existingStillCovered := service.coveredOptions[option]
+	service.mu.RUnlock()
+	if !existingStillCovered {
+		t.Fatal("adding an uncovered contract released existing Yahoo coverage")
+	}
 	first.Close()
 	post(c.QuoteSourceYahoo, 1)
 	if got, ok := service.LatestOptionPrice(option); !ok || got != 2 {
 		t.Fatalf("coverage ended before last close: %v %t", got, ok)
 	}
 	second.Close()
-	third, err := service.Service.SubscribeOption([]c.Option{option})
+	third.Close()
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
+		return !status.Pending && len(status.AppliedOptions) == 0
+	})
+	awaitProviderStatus(t, service, c.QuoteSourceAlpaca, func(status ProviderStatus) bool {
+		return !status.Pending && len(status.AppliedOptions) == 0
+	})
+	third, err = service.Service.SubscribeOption([]c.Option{option})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,6 +739,94 @@ func TestYahooFallbackAcceptanceScenario(t *testing.T) {
 	if len(periodic) != 0 {
 		t.Fatalf("Yahoo periodic equities after full coverage = %v, want empty", periodic)
 	}
+}
+
+func TestYahooPeriodicWorkerConvergesAfterBlockedHandoffs(t *testing.T) {
+	yahoo := &testPeriodicFeed{periodicEntered: make(chan struct{}, 1), periodicRelease: make(chan struct{})}
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: yahoo, c.QuoteSourceAlpaca: &testMktDataFeed{}})
+	sub, err := service.Service.Subscribe([]string{"AAPL", "MSFT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return !status.Pending })
+	yahoo.mu.Lock()
+	yahoo.blockNext = true
+	yahoo.mu.Unlock()
+	post := func(symbol string, price float64) {
+		service.mu.Lock()
+		service.handleQuote(c.QuoteSourceAlpaca, c.NewQuoteUpdate(c.AssetQuote{Symbol: symbol, Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca, QuotePrice: c.QuotePrice{Price: price}}, 0, 0))
+		service.mu.Unlock()
+	}
+	post("AAPL", 100)
+	select {
+	case <-yahoo.periodicEntered:
+	case <-time.After(time.Second):
+		t.Fatal("periodic worker did not block")
+	}
+	post("MSFT", 200)
+	close(yahoo.periodicRelease)
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return !status.Pending })
+	yahoo.mu.RLock()
+	defer yahoo.mu.RUnlock()
+	if len(yahoo.periodic) != 0 {
+		t.Fatalf("applied Yahoo periodic symbols = %v, want empty", yahoo.periodic)
+	}
+}
+
+func TestYahooPeriodicWorkerRetriesAndIgnoresDuplicateHandoffs(t *testing.T) {
+	yahoo := &testPeriodicFeed{}
+	alpaca := &testOptionFeed{}
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: yahoo, c.QuoteSourceAlpaca: alpaca})
+	sub, err := service.Service.Subscribe([]string{"AAPL", "MSFT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
+		return !status.Pending && slices.Equal(status.AppliedSymbols, []string{"AAPL", "MSFT"})
+	})
+	awaitProviderStatus(t, service, c.QuoteSourceAlpaca, func(status ProviderStatus) bool {
+		return !status.Pending && slices.Equal(status.AppliedSymbols, []string{"AAPL", "MSFT"})
+	})
+	yahoo.mu.Lock()
+	yahoo.failNext = true
+	yahoo.mu.Unlock()
+
+	post := func(price float64) {
+		service.mu.Lock()
+		service.handleQuote(c.QuoteSourceAlpaca, c.NewQuoteUpdate(c.AssetQuote{
+			Symbol: "AAPL", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca,
+			QuotePrice: c.QuotePrice{Price: price},
+		}, 0, 0))
+		service.mu.Unlock()
+	}
+	post(100)
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool {
+		return !status.Pending && slices.Equal(yahoo.appliedPeriodicSymbols(), []string{"MSFT"})
+	})
+	calls := yahoo.periodicCallCount()
+	post(101)
+	post(102)
+	time.Sleep(20 * time.Millisecond)
+	if got := yahoo.periodicCallCount(); got != calls {
+		t.Fatalf("duplicate covered ticks caused %d periodic applies, want no new applies after %d", got-calls, calls)
+	}
+	if got := service.Status()[c.QuoteSourceAlpaca].AppliedSymbols; !slices.Equal(got, []string{"AAPL", "MSFT"}) {
+		t.Fatalf("Alpaca subscriptions changed during Yahoo fallback: %v", got)
+	}
+}
+
+func (f *testPeriodicFeed) appliedPeriodicSymbols() []string {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return slices.Clone(f.periodic)
+}
+
+func (f *testPeriodicFeed) periodicCallCount() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.periodicCalls
 }
 
 func TestMktDataConfigIsClonedBeforeOwnerDispatch(t *testing.T) {

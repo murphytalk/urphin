@@ -209,6 +209,60 @@ func TestEmptyYahooMonitorStartsAndResumesPolling(t *testing.T) {
 	}
 }
 
+func TestOptionsOnlyAndEquitiesOnlyYahooTicks(t *testing.T) {
+	var equityCalls, optionCalls atomic.Int32
+	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(request.URL.Path, "/v7/finance/options/") {
+			optionCalls.Add(1)
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"optionChain":{"result":[{"options":[{"calls":[{"strike":100,"lastPrice":2}]}]}],"error":null}}`)), Request: request}, nil
+		}
+		equityCalls.Add(1)
+		return response(t, request, quoteResponse("IBM", "IBM", "USD", 10)), nil
+	})
+	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api}, WithRefreshInterval(20*time.Millisecond))
+	t.Cleanup(func() { _ = monitor.Stop() })
+	option := c.Option{Ticker: "SPY", Expiry: "2027-01-15", Strike: 100, CP: "C"}
+	optionQuotes := make(chan c.OptionQuote, 1)
+	monitor.SetOptionQuotes(optionQuotes)
+	if err := monitor.SetOptions(context.Background(), []c.Option{option}); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.SetSymbols(context.Background(), nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return optionCalls.Load() > 0 }, "options-only tick did not fetch options")
+	select {
+	case quote := <-optionQuotes:
+		if quote.Option != option || quote.LastPrice != 2 || quote.QuoteSource != c.QuoteSourceYahoo {
+			t.Fatalf("Yahoo option quote = %+v, want source-tagged quote for %v", quote, option)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Yahoo option quote was not published")
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := equityCalls.Load(); got != 0 {
+		t.Fatalf("options-only monitor made %d equity requests", got)
+	}
+	if err := monitor.SetOptions(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond) // Let the in-flight option response finish after the empty set applies.
+	beforeOptions := optionCalls.Load()
+	time.Sleep(50 * time.Millisecond)
+	if got := optionCalls.Load(); got != beforeOptions {
+		t.Fatalf("equities-only monitor made option requests: %d to %d", beforeOptions, got)
+	}
+	if err := monitor.SetSymbols(context.Background(), []string{"IBM"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := equityCalls.Load(); got == 0 {
+		t.Fatal("equities-only monitor did not fetch its subscribed symbol")
+	}
+}
+
 func TestFreshSnapshotWaitsForFullSetAfterSubsetFetch(t *testing.T) {
 	started := make(chan string, 1)
 	release := make(chan struct{})
