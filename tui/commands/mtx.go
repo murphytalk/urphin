@@ -73,7 +73,8 @@ func (*MtxCmd) Execute(ctx context.Context, app *setup.AppCtx, args map[string]s
 		}
 		return string(data), nil
 	}
-	return fmt.Sprintf("%s - %s\n%v", result.Start, result.End, groups), nil
+	tableModel := newMtxTable(result, app)
+	return result.Start + " - " + result.End + "\n" + tableModel.View(), nil
 }
 
 func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
