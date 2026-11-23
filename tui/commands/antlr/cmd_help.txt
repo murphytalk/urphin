@@ -1,4 +1,3 @@
-MKT       | Show stock mkt data
 DTX       | Show stock transactions since date
 TX        | Show stock transactions
 FXTX      | Show stock transactions

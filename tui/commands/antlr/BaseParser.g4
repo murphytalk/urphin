@@ -4,7 +4,7 @@ prog: cmd EOF;
 
 cmd     : baseCmd ;
 baseCmd
-  : mkt | dtx | tx | fxtx | atx | trans | pos | mtx
+  : dtx | tx | fxtx | atx | trans | pos | mtx
   | splitCmd
   | help
   | prop
@@ -21,7 +21,6 @@ number    : INT | FLOAT ;
 tickerList: TICKERS_LIST | tickerArg ;
 
 // STOCK
-mkt       : MKT ccy=CCY t=tickerArg ;
 dtx       : DTX d=DATE (b=brokers (t=tickerArg)?)? ;
 tx        : TX (b=brokers (t=tickerArg)? | c=CCY | t=tickerArg)? ;
 atx       : ATX b=brokers s=SIDE d=DATE t=tickerArg price=number sh=number fee=number ;
