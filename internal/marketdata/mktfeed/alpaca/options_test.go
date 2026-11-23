@@ -43,7 +43,7 @@ func TestPublishQuoteWaitsForQueueSpace(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("publishQuote() did not resume after queue space opened")
 	}
-	if got := <-quotes; got.BidPrice != 2 || got.AskPrice != 3 {
+	if got := <-quotes; got.BidPrice != 2 || got.AskPrice != 3 || got.QuoteSource != c.QuoteSourceAlpaca {
 		t.Fatalf("published quote = %+v", got)
 	}
 }

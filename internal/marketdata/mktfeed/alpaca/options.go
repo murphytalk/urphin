@@ -265,6 +265,7 @@ func optionSnapshotQuote(snapshot marketdata.OptionSnapshot) (c.OptionQuote, tim
 }
 
 func (feed *optionFeed) publishQuote(symbol string, option c.Option, quote c.OptionQuote, timestamp time.Time) {
+	quote.QuoteSource = c.QuoteSourceAlpaca
 	if !validPositivePrice(quote.BidPrice) && !validPositivePrice(quote.AskPrice) && !validPositivePrice(quote.LastPrice) {
 		return
 	}

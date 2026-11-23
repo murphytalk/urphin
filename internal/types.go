@@ -205,9 +205,10 @@ type Option struct {
 
 type OptionQuote struct {
 	Option
-	BidPrice  float64
-	AskPrice  float64
-	LastPrice float64
+	BidPrice    float64
+	AskPrice    float64
+	LastPrice   float64
+	QuoteSource QuoteSource
 }
 
 // NewQuoteUpdate copies quote data and gives the transport its own price object.
