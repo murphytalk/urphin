@@ -35,6 +35,9 @@ func TestFxtxUsesFXAndNoTotals(t *testing.T) {
 		t.Fatal(err)
 	}
 	plain := ansi.Strip(result.Table.View())
+	if width := ansi.StringWidth(strings.Split(plain, "\n")[0]); width >= 120 {
+		t.Fatalf("FXTX table filled target width: %d", width)
+	}
 	for _, s := range []string{"CCY Pair", "USD.JPY", "Cash Flow"} {
 		if !strings.Contains(plain, s) {
 			t.Errorf("output missing %q: %s", s, plain)
@@ -64,6 +67,9 @@ func TestPublicReportDispatch(t *testing.T) {
 	result, err := RunTUI(ctx, app, "MTX", map[string]string{})
 	if err != nil || result.Table == nil || result.Content == "" {
 		t.Fatalf("MTX dispatch result = %+v, %v", result, err)
+	}
+	if width := ansi.StringWidth(strings.Split(ansi.Strip(result.Table.View()), "\n")[0]); width >= 120 {
+		t.Fatalf("MTX table filled target width: %d", width)
 	}
 }
 

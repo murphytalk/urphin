@@ -71,6 +71,10 @@ func newFxTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 	keys := []string{"timestamp", "broker", "pair", "side", "amount", "rate", "fee", "cash"}
 	titles := []string{"Timestamp", "Broker", "CCY Pair", "Side", "Amount", "Rate", "Fee", "Cash Flow"}
 	rows := make([]table.Row, 0, len(txs))
+	widths := make([]int, len(keys))
+	for i, title := range titles {
+		widths[i] = lipgloss.Width(title)
+	}
 	for _, tx := range txs {
 		cash := 0.0
 		switch tx.Side {
@@ -87,12 +91,19 @@ func newFxTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 				cashCell = table.NewStyledCell(text, styles.Error.Bold(true).Padding(0, 1))
 			}
 		}
-		rows = append(rows, table.NewRow(table.RowData{keys[0]: tx.Timestamp.Format("2006-01-02 15:04:05"), keys[1]: tx.Broker, keys[2]: tx.Ticker, keys[3]: tx.Side, keys[4]: u.ConvertFloatToStringWithThousandsSeparator(tx.Shares, false), keys[5]: u.ConvertFloatToStringWithThousandsSeparator(tx.Price, false), keys[6]: u.ConvertFloatToStringWithThousandsSeparator(float64(tx.Fee), false), keys[7]: cashCell}))
+		data := table.RowData{keys[0]: tx.Timestamp.Format("2006-01-02 15:04:05"), keys[1]: tx.Broker, keys[2]: tx.Ticker, keys[3]: tx.Side, keys[4]: u.ConvertFloatToStringWithThousandsSeparator(tx.Shares, false), keys[5]: u.ConvertFloatToStringWithThousandsSeparator(tx.Price, false), keys[6]: u.ConvertFloatToStringWithThousandsSeparator(float64(tx.Fee), false), keys[7]: cashCell}
+		for i, key := range keys {
+			value := data[key]
+			if cell, ok := value.(table.StyledCell); ok {
+				value = cell.Data
+			}
+			widths[i] = max(widths[i], lipgloss.Width(fmt.Sprint(value)))
+		}
+		rows = append(rows, table.NewRow(data))
 	}
 	columns := make([]table.Column, 0, len(keys))
-	factors := []int{3, 1, 2, 1, 2, 2, 1, 2}
 	for i, key := range keys {
-		columns = append(columns, table.NewFlexColumn(key, titles[i], factors[i]))
+		columns = append(columns, table.NewColumn(key, titles[i], widths[i]+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
 	}
-	return table.New(columns).WithRows(rows).WithTargetWidth(120).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(styles.TextColor)).WithBorderForeground(styles.MutedColor).HeaderStyle(styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
+	return table.New(columns).WithRows(rows).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(styles.TextColor)).WithBorderForeground(styles.MutedColor).HeaderStyle(styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
 }

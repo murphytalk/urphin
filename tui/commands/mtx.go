@@ -81,6 +81,10 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 	keys := []string{"ticker", "side", "shares", "fees", "cash", "average"}
 	headers := []string{"Ticker", "Side", "Shares", "Fees", "Cash Flow", "Avg Cost/Share"}
 	rows := make([]table.Row, 0, len(result.Rows)+len(result.Totals)+1)
+	widths := map[string]int{}
+	for i, key := range keys {
+		widths[key] = lipgloss.Width(headers[i])
+	}
 	currencies := map[string]bool{}
 	for _, row := range result.Rows {
 		currencies[row.Currency] = true
@@ -94,6 +98,12 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		data := table.RowData{keys[0]: row.Ticker, keys[1]: row.Side, keys[2]: u.ConvertFloatToStringWithThousandsSeparator(row.Shares, false), keys[3]: u.ConvertFloatToStringWithThousandsSeparator(row.Fees, false), keys[4]: table.NewStyledCell(cash, style), keys[5]: u.ConvertFloatToStringWithThousandsSeparator(row.AvgCost, false)}
 		if len(currencies) > 1 {
 			data["currency"] = row.Currency
+		}
+		for key, value := range data {
+			if cell, ok := value.(table.StyledCell); ok {
+				value = cell.Data
+			}
+			widths[key] = max(widths[key], lipgloss.Width(fmt.Sprint(value)))
 		}
 		rows = append(rows, table.NewRow(data))
 	}
@@ -109,18 +119,27 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		} else {
 			data[keys[1]] = total.Currency
 		}
+		for key, value := range data {
+			if cell, ok := value.(table.StyledCell); ok {
+				value = cell.Data
+			}
+			widths[key] = max(widths[key], lipgloss.Width(fmt.Sprint(value)))
+		}
 		rows = append(rows, table.NewRow(data))
 	}
 	if len(result.Rows) == 0 {
-		rows = append(rows, table.NewRow(table.RowData{keys[0]: "Total", keys[4]: "0.00"}))
+		data := table.RowData{keys[0]: "Total", keys[4]: "0.00"}
+		for key, value := range data {
+			widths[key] = max(widths[key], lipgloss.Width(fmt.Sprint(value)))
+		}
+		rows = append(rows, table.NewRow(data))
 	}
 	columns := make([]table.Column, 0, 7)
-	factors := map[string]int{"ticker": 3, "side": 1, "shares": 2, "fees": 2, "cash": 2, "average": 3, "currency": 1}
 	for i, key := range keys {
 		if key == "ticker" && len(currencies) > 1 {
-			columns = append(columns, table.NewFlexColumn("currency", "CCY", factors["currency"]))
+			columns = append(columns, table.NewColumn("currency", "CCY", max(widths["currency"], 3)+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
 		}
-		columns = append(columns, table.NewFlexColumn(key, headers[i], factors[key]))
+		columns = append(columns, table.NewColumn(key, headers[i], widths[key]+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
 	}
-	return table.New(columns).WithRows(rows).WithTargetWidth(120).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
+	return table.New(columns).WithRows(rows).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
 }
