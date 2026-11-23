@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -366,6 +367,16 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	symbols := cmd.symbols
 	slices.Sort(symbols)
 	symbols = slices.Compact(symbols)
+	previousSymbols := make(map[string]struct{}, len(owner.symbols))
+	for _, symbol := range owner.symbols {
+		previousSymbols[symbol] = struct{}{}
+	}
+	var newlySubscribed []string
+	for _, symbol := range symbols {
+		if _, subscribed := previousSymbols[symbol]; !subscribed {
+			newlySubscribed = append(newlySubscribed, symbol)
+		}
+	}
 	owner.configID++
 	owner.generation = cmd.generation
 	owner.symbols = symbols
@@ -386,6 +397,7 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	}
 	owner.pendingUpdates = make(map[string]c.QuoteUpdate)
 	owner.updateOrder = nil
+	owner.startProfileFetch(newlySubscribed)
 	var waiters []fetchWaiter
 	publish := false
 	reportErrors := false
@@ -404,6 +416,24 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	waiters = append(waiters, fetchWaiter{kind: cmd.kind, reply: cmd.reply})
 	owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation, symbols: symbols,
 		publish: publish, reportErrors: reportErrors, waiters: waiters})
+}
+
+func (owner *priceOwner) startProfileFetch(symbols []string) {
+	api := owner.monitor.config.unaryAPI
+	if len(symbols) == 0 || api == nil {
+		return
+	}
+	owner.workers.Add(1)
+	go func() {
+		defer owner.workers.Done()
+		profiles, err := api.GetAssetProfiles(owner.monitor.ctx, symbols)
+		for _, profile := range profiles {
+			slog.Info("Yahoo asset profile", "symbol", profile.Symbol, "sector", profile.Sector, "industry", profile.Industry)
+		}
+		if err != nil && owner.monitor.ctx.Err() == nil {
+			slog.Warn("Yahoo asset profile lookup failed", "symbols", symbols, "error", err)
+		}
+	}()
 }
 
 func (owner *priceOwner) setOptions(cmd command) {

@@ -5,6 +5,21 @@ type Response struct {
 	QuoteResponse ResponseQuoteResponse `json:"quoteResponse"`
 }
 
+type ResponseQuoteSummary struct {
+	QuoteSummary struct {
+		Result []struct {
+			AssetProfile AssetProfile `json:"assetProfile"`
+		} `json:"result"`
+		Error interface{} `json:"error"`
+	} `json:"quoteSummary"`
+}
+
+type AssetProfile struct {
+	Symbol   string `json:"symbol"`
+	Sector   string `json:"sector"`
+	Industry string `json:"industry"`
+}
+
 type ResponseQuoteResponse struct {
 	Quotes []ResponseQuote `json:"result"`
 	Error  interface{}     `json:"error"`
