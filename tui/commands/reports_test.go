@@ -50,3 +50,19 @@ func TestFxtxUsesFXAndNoTotals(t *testing.T) {
 		t.Fatalf("since = %v", b.since)
 	}
 }
+
+func TestPublicReportDispatch(t *testing.T) {
+	b := &reportSpyBackend{txTestBackend: txTestBackend{txs: []databackend.Tx{{Ticker: "AAPL", Ccy: "USD", Side: databackend.SideBuy, Shares: 1, Price: 10, Timestamp: time.Now()}}}}
+	app := &setup.AppCtx{Db: b, Styles: theme.BuildStyles(theme.Default(), "")}
+	ctx := context.Background()
+	if _, err := RunCmd(ctx, app, "DTX", map[string]string{"date": "20240101"}, true); err != nil {
+		t.Fatalf("DTX dispatch: %v", err)
+	}
+	if _, err := RunCmd(ctx, app, "FXTX", map[string]string{}, true); err != nil {
+		t.Fatalf("FXTX dispatch: %v", err)
+	}
+	result, err := RunTUI(ctx, app, "MTX", map[string]string{})
+	if err != nil || result.Table == nil || result.Content == "" {
+		t.Fatalf("MTX dispatch result = %+v, %v", result, err)
+	}
+}
