@@ -175,4 +175,7 @@ func (m *Model) resizeTable() {
 		height -= strings.Count(m.content, "\n") + 2
 	}
 	*m.table = m.table.WithTargetHeight(max(1, height))
+	if m.width > 0 && m.content != "" {
+		*m.table = m.table.WithTargetWidth(m.width)
+	}
 }

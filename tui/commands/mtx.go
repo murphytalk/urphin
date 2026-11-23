@@ -115,11 +115,12 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		rows = append(rows, table.NewRow(table.RowData{keys[0]: "Total", keys[4]: "0.00"}))
 	}
 	columns := make([]table.Column, 0, 7)
+	factors := map[string]int{"ticker": 3, "side": 1, "shares": 2, "fees": 2, "cash": 2, "average": 3, "currency": 1}
 	for i, key := range keys {
 		if key == "ticker" && len(currencies) > 1 {
-			columns = append(columns, table.NewColumn("currency", "CCY", 7).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
+			columns = append(columns, table.NewFlexColumn("currency", "CCY", factors["currency"]))
 		}
-		columns = append(columns, table.NewColumn(key, headers[i], max(len(headers[i]), 12)+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
+		columns = append(columns, table.NewFlexColumn(key, headers[i], factors[key]))
 	}
-	return table.New(columns).WithRows(rows).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
+	return table.New(columns).WithRows(rows).WithTargetWidth(120).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
 }
