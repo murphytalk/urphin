@@ -20,6 +20,18 @@ type txTestBackend struct {
 	txs []databackend.Tx
 }
 
+type reportSpyBackend struct {
+	txTestBackend
+	ccy, ticker, broker *string
+	since               *time.Time
+	classes             []c.AssetClass
+}
+
+func (b *reportSpyBackend) GetEquityTx(_ context.Context, ccy, ticker, broker *string, since *time.Time, classes []c.AssetClass) ([]databackend.Tx, error) {
+	b.ccy, b.ticker, b.broker, b.since, b.classes = ccy, ticker, broker, since, append([]c.AssetClass(nil), classes...)
+	return b.txs, nil
+}
+
 func (b txTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
 	return b.txs, nil
 }

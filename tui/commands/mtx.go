@@ -85,14 +85,24 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		currencies[row.Currency] = true
 	}
 	for _, row := range result.Rows {
-		data := table.RowData{keys[0]: row.Ticker, keys[1]: row.Side, keys[2]: u.ConvertFloatToStringWithThousandsSeparator(row.Shares, false), keys[3]: u.ConvertFloatToStringWithThousandsSeparator(row.Fees, false), keys[4]: u.ConvertFloatToStringWithThousandsSeparator(row.CashFlow, false), keys[5]: u.ConvertFloatToStringWithThousandsSeparator(row.AvgCost, false)}
+		cash := u.ConvertFloatToStringWithThousandsSeparator(row.CashFlow, false)
+		style := app.Styles.Loss
+		if row.CashFlow > 0 {
+			style = app.Styles.Gain
+		}
+		data := table.RowData{keys[0]: row.Ticker, keys[1]: row.Side, keys[2]: u.ConvertFloatToStringWithThousandsSeparator(row.Shares, false), keys[3]: u.ConvertFloatToStringWithThousandsSeparator(row.Fees, false), keys[4]: table.NewStyledCell(cash, style), keys[5]: u.ConvertFloatToStringWithThousandsSeparator(row.AvgCost, false)}
 		if len(currencies) > 1 {
 			data["currency"] = row.Currency
 		}
 		rows = append(rows, table.NewRow(data))
 	}
 	for _, total := range result.Totals {
-		data := table.RowData{keys[0]: "Total", keys[4]: u.ConvertFloatToStringWithThousandsSeparator(total.CashFlow, false)}
+		cash := u.ConvertFloatToStringWithThousandsSeparator(total.CashFlow, false)
+		style := app.Styles.Loss
+		if total.CashFlow > 0 {
+			style = app.Styles.Gain
+		}
+		data := table.RowData{keys[0]: "Total", keys[4]: table.NewStyledCell(cash, style)}
 		if len(currencies) > 1 {
 			data["currency"] = total.Currency
 		} else {

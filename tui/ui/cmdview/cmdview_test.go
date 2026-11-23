@@ -115,6 +115,21 @@ func TestTableResultPaginatesUsingAvailableHeight(t *testing.T) {
 	}
 }
 
+func TestTableResultShowsContentTitleAndReservesHeight(t *testing.T) {
+	rows := []table.Row{table.NewRow(table.RowData{"value": "row"})}
+	model := table.New([]table.Column{table.NewColumn("value", "Value", 10)}).WithRows(rows).Focused(true)
+	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+	m.Update(tea.WindowSizeMsg{Width: 30, Height: 10})
+	m.Update(SetResultMsg{Header: "MTX", Content: "2026-08-01 - 2026-11-23", Table: &model})
+	content := ansi.Strip(m.viewport.GetContent())
+	if !strings.Contains(content, "2026-08-01 - 2026-11-23") || !strings.Contains(content, "Value") || !strings.Contains(content, "row") {
+		t.Fatalf("combined result content = %q", content)
+	}
+	if len(strings.Split(m.View(), "\n")) != 10 {
+		t.Fatalf("combined result changed layout height: %q", m.View())
+	}
+}
+
 func TestTableResultAlignment(t *testing.T) {
 	tableModel := table.New([]table.Column{table.NewColumn("col", "Col", 10)}).
 		WithRows([]table.Row{table.NewRow(table.RowData{"col": "123"})})

@@ -170,5 +170,9 @@ func (m *Model) resizeTable() {
 	if m.table == nil {
 		return
 	}
-	*m.table = m.table.WithTargetHeight(max(1, m.viewport.Height()))
+	height := m.viewport.Height()
+	if m.content != "" {
+		height -= strings.Count(m.content, "\n") + 2
+	}
+	*m.table = m.table.WithTargetHeight(max(1, height))
 }
