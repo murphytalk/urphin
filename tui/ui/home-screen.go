@@ -25,6 +25,7 @@ import (
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/commands"
+	"github.com/murphytalk/urphin/tui/commands/registry"
 	"github.com/murphytalk/urphin/tui/setup"
 	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
@@ -60,17 +61,30 @@ type Model struct {
 	commandHistoryBrowsing bool
 	result                 *cmdview.Model
 	commandRunning         bool
+	commandInvocation      *commandInvocation
+	nextCommandID          uint64
+	commandWorkerID        uint64
 	marketLoading          bool
 	marketSpinner          spinner.Model
 	marketError            error
-	marketDataUpdates      chan struct{}
-	lastOptionCommand      string
+}
+
+type commandInvocation struct {
+	id           uint64
+	line, name   string
+	args         map[string]string
+	ctx          context.Context
+	cancel       context.CancelFunc
+	updates      chan struct{}
+	requirements registry.TUIRequirements
+	refreshing   bool
 }
 
 // QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
 type QuoteBatchMsg []c.QuoteUpdate
 
 type commandResultMsg struct {
+	id      uint64
 	line    string
 	name    string
 	content string
@@ -79,7 +93,7 @@ type commandResultMsg struct {
 	refresh bool
 }
 
-type optionPriceUpdateMsg struct{}
+type marketUpdateMsg struct{ id uint64 }
 
 // NewModel loads each unique position once, independently of the visible watchlist.
 func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
@@ -144,7 +158,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	m := &Model{
 		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
-		mismatches: make(map[string]bool), selected: selected, marketDataUpdates: make(chan struct{}, 1),
+		mismatches: make(map[string]bool), selected: selected,
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
@@ -154,12 +168,6 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	}
 	if app.Settings != nil && app.Settings.TableAlignment != "" {
 		m.result.SetTableAlignment(app.Settings.TableAlignment)
-	}
-	m.app.OnMarketDataUpdate = func() {
-		select {
-		case m.marketDataUpdates <- struct{}{}:
-		default:
-		}
 	}
 	for _, symbol := range m.symbols {
 		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
@@ -317,8 +325,30 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case commandResultMsg:
+		if msg.id != 0 && (m.commandInvocation == nil || msg.id != m.commandInvocation.id) {
+			if msg.id == m.commandWorkerID {
+				m.commandRunning = false
+				m.commandWorkerID = 0
+			}
+			return m, nil
+		}
 		oldDiagnostic := m.commandDiagnosticRows()
-		m.commandRunning = false
+		invocation := m.commandInvocation
+		if !msg.refresh {
+			m.commandRunning = false
+			m.commandWorkerID = 0
+		}
+		if invocation != nil {
+			invocation.refreshing = false
+		}
+		if msg.refresh {
+			if msg.err == nil && (msg.content != "" || msg.table != nil) {
+				align := m.app.Settings.TableAlignment
+				m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: commandResultHeader(msg.name), Content: msg.content, Table: msg.table, TableAlignment: align})
+				m.resize()
+			}
+			return m, waitForMarketUpdate(invocation)
+		}
 		m.commandErr = msg.err
 		if msg.err == nil && m.commandInput.Value() == msg.line {
 			m.commandInput.Reset()
@@ -344,26 +374,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
-		if (msg.name == "OPT" || msg.name == "OPTP") && msg.err == nil {
-			m.lastOptionCommand = msg.line
-			return m, waitForOptionPriceUpdate(m.ctx, m.marketDataUpdates)
+		if invocation != nil && (msg.err != nil || (msg.content == "" && msg.table == nil)) {
+			invocation.cancel()
+			m.commandInvocation = nil
+		} else if invocation != nil && invocation.requirements.RefreshOnMarketData {
+			return m, waitForMarketUpdate(invocation)
 		}
-		if msg.refresh && msg.err == nil {
-			return m, waitForOptionPriceUpdate(m.ctx, m.marketDataUpdates)
-		}
-	case optionPriceUpdateMsg:
-		line := m.lastOptionCommand
-		if line == "" {
+	case marketUpdateMsg:
+		inv := m.commandInvocation
+		if inv == nil || msg.id != inv.id || inv.refreshing {
 			return m, nil
 		}
-		return m, func() tea.Msg {
-			name, args, err := commands.Parse(line)
-			if err != nil {
-				return commandResultMsg{line: line, name: strings.Fields(strings.TrimSpace(line))[0], err: err, refresh: true}
-			}
-			result, err := commands.RunTUI(m.ctx, &m.app, name, args)
-			return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err, refresh: true}
-		}
+		inv.refreshing = true
+		return m, executeCommand(inv, true, m.app)
 	case spinner.TickMsg:
 		if m.marketLoading {
 			var cmd tea.Cmd
@@ -385,7 +408,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshContent()
 		return m, cmd
 	case tea.KeyPressMsg:
-		if msg.Keystroke() == "home" && m.result.Active() {
+		if msg.Keystroke() == "home" && (m.result.Active() || m.commandInvocation != nil) {
+			if m.commandInvocation != nil {
+				m.commandInvocation.cancel()
+				m.commandInvocation = nil
+			}
 			m.result.Clear()
 			m.viewport.GotoTop()
 			m.resize()
@@ -393,6 +420,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.Keystroke() {
 		case "f10", "ctrl+c", "ctrl+d":
+			if m.commandInvocation != nil {
+				m.commandInvocation.cancel()
+			}
 			slog.Debug("UI quit key received", "key", msg.Keystroke())
 			if m.session != nil {
 				m.session.requestStop()
@@ -435,10 +465,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.resetCommandHistoryNavigation()
 			line := m.commandInput.Value()
-			upperLine := strings.ToUpper(strings.TrimSpace(line))
-			if upperLine != "OPT" && !strings.HasPrefix(upperLine, "OPT ") && upperLine != "OPTP" && !strings.HasPrefix(upperLine, "OPTP ") {
-				m.lastOptionCommand = ""
-			}
 			if m.commandHistory != nil {
 				m.commandHistory.Add(line)
 			}
@@ -448,18 +474,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.commandErr = nil
+			if m.commandInvocation != nil {
+				m.commandInvocation.cancel()
+			}
+			m.nextCommandID++
+			ctx, cancel := context.WithCancel(m.ctx)
+			inv := &commandInvocation{id: m.nextCommandID, line: line, name: name, args: maps.Clone(args), ctx: ctx, cancel: cancel, requirements: commands.RequirementsForTUI(name)}
+			if inv.requirements.RefreshOnMarketData {
+				inv.updates = make(chan struct{}, 1)
+			}
+			m.commandInvocation = inv
 
 			m.syncCommandPromptStyle()
 			m.commandRunning = true
+			m.commandWorkerID = inv.id
 			var cmd tea.Cmd
-			if name != "OPTP" {
+			if !commands.RequirementsForTUI(name).SkipLoadingView {
 				m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: commandResultHeader(name)})
 			}
 			m.resize()
-			return m, tea.Batch(cmd, func() tea.Msg {
-				result, err := commands.RunTUI(m.ctx, &m.app, name, args)
-				return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err}
-			})
+			return m, tea.Batch(cmd, executeCommand(inv, false, m.app))
 		case "esc":
 			m.resetCommandHistoryNavigation()
 			m.commandInput.Reset()
@@ -572,13 +606,36 @@ func (m *Model) resetCommandHistoryNavigation() {
 	m.commandHistoryPrefix = ""
 }
 
-func waitForOptionPriceUpdate(ctx context.Context, updates <-chan struct{}) tea.Cmd {
+func executeCommand(inv *commandInvocation, refresh bool, app setup.AppCtx) tea.Cmd {
+	if app.Settings != nil {
+		settings := *app.Settings
+		app.Settings = &settings
+	}
+	return func() tea.Msg {
+		local := app
+		if inv.requirements.RefreshOnMarketData {
+			local.OnMarketDataUpdate = func() {
+				select {
+				case inv.updates <- struct{}{}:
+				default:
+				}
+			}
+		}
+		result, err := commands.RunTUI(inv.ctx, &local, inv.name, maps.Clone(inv.args))
+		return commandResultMsg{id: inv.id, line: inv.line, name: inv.name, content: result.Content, table: result.Table, err: err, refresh: refresh}
+	}
+}
+
+func waitForMarketUpdate(inv *commandInvocation) tea.Cmd {
+	if inv == nil || inv.updates == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		select {
-		case <-ctx.Done():
+		case <-inv.ctx.Done():
 			return nil
-		case <-updates:
-			return optionPriceUpdateMsg{}
+		case <-inv.updates:
+			return marketUpdateMsg{id: inv.id}
 		}
 	}
 }

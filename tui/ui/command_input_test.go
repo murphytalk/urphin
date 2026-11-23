@@ -16,6 +16,7 @@ import (
 	databackend "github.com/murphytalk/urphin/data/backend"
 	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/tui/commands"
+	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
 
@@ -192,6 +193,30 @@ func TestCommandDiagnosticHeightFallback(t *testing.T) {
 		if m.viewport.Height() != 2 {
 			t.Fatalf("summary=%t no-error viewport height=%d, want 2", showSummary, m.viewport.Height())
 		}
+	}
+}
+
+func TestCommandInvocationIgnoresStaleCompletionAndCancelsWaiter(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	ctx, cancel := context.WithCancel(m.ctx)
+	defer cancel()
+	m.commandInvocation = &commandInvocation{id: 2, ctx: ctx, cancel: cancel, line: "WATCH", name: "WATCH"}
+	m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: "current", Content: "current"})
+	want := m.result.View()
+	uiTestUpdate(t, m, commandResultMsg{id: 1, name: "WATCH", content: "stale"})
+	if got := m.result.View(); got != want {
+		t.Fatalf("stale completion changed result: %q, want %q", got, want)
+	}
+	wait := make(chan tea.Msg, 1)
+	m.commandInvocation.updates = make(chan struct{}, 1)
+	m.commandInvocation.updates <- struct{}{}
+	wait <- waitForMarketUpdate(m.commandInvocation)()
+	if got := (<-wait).(marketUpdateMsg); got.id != 2 {
+		t.Fatalf("update invocation id = %d, want 2", got.id)
+	}
+	cancel()
+	if got := waitForMarketUpdate(m.commandInvocation)(); got != nil {
+		t.Fatalf("cancelled waiter returned %T", got)
 	}
 }
 

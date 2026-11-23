@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/evertras/bubble-table/table"
+	"github.com/murphytalk/urphin/tui/commands/registry"
 	"github.com/murphytalk/urphin/tui/setup"
 )
 
@@ -19,6 +20,18 @@ type tuiCommand interface {
 
 type tuiTableCommand interface {
 	ExecuteTUITable(context.Context, *setup.AppCtx, map[string]string) (*table.Model, error)
+}
+
+func RequirementsForTUI(name string) registry.TUIRequirements {
+	cmd, ok := cmdReg.Get(name)
+	if !ok {
+		return registry.TUIRequirements{}
+	}
+	capability, ok := cmd.(registry.TUIRequirementCommand)
+	if !ok {
+		return registry.TUIRequirements{}
+	}
+	return capability.TUIRequirements()
 }
 
 func RunTUI(ctx context.Context, appCtx *setup.AppCtx, cmdName string, args map[string]string) (TUIResult, error) {

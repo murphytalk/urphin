@@ -11,6 +11,15 @@ type Command interface {
 	Execute(ctx context.Context, appCtx *setup.AppCtx, args map[string]string, jsonOutput bool) (string, error)
 }
 
+type TUIRequirements struct {
+	RefreshOnMarketData bool
+	SkipLoadingView     bool
+}
+
+type TUIRequirementCommand interface {
+	TUIRequirements() TUIRequirements
+}
+
 type Registry struct {
 	commands map[string]Command
 }
