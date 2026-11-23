@@ -344,7 +344,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
-		if msg.name == "OPT" && msg.err == nil {
+		if (msg.name == "OPT" || msg.name == "OPTP") && msg.err == nil {
 			m.lastOptionCommand = msg.line
 			return m, waitForOptionPriceUpdate(m.ctx, m.marketDataUpdates)
 		}
@@ -359,7 +359,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, func() tea.Msg {
 			name, args, err := commands.Parse(line)
 			if err != nil {
-				return commandResultMsg{line: line, name: "OPT", err: err, refresh: true}
+				return commandResultMsg{line: line, name: strings.Fields(strings.TrimSpace(line))[0], err: err, refresh: true}
 			}
 			result, err := commands.RunTUI(m.ctx, &m.app, name, args)
 			return commandResultMsg{line: line, name: name, content: result.Content, table: result.Table, err: err, refresh: true}
@@ -435,7 +435,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.resetCommandHistoryNavigation()
 			line := m.commandInput.Value()
-			if strings.ToUpper(strings.TrimSpace(line)) != "OPT" && !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(line)), "OPT ") {
+			upperLine := strings.ToUpper(strings.TrimSpace(line))
+			if upperLine != "OPT" && !strings.HasPrefix(upperLine, "OPT ") && upperLine != "OPTP" && !strings.HasPrefix(upperLine, "OPTP ") {
 				m.lastOptionCommand = ""
 			}
 			if m.commandHistory != nil {
@@ -451,7 +452,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncCommandPromptStyle()
 			m.commandRunning = true
 			var cmd tea.Cmd
-			m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: commandResultHeader(name)})
+			if name != "OPTP" {
+				m.result, cmd = m.result.Update(cmdview.StartResultMsg{Header: commandResultHeader(name)})
+			}
 			m.resize()
 			return m, tea.Batch(cmd, func() tea.Msg {
 				result, err := commands.RunTUI(m.ctx, &m.app, name, args)
