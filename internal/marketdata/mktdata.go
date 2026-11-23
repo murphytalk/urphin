@@ -487,19 +487,7 @@ func (o *Service) registerFeed(source c.QuoteSource, feed mktfeed.MktDataFeed) {
 		provider := o.feeds[source]
 		provider.setVisible(o.providerSymbols(source, o.visibleUnion()))
 		provider.setDesired(o.providerSymbols(source, cloneSymbols(union)), o.captureSeedTargets(source, nil, union))
-		if source == o.optionProvider {
-			provider.setDesiredOptions(o.optionUnion())
-		}
-		if source == c.QuoteSourceYahoo && source != o.optionProvider {
-			options := o.optionUnion()
-			uncovered := make([]c.Option, 0, len(options))
-			for _, option := range options {
-				if _, covered := o.coveredOptions[option]; !covered {
-					uncovered = append(uncovered, option)
-				}
-			}
-			provider.setDesiredOptions(uncovered)
-		}
+		o.reconcileOptions()
 		provider.start()
 	}
 }

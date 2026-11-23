@@ -214,19 +214,23 @@ func (m *Service) reconcileOptions() {
 		return
 	}
 	options := m.optionUnion()
+	uncovered := make([]c.Option, 0, len(options))
+	for _, option := range options {
+		if _, covered := m.coveredOptions[option]; !covered {
+			uncovered = append(uncovered, option)
+		}
+	}
+	if m.optionProvider == c.QuoteSourceYahoo {
+		if yahoo := m.feeds[c.QuoteSourceYahoo]; yahoo != nil {
+			yahoo.setDesiredOptions(uncovered)
+		}
+		return
+	}
 	if provider := m.feeds[m.optionProvider]; provider != nil {
 		provider.setDesiredOptions(options)
 	}
-	if m.optionProvider != "" && m.optionProvider != c.QuoteSourceYahoo {
-		if yahoo := m.feeds[c.QuoteSourceYahoo]; yahoo != nil {
-			uncovered := make([]c.Option, 0, len(options))
-			for _, option := range options {
-				if _, covered := m.coveredOptions[option]; !covered {
-					uncovered = append(uncovered, option)
-				}
-			}
-			yahoo.setDesiredOptions(uncovered)
-		}
+	if yahoo := m.feeds[c.QuoteSourceYahoo]; yahoo != nil {
+		yahoo.setDesiredOptions(uncovered)
 	}
 }
 
