@@ -169,6 +169,18 @@ periodicSeen:
 	if err != nil || len(quotes) != 2 || quotes[0].QuotePrice.Price != 10 {
 		t.Fatalf("Snapshot(false) = %v, %v; want retained AAPL quote", quotes, err)
 	}
+	if err := monitor.SetPeriodicSymbols(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	before := msftCalls.Load()
+	time.Sleep(60 * time.Millisecond)
+	if got := msftCalls.Load(); got != before {
+		t.Fatalf("empty periodic set made requests: %d to %d", before, got)
+	}
+	if err := monitor.SetPeriodicSymbols(context.Background(), []string{"MSFT"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return msftCalls.Load() > before }, "polling did not resume after adding periodic symbol")
 }
 
 func TestEmptyYahooMonitorStartsAndResumesPolling(t *testing.T) {
