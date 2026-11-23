@@ -62,6 +62,36 @@ watchlist:
 	}
 }
 
+func TestFileBackendReportAssetClassesAndInclusiveCutoff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reports.yaml")
+	content := `tx:
+  Stock:
+    USD:
+      - B1,AAA,2024-01-01 00:00:00,BUY,10,1
+  ETF:
+    JPY:
+      - B2,ETF1,2024-01-01 00:00:01,SELL,20,2
+  FX:
+    JPY:
+      - B1,USD.JPY,2024-01-01 00:00:01,BUY,150,3
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	backend, err := NewFileBackend(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	since := time.Date(2024, 1, 1, 0, 0, 1, 0, time.UTC)
+	got, err := backend.GetEquityTx(context.Background(), nil, nil, nil, &since, []c.AssetClass{c.AssetClassETF, c.AssetClassFx})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Ticker != "ETF1" || got[1].Ticker != "USD.JPY" {
+		t.Fatalf("report transactions = %+v", got)
+	}
+}
+
 func TestFileBackendGetAssetsWithPositions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backend.yaml")
 	content := `tx:
