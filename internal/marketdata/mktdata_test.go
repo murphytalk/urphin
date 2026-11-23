@@ -498,6 +498,7 @@ func TestOptionYahooHandoffRejectsDelayedLast(t *testing.T) {
 	<-sub.Updates()
 	service.mu.Lock()
 	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 1.5, QuoteSource: c.QuoteSourceYahoo})
+	service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: 5})
 	service.mu.Unlock()
 	if got, ok := service.LatestOptionClosePrice(option, "B"); !ok || got != 2 {
 		t.Fatalf("delayed Yahoo option close = %v, %t; want 2", got, ok)
