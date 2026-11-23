@@ -192,17 +192,29 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 		previous := o.fundamentals[symbol]
 		current := previous
 		current.Ticker = symbol
+		classificationChanged := false
 		if accepted.Name != "" {
+			classificationChanged = classificationChanged || accepted.Name != current.Name
 			current.Name = accepted.Name
 		}
 		if accepted.Sector != "" {
+			classificationChanged = classificationChanged || accepted.Sector != current.Sector
 			current.Sector = accepted.Sector
 		}
 		if accepted.Industry != "" {
+			classificationChanged = classificationChanged || accepted.Industry != current.Industry
 			current.Industry = accepted.Industry
+		}
+		if accepted.QuoteExtended.FiftyTwoWeekHigh != 0 {
+			current.FiftyTwoWeekHigh = accepted.QuoteExtended.FiftyTwoWeekHigh
+		}
+		if accepted.QuoteExtended.FiftyTwoWeekLow != 0 {
+			current.FiftyTwoWeekLow = accepted.QuoteExtended.FiftyTwoWeekLow
 		}
 		if current != previous {
 			o.fundamentals[symbol] = current
+		}
+		if classificationChanged {
 			slog.Info("Yahoo ticker fundamentals", "symbol", symbol, "sector", current.Sector, "industry", current.Industry)
 		}
 	}

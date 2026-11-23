@@ -29,10 +29,12 @@ type MktFeedFactory = mktfeed.MktFeedFactory
 
 // Fundamental contains company identity and classification metadata.
 type Fundamental struct {
-	Ticker   string
-	Name     string
-	Sector   string
-	Industry string
+	Ticker           string
+	Name             string
+	Sector           string
+	Industry         string
+	FiftyTwoWeekHigh float64
+	FiftyTwoWeekLow  float64
 }
 
 type MktData interface {
