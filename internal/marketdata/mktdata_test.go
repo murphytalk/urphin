@@ -133,6 +133,18 @@ type testOptionFeed struct {
 	optionSets [][]c.Option
 }
 
+type testPeriodicFeed struct {
+	testOptionFeed
+	periodic []string
+}
+
+func (f *testPeriodicFeed) SetPeriodicSymbols(_ context.Context, symbols []string) error {
+	f.mu.Lock()
+	f.periodic = slices.Clone(symbols)
+	f.mu.Unlock()
+	return nil
+}
+
 type legacyTestSubscription struct {
 	symbols       map[string]struct{}
 	channel       chan<- c.QuoteUpdate
@@ -522,6 +534,91 @@ func TestOptionCoverageEndsWithLastSubscription(t *testing.T) {
 	post(c.QuoteSourceYahoo, 3)
 	if got, ok := service.LatestOptionPrice(option); !ok || got != 3 {
 		t.Fatalf("new subscription did not accept Yahoo: %v %t", got, ok)
+	}
+}
+
+func TestYahooFallbackAcceptanceScenario(t *testing.T) {
+	yahoo := &testPeriodicFeed{}
+	alpaca := &testOptionFeed{}
+	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: yahoo, c.QuoteSourceAlpaca: alpaca})
+	service.mu.Lock()
+	service.optionProvider = c.QuoteSourceAlpaca
+	service.mu.Unlock()
+	equities, err := service.Service.Subscribe([]string{"AAPL", "MSFT"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer equities.Close()
+	call1 := c.Option{Ticker: "AAPL", Expiry: "2027-01-15", Strike: 200, CP: "C"}
+	call2 := c.Option{Ticker: "AAPL", Expiry: "2027-01-15", Strike: 210, CP: "C"}
+	options, err := service.Service.SubscribeOption([]c.Option{call1, call2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer options.Close()
+	postEquity := func(source c.QuoteSource, symbol string, price float64) {
+		t.Helper()
+		update := c.NewQuoteUpdate(c.AssetQuote{Symbol: symbol, Class: c.AssetClassStock, QuoteSource: source, QuotePrice: c.QuotePrice{Price: price}}, 0, 0)
+		service.mu.Lock()
+		service.handleQuote(source, update)
+		service.mu.Unlock()
+	}
+	postOption := func(source c.QuoteSource, option c.Option, last float64) {
+		t.Helper()
+		service.mu.Lock()
+		service.handleOptionQuote(c.OptionQuote{Option: option, LastPrice: last, QuoteSource: source})
+		service.mu.Unlock()
+	}
+	postEquity(c.QuoteSourceYahoo, "AAPL", 90)
+	wantQuote(t, equities.Updates(), c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 90}})
+	postEquity(c.QuoteSourceYahoo, "MSFT", 200)
+	wantQuote(t, equities.Updates(), c.AssetQuote{Symbol: "MSFT", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 200}})
+	postOption(c.QuoteSourceYahoo, call1, 1)
+	postOption(c.QuoteSourceYahoo, call2, 2)
+	<-options.Updates()
+	<-options.Updates()
+	postEquity(c.QuoteSourceAlpaca, "AAPL", 100)
+	wantQuote(t, equities.Updates(), c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca, QuotePrice: c.QuotePrice{Price: 100}})
+	postOption(c.QuoteSourceAlpaca, call1, 3)
+	<-options.Updates()
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return !status.Pending })
+	if got := service.Status()[c.QuoteSourceYahoo].AppliedOptions; !slices.Equal(got, []c.Option{call2}) {
+		t.Fatalf("Yahoo option fallback after first handoff = %v, want second call", got)
+	}
+	postEquity(c.QuoteSourceYahoo, "AAPL", 91)
+	postOption(c.QuoteSourceYahoo, call1, 4)
+	wantNoQuote(t, equities.Updates())
+	select {
+	case got := <-options.Updates():
+		t.Fatalf("stale Yahoo option update: %+v", got)
+	default:
+	}
+	postOption(c.QuoteSourceAlpaca, call2, 4)
+	<-options.Updates()
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return !status.Pending })
+	if got := service.Status()[c.QuoteSourceYahoo].AppliedOptions; len(got) != 0 {
+		t.Fatalf("Yahoo options after full contract coverage = %v, want empty", got)
+	}
+	if got, ok := service.LatestPrice("AAPL"); !ok || got != 100 {
+		t.Fatalf("AAPL latest = %v %t", got, ok)
+	}
+	if got, ok := service.LatestOptionPrice(call1); !ok || got != 3 {
+		t.Fatalf("AAPL call latest = %v %t", got, ok)
+	}
+	yahoo.mu.RLock()
+	periodic := yahoo.periodic
+	yahoo.mu.RUnlock()
+	if len(periodic) != 1 || periodic[0] != "MSFT" {
+		t.Fatalf("Yahoo periodic equities = %v, want [MSFT]", periodic)
+	}
+	postEquity(c.QuoteSourceAlpaca, "MSFT", 210)
+	wantQuote(t, equities.Updates(), c.AssetQuote{Symbol: "MSFT", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca, QuotePrice: c.QuotePrice{Price: 210}})
+	awaitProviderStatus(t, service, c.QuoteSourceYahoo, func(status ProviderStatus) bool { return !status.Pending })
+	yahoo.mu.RLock()
+	periodic = yahoo.periodic
+	yahoo.mu.RUnlock()
+	if len(periodic) != 0 {
+		t.Fatalf("Yahoo periodic equities after full coverage = %v, want empty", periodic)
 	}
 }
 
