@@ -315,6 +315,7 @@ func (o *Service) handleOptionQuote(update c.OptionQuote) {
 			if _, covered := o.coveredOptions[option]; !covered {
 				o.coveredOptions[option] = struct{}{}
 				firstHandoff = true
+				slog.Info("Yahoo option fallback disabled after live price", "option", option, "source", update.QuoteSource)
 				o.reconcileOptions()
 			}
 		}

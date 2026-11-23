@@ -192,6 +192,7 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 		if _, demanded := o.routingUnion()[symbol]; demanded {
 			if _, covered := o.coveredSymbols[symbol]; !covered {
 				o.coveredSymbols[symbol] = accepted.Clone()
+				slog.Info("Yahoo quote fallback disabled after live price", "symbol", symbol, "source", source)
 				o.reconcileSymbols()
 			} else {
 				o.coveredSymbols[symbol] = accepted.Clone()
