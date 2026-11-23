@@ -33,6 +33,11 @@ func (w *WatchCmd) Name() string {
 	return "WATCH"
 }
 
+func (w *WatchCmd) ExecuteTUI(ctx context.Context, appCtx *setup.AppCtx, args map[string]string) (TUIResult, error) {
+	content, err := w.Execute(ctx, appCtx, args, true)
+	return TUIResult{Content: content}, err
+}
+
 func (w *WatchCmd) Execute(ctx context.Context, appCtx *setup.AppCtx, args map[string]string, jsonOutput bool) (string, error) {
 	portfolio, err := parseWatchArgs(args)
 	if err != nil {

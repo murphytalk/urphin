@@ -473,6 +473,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				return m, nil
 			}
+			if name == "WATCH" {
+				if portfolio, ok := args["portfolio"]; ok {
+					selected := slices.IndexFunc(m.lists, func(list databackend.Watchlist) bool {
+						return strings.EqualFold(list.Name, portfolio)
+					})
+					if selected < 0 {
+						m.commandErr = fmt.Errorf("watchlist %q not found", portfolio)
+						m.syncCommandPromptStyle()
+						return m, nil
+					}
+					m.selected = selected
+					m.commandInput.Reset()
+					m.commandErr = nil
+					m.result.Clear()
+					m.syncCommandPromptStyle()
+					cmd := m.changeWatchlist(0)
+					m.resize()
+					return m, cmd
+				}
+			}
 			m.commandErr = nil
 			if m.commandInvocation != nil {
 				m.commandInvocation.cancel()
@@ -658,10 +678,12 @@ func (m *Model) subscriptionSymbols() []string {
 }
 
 func (m *Model) changeWatchlist(step int) tea.Cmd {
-	if len(m.lists) < 2 {
+	if len(m.lists) == 0 || (step != 0 && len(m.lists) < 2) {
 		return nil
 	}
-	m.selected = (m.selected + step + len(m.lists)) % len(m.lists)
+	if step != 0 {
+		m.selected = (m.selected + step + len(m.lists)) % len(m.lists)
+	}
 	m.app.Settings.SelectedWatchlist = m.lists[m.selected].Name
 	m.viewport.GotoTop()
 	cmd := m.setWatchlist()
