@@ -121,6 +121,82 @@ func TestSetSymbolsClonesInputAndQuoteCurrencyRequestsUseQuoteResponse(t *testin
 	}
 }
 
+func TestPeriodicSymbolsLimitYahooRequests(t *testing.T) {
+	requests := make(chan []string, 4)
+	var msftCalls atomic.Int32
+	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
+		query, _ := url.ParseQuery(request.URL.RawQuery)
+		symbols := strings.Split(query.Get("symbols"), ",")
+		requests <- symbols
+		quotes := make([]unary.ResponseQuote, 0, len(symbols))
+		for _, symbol := range symbols {
+			price := float64(10)
+			if symbol == "MSFT" && msftCalls.Add(1) > 1 {
+				price = 20
+			}
+			quotes = append(quotes, quoteResponse(symbol, symbol, "USD", price))
+		}
+		return response(t, request, quotes...), nil
+	})
+	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api}, WithRefreshInterval(20*time.Millisecond))
+	t.Cleanup(func() { _ = monitor.Stop() })
+	if err := monitor.SetSymbols(context.Background(), []string{"AAPL", "MSFT"}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.SetPeriodicSymbols(context.Background(), []string{"MSFT"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case got := <-requests:
+			if slices.Equal(got, []string{"MSFT"}) {
+				goto periodicSeen
+			}
+		case <-deadline:
+			t.Fatal("MSFT periodic request did not occur")
+		}
+	}
+periodicSeen:
+	waitFor(t, func() bool {
+		quotes, err := monitor.Snapshot(context.Background(), false)
+		return err == nil && len(quotes) == 2 && quotes[0].Symbol == "AAPL" && quotes[1].Symbol == "MSFT" && quotes[1].QuotePrice.Price == 20
+	}, "subset poll did not update MSFT while retaining AAPL")
+	quotes, err := monitor.Snapshot(context.Background(), false)
+	if err != nil || len(quotes) != 2 || quotes[0].QuotePrice.Price != 10 {
+		t.Fatalf("Snapshot(false) = %v, %v; want retained AAPL quote", quotes, err)
+	}
+}
+
+func TestEmptyYahooMonitorStartsAndResumesPolling(t *testing.T) {
+	var calls atomic.Int32
+	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return response(t, request, quoteResponse("IBM", "IBM", "USD", 10)), nil
+	})
+	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api}, WithRefreshInterval(10*time.Millisecond))
+	t.Cleanup(func() { _ = monitor.Stop() })
+	if err := monitor.SetSymbols(context.Background(), nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := monitor.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond)
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("empty monitor made %d equity requests", got)
+	}
+	if err := monitor.SetSymbols(context.Background(), []string{"IBM"}, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("resumed symbol requests = %d, want 1", got)
+	}
+}
+
 func TestSnapshotsOwnIndependentPricesAndConcurrentCallsAreSafe(t *testing.T) {
 	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
 		return response(t, request, quoteResponse("AAPL", "Apple", "USD", 42)), nil

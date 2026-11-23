@@ -23,6 +23,7 @@ type commandKind uint8
 const (
 	startCommand commandKind = iota
 	setSymbolsCommand
+	setPeriodicSymbolsCommand
 	setOptionsCommand
 	getSnapshotCommand
 	getFreshSnapshotCommand
@@ -34,6 +35,7 @@ const (
 type command struct {
 	kind         commandKind
 	symbols      []string
+	periodicSet  bool
 	options      []c.Option
 	generation   int
 	ctx          context.Context
@@ -161,6 +163,12 @@ func (m *MonitorPriceYahoo) SetSymbols(ctx context.Context, symbols []string, ge
 	return result.err
 }
 
+// SetPeriodicSymbols limits timer refreshes without changing logical membership.
+func (m *MonitorPriceYahoo) SetPeriodicSymbols(ctx context.Context, symbols []string) error {
+	result := m.call(command{kind: setPeriodicSymbolsCommand, ctx: ctx, symbols: slices.Clone(symbols), periodicSet: true})
+	return result.err
+}
+
 // SetOptions replaces the option contracts polled by Yahoo.
 func (m *MonitorPriceYahoo) SetOptions(ctx context.Context, options []c.Option) error {
 	result := m.call(command{kind: setOptionsCommand, ctx: ctx, options: slices.Clone(options)})
@@ -219,6 +227,8 @@ type priceOwner struct {
 	configID            uint64
 	generation          int
 	symbols             []string
+	periodicSymbols     []string
+	periodicSet         bool
 	options             []c.Option
 	optionConfigID      uint64
 	activeOptionID      uint64
@@ -319,6 +329,12 @@ func (owner *priceOwner) handle(cmd command) bool {
 			symbols: slices.Clone(owner.symbols), waiters: []fetchWaiter{{kind: cmd.kind, reply: cmd.reply}}})
 	case setSymbolsCommand:
 		owner.setSymbols(cmd)
+	case setPeriodicSymbolsCommand:
+		owner.periodicSymbols = slices.Clone(cmd.symbols)
+		slices.Sort(owner.periodicSymbols)
+		owner.periodicSymbols = slices.Compact(owner.periodicSymbols)
+		owner.periodicSet = true
+		owner.reply(cmd.reply, nil, nil)
 	case setOptionsCommand:
 		owner.setOptions(cmd)
 	case setQuoteUpdatesCommand:
@@ -353,9 +369,21 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	owner.configID++
 	owner.generation = cmd.generation
 	owner.symbols = symbols
-	owner.quotes = make(map[string]c.AssetQuote)
-	owner.quoteOrder = nil
-	owner.revisions = make(map[string]int64, len(symbols))
+	retained := make(map[string]c.AssetQuote, len(symbols))
+	order := make([]string, 0, len(symbols))
+	for _, symbol := range owner.quoteOrder {
+		if quote, ok := owner.quotes[symbol]; ok && slices.Contains(symbols, symbol) {
+			retained[symbol] = quote
+			order = append(order, symbol)
+		}
+	}
+	owner.quotes = retained
+	owner.quoteOrder = order
+	for symbol := range owner.revisions {
+		if !slices.Contains(symbols, symbol) {
+			delete(owner.revisions, symbol)
+		}
+	}
 	owner.pendingUpdates = make(map[string]c.QuoteUpdate)
 	owner.updateOrder = nil
 	var waiters []fetchWaiter
@@ -399,11 +427,31 @@ func (owner *priceOwner) setOptions(cmd command) {
 }
 
 func (owner *priceOwner) enqueue(fetch *quoteFetch) {
+	if len(fetch.symbols) == 0 {
+		startedNow := false
+		for _, waiter := range fetch.waiters {
+			if waiter.kind == startCommand {
+				owner.started = true
+				owner.startPending = false
+				owner.ticker = time.NewTicker(owner.monitor.config.refreshInterval)
+				startedNow = true
+			}
+			if waiter.kind == getFreshSnapshotCommand {
+				owner.reply(waiter.reply, owner.snapshot(), nil)
+			} else {
+				owner.reply(waiter.reply, nil, nil)
+			}
+		}
+		if startedNow {
+			owner.refreshOptions()
+		}
+		return
+	}
 	if owner.active == nil {
 		owner.startFetch(fetch)
 		return
 	}
-	if owner.active.configID == fetch.configID {
+	if owner.active.configID == fetch.configID && slices.Equal(owner.active.symbols, fetch.symbols) {
 		// shortcut: coalesced callers share first fetch context; split fetches if independent cancellation becomes required.
 		owner.active.publish = owner.active.publish || fetch.publish
 		owner.active.reportErrors = owner.active.reportErrors || fetch.reportErrors
@@ -414,10 +462,19 @@ func (owner *priceOwner) enqueue(fetch *quoteFetch) {
 		owner.pending = fetch
 		return
 	}
-	owner.pending.configID = fetch.configID
-	owner.pending.ctx = fetch.ctx
-	owner.pending.generation = fetch.generation
-	owner.pending.symbols = fetch.symbols
+	if owner.pending.configID == fetch.configID {
+		for _, symbol := range fetch.symbols {
+			if !slices.Contains(owner.pending.symbols, symbol) {
+				owner.pending.symbols = append(owner.pending.symbols, symbol)
+			}
+		}
+		slices.Sort(owner.pending.symbols)
+	} else {
+		owner.pending.configID = fetch.configID
+		owner.pending.ctx = fetch.ctx
+		owner.pending.generation = fetch.generation
+		owner.pending.symbols = slices.Clone(fetch.symbols)
+	}
 	owner.pending.publish = owner.pending.publish || fetch.publish
 	owner.pending.reportErrors = owner.pending.reportErrors || fetch.reportErrors
 	owner.pending.waiters = append(owner.pending.waiters, fetch.waiters...)
@@ -502,8 +559,8 @@ func (owner *priceOwner) finishFetch(result fetchResult) {
 
 func (owner *priceOwner) accept(quotes []c.AssetQuote, fetch *quoteFetch) {
 	previous := owner.quotes
-	current := make(map[string]c.AssetQuote, len(quotes))
-	order := make([]string, 0, len(quotes))
+	current := maps.Clone(previous)
+	order := slices.Clone(owner.quoteOrder)
 	for _, quote := range quotes {
 		if quote.Symbol == "" {
 			quote.Symbol = quote.Meta.SymbolInSourceAPI
@@ -534,11 +591,20 @@ func (owner *priceOwner) accept(quotes []c.AssetQuote, fetch *quoteFetch) {
 }
 
 func (owner *priceOwner) refresh() {
-	if len(owner.symbols) == 0 {
+	symbols := owner.symbols
+	if owner.periodicSet {
+		symbols = make([]string, 0, len(owner.periodicSymbols))
+		for _, symbol := range owner.periodicSymbols {
+			if slices.Contains(owner.symbols, symbol) {
+				symbols = append(symbols, symbol)
+			}
+		}
+	}
+	if len(symbols) == 0 {
 		return
 	}
 	owner.enqueue(&quoteFetch{configID: owner.configID, generation: owner.generation,
-		symbols: slices.Clone(owner.symbols), publish: true, reportErrors: true})
+		symbols: slices.Clone(symbols), publish: true, reportErrors: true})
 }
 
 func (owner *priceOwner) refreshOptions() {
@@ -576,7 +642,7 @@ func (owner *priceOwner) refreshOptions() {
 					errs = append(errs, fmt.Errorf("%s %s %s %.8g: %w", option.Ticker, option.CP, option.Expiry, option.Strike, err))
 					continue
 				}
-				fetch.quotes = append(fetch.quotes, c.OptionQuote{Option: option, LastPrice: snapshot.Price})
+				fetch.quotes = append(fetch.quotes, c.OptionQuote{Option: option, LastPrice: snapshot.Price, QuoteSource: c.QuoteSourceYahoo})
 			}
 			fetch.err = errors.Join(errs...)
 		}

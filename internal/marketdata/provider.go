@@ -1,6 +1,7 @@
 package mktdata
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -39,24 +40,28 @@ type providerEvent struct {
 }
 
 type providerRuntime struct {
-	feed           mktfeed.MktDataFeed
-	mu             sync.Mutex
-	kick           chan struct{}
-	desired        []string
-	visible        []string
-	appliedVisible []string
-	applied        []string
-	desiredOptions []c.Option
-	appliedOptions []c.Option
-	seeds          []seedTarget
-	needsSnapshot  bool
-	startNeeded    bool
-	started        bool
-	startup        bool
-	generation     int
-	nextGen        int
-	lastErr        error
-	backoff        time.Duration
+	feed               mktfeed.MktDataFeed
+	mu                 sync.Mutex
+	kick               chan struct{}
+	desired            []string
+	desiredPeriodic    []string
+	appliedPeriodic    []string
+	desiredPeriodicSet bool
+	appliedPeriodicSet bool
+	visible            []string
+	appliedVisible     []string
+	applied            []string
+	desiredOptions     []c.Option
+	appliedOptions     []c.Option
+	seeds              []seedTarget
+	needsSnapshot      bool
+	startNeeded        bool
+	started            bool
+	startup            bool
+	generation         int
+	nextGen            int
+	lastErr            error
+	backoff            time.Duration
 }
 
 func (p *providerRuntime) signal() {
@@ -76,6 +81,17 @@ func (p *providerRuntime) setDesired(symbols []string, seeds []seedTarget) {
 	}
 	p.mu.Unlock()
 	if changed || len(seeds) > 0 {
+		p.signal()
+	}
+}
+
+func (p *providerRuntime) setDesiredPeriodic(symbols []string) {
+	p.mu.Lock()
+	changed := !p.desiredPeriodicSet || !slices.Equal(p.desiredPeriodic, symbols)
+	p.desiredPeriodic = slices.Clone(symbols)
+	p.desiredPeriodicSet = true
+	p.mu.Unlock()
+	if changed {
 		p.signal()
 	}
 }
@@ -119,7 +135,7 @@ func (p *providerRuntime) status() ProviderStatus {
 		DesiredSymbols: slices.Clone(p.desired), AppliedSymbols: slices.Clone(p.applied),
 		DesiredOptions: slices.Clone(p.desiredOptions), AppliedOptions: slices.Clone(p.appliedOptions),
 		Generation: p.generation,
-		Pending:    p.startNeeded && !p.started || p.needsSnapshot || !slices.Equal(p.desired, p.applied) || !slices.Equal(p.desiredOptions, p.appliedOptions) || p.lastErr != nil || !slices.Equal(p.visible, p.appliedVisible),
+		Pending:    p.startNeeded && !p.started || p.needsSnapshot || !slices.Equal(p.desired, p.applied) || !slices.Equal(p.desiredOptions, p.appliedOptions) || p.desiredPeriodicSet && (!p.appliedPeriodicSet || !slices.Equal(p.desiredPeriodic, p.appliedPeriodic)) || p.lastErr != nil || !slices.Equal(p.visible, p.appliedVisible),
 		LastError:  p.lastErr,
 	}
 }
@@ -139,11 +155,14 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 			}
 			p.mu.Lock()
 			symbols := slices.Clone(p.desired)
+			periodic := slices.Clone(p.desiredPeriodic)
+			periodicSet := p.desiredPeriodicSet
 			options := slices.Clone(p.desiredOptions)
 			visible := slices.Clone(p.visible)
 			setVisible := !slices.Equal(visible, p.appliedVisible)
 			appliedCount := len(p.applied)
 			setSymbols := !slices.Equal(symbols, p.applied)
+			setPeriodic := periodicSet && (!p.appliedPeriodicSet || !slices.Equal(periodic, p.appliedPeriodic))
 			setOptions := !slices.Equal(options, p.appliedOptions)
 			start := p.startNeeded && !p.started
 			snapshot := p.needsSnapshot || setSymbols || start
@@ -155,7 +174,7 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 				generation = p.nextGen
 			}
 			p.mu.Unlock()
-			if !setSymbols && !setOptions && !setVisible && !start && !snapshot {
+			if !setSymbols && !setPeriodic && !setOptions && !setVisible && !start && !snapshot {
 				break
 			}
 			event := providerEvent{source: source, generation: generation, symbols: symbols, options: options, seeds: seeds, startup: startup}
@@ -174,6 +193,25 @@ func (o *Service) runProvider(source c.QuoteSource, p *providerRuntime) {
 				}
 				if event.err == nil {
 					event.setSymbols = true
+				}
+			}
+			if event.err == nil && setPeriodic {
+				if feed, ok := p.feed.(interface {
+					SetPeriodicSymbols(context.Context, []string) error
+				}); ok {
+					if err := feed.SetPeriodicSymbols(ctx, periodic); err != nil {
+						event.stage, event.err = "set periodic subscriptions", err
+					} else {
+						p.mu.Lock()
+						p.appliedPeriodic = slices.Clone(periodic)
+						p.appliedPeriodicSet = true
+						p.mu.Unlock()
+					}
+				} else {
+					p.mu.Lock()
+					p.appliedPeriodic = slices.Clone(periodic)
+					p.appliedPeriodicSet = true
+					p.mu.Unlock()
 				}
 			}
 			if event.err == nil && start {
