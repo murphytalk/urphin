@@ -206,10 +206,15 @@ func getCellWidths(assets []*c.Asset) row.CellWidthsContainer {
 	for _, asset := range assets {
 		format := func(value float64) string { return u.ConvertFloatToString(value, asset.Meta.IsVariablePrecision) }
 		quoteLength := 3 // N/A must fit even before the first quote.
+		var fiftyTwoWeekHigh, fiftyTwoWeekLow float64
+		if asset.Fundamental != nil {
+			fiftyTwoWeekHigh = asset.Fundamental.FiftyTwoWeekHigh
+			fiftyTwoWeekLow = asset.Fundamental.FiftyTwoWeekLow
+		}
 		for _, value := range []float64{
 			asset.QuotePrice.Price, asset.QuotePrice.PricePrevClose, asset.QuotePrice.PriceOpen,
 			asset.QuotePrice.PriceDayHigh, asset.QuotePrice.PriceDayLow,
-			asset.QuoteExtended.FiftyTwoWeekHigh, asset.QuoteExtended.FiftyTwoWeekLow,
+			fiftyTwoWeekHigh, fiftyTwoWeekLow,
 			asset.QuoteFutures.IndexPrice,
 		} {
 			quoteLength = max(quoteLength, lipgloss.Width(format(value)))

@@ -73,28 +73,17 @@ func (r *router) accept(source c.QuoteSource, update c.QuoteUpdate, symbol strin
 		if yahoo.Name != "" && (source != c.QuoteSourceYahoo || update.Name == "") {
 			update.Name = yahoo.Name
 		}
+		update.Fundamental = mergeFundamental(update.Fundamental, yahoo.Fundamental)
 		if update.QuoteExtended.MarketCap == 0 {
 			update.QuoteExtended.MarketCap = yahoo.QuoteExtended.MarketCap
-		}
-		if update.QuoteExtended.FiftyTwoWeekHigh == 0 {
-			update.QuoteExtended.FiftyTwoWeekHigh = yahoo.QuoteExtended.FiftyTwoWeekHigh
-		}
-		if update.QuoteExtended.FiftyTwoWeekLow == 0 {
-			update.QuoteExtended.FiftyTwoWeekLow = yahoo.QuoteExtended.FiftyTwoWeekLow
 		}
 		if update.QuoteExtended.Volume == 0 {
 			update.QuoteExtended.Volume = yahoo.QuoteExtended.Volume
 		}
-		if update.Sector == "" {
-			update.Sector = yahoo.Sector
-		}
-		if update.Industry == "" {
-			update.Industry = yahoo.Industry
-		}
 	}
 	if source == c.QuoteSourceYahoo {
 		r.fundamentals[symbol] = c.AssetQuote{
-			Name: update.Name, Sector: update.Sector, Industry: update.Industry, QuoteExtended: update.QuoteExtended,
+			Name: update.Name, Fundamental: mergeFundamental(nil, update.Fundamental), QuoteExtended: update.QuoteExtended,
 		}
 	}
 	if r.versions[source] == nil {
@@ -192,24 +181,35 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 		previous := o.fundamentals[symbol]
 		current := previous
 		current.Ticker = symbol
-		classificationChanged := false
+		classificationChanged := accepted.Name != "" && accepted.Name != current.Name
 		if accepted.Name != "" {
-			classificationChanged = classificationChanged || accepted.Name != current.Name
 			current.Name = accepted.Name
 		}
-		if accepted.Sector != "" {
-			classificationChanged = classificationChanged || accepted.Sector != current.Sector
-			current.Sector = accepted.Sector
-		}
-		if accepted.Industry != "" {
-			classificationChanged = classificationChanged || accepted.Industry != current.Industry
-			current.Industry = accepted.Industry
-		}
-		if accepted.QuoteExtended.FiftyTwoWeekHigh != 0 {
-			current.FiftyTwoWeekHigh = accepted.QuoteExtended.FiftyTwoWeekHigh
-		}
-		if accepted.QuoteExtended.FiftyTwoWeekLow != 0 {
-			current.FiftyTwoWeekLow = accepted.QuoteExtended.FiftyTwoWeekLow
+		if fundamental := accepted.Fundamental; fundamental != nil {
+			if fundamental.Name != "" {
+				classificationChanged = classificationChanged || fundamental.Name != current.Name
+			}
+			if fundamental.Sector != "" {
+				classificationChanged = classificationChanged || fundamental.Sector != current.Sector
+			}
+			if fundamental.Industry != "" {
+				classificationChanged = classificationChanged || fundamental.Industry != current.Industry
+			}
+			if fundamental.Name != "" {
+				current.Name = fundamental.Name
+			}
+			if fundamental.Sector != "" {
+				current.Sector = fundamental.Sector
+			}
+			if fundamental.Industry != "" {
+				current.Industry = fundamental.Industry
+			}
+			if fundamental.FiftyTwoWeekHigh != 0 {
+				current.FiftyTwoWeekHigh = fundamental.FiftyTwoWeekHigh
+			}
+			if fundamental.FiftyTwoWeekLow != 0 {
+				current.FiftyTwoWeekLow = fundamental.FiftyTwoWeekLow
+			}
 		}
 		if current != previous {
 			o.fundamentals[symbol] = current
@@ -221,7 +221,7 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 	if source == c.QuoteSourceYahoo {
 		if live, covered := o.coveredSymbols[symbol]; covered {
 			enriched := mergeYahooMetadata(live, accepted)
-			if enriched.Name == live.Name && enriched.Sector == live.Sector && enriched.Industry == live.Industry && enriched.QuoteExtended == live.QuoteExtended {
+			if enriched.Name == live.Name && sameFundamental(enriched.Fundamental, live.Fundamental) && enriched.QuoteExtended == live.QuoteExtended {
 				return
 			}
 			o.coveredSymbols[symbol] = enriched.Clone()
@@ -257,25 +257,54 @@ func mergeYahooMetadata(live, yahoo c.QuoteUpdate) c.QuoteUpdate {
 	if live.Name == "" {
 		live.Name = yahoo.Name
 	}
-	if live.Sector == "" {
-		live.Sector = yahoo.Sector
-	}
-	if live.Industry == "" {
-		live.Industry = yahoo.Industry
-	}
+	live.Fundamental = mergeFundamental(live.Fundamental, yahoo.Fundamental)
 	if live.QuoteExtended.MarketCap == 0 {
 		live.QuoteExtended.MarketCap = yahoo.QuoteExtended.MarketCap
 	}
 	if live.QuoteExtended.Volume == 0 {
 		live.QuoteExtended.Volume = yahoo.QuoteExtended.Volume
 	}
-	if live.QuoteExtended.FiftyTwoWeekHigh == 0 {
-		live.QuoteExtended.FiftyTwoWeekHigh = yahoo.QuoteExtended.FiftyTwoWeekHigh
-	}
-	if live.QuoteExtended.FiftyTwoWeekLow == 0 {
-		live.QuoteExtended.FiftyTwoWeekLow = yahoo.QuoteExtended.FiftyTwoWeekLow
-	}
 	return live
+}
+
+func mergeFundamental(live, yahoo *c.Fundamental) *c.Fundamental {
+	if yahoo == nil {
+		if live == nil {
+			return nil
+		}
+		copy := *live
+		return &copy
+	}
+	var merged c.Fundamental
+	if live != nil {
+		merged = *live
+	}
+	if merged.Ticker == "" {
+		merged.Ticker = yahoo.Ticker
+	}
+	if merged.Name == "" {
+		merged.Name = yahoo.Name
+	}
+	if merged.Sector == "" {
+		merged.Sector = yahoo.Sector
+	}
+	if merged.Industry == "" {
+		merged.Industry = yahoo.Industry
+	}
+	if merged.FiftyTwoWeekHigh == 0 {
+		merged.FiftyTwoWeekHigh = yahoo.FiftyTwoWeekHigh
+	}
+	if merged.FiftyTwoWeekLow == 0 {
+		merged.FiftyTwoWeekLow = yahoo.FiftyTwoWeekLow
+	}
+	return &merged
+}
+
+func sameFundamental(left, right *c.Fundamental) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	return *left == *right
 }
 
 func finiteQuotePrice(price float64) bool { return !math.IsNaN(price) && !math.IsInf(price, 0) }

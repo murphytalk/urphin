@@ -485,13 +485,18 @@ func textQuoteRange(asset *c.Asset, styles theme.Styles) string {
 	}
 
 	if asset.QuotePrice.PriceDayHigh != 0.0 && asset.QuotePrice.PriceDayLow != 0.0 {
+		var fiftyTwoWeekHigh, fiftyTwoWeekLow float64
+		if asset.Fundamental != nil {
+			fiftyTwoWeekHigh = asset.Fundamental.FiftyTwoWeekHigh
+			fiftyTwoWeekLow = asset.Fundamental.FiftyTwoWeekLow
+		}
 		return u.ConvertFloatToString(asset.QuotePrice.PriceDayLow, asset.Meta.IsVariablePrecision) +
 			styles.Text(" - ") +
 			u.ConvertFloatToString(asset.QuotePrice.PriceDayHigh, asset.Meta.IsVariablePrecision) +
 			"\n" +
-			u.ConvertFloatToString(asset.QuoteExtended.FiftyTwoWeekLow, asset.Meta.IsVariablePrecision) +
+			u.ConvertFloatToString(fiftyTwoWeekLow, asset.Meta.IsVariablePrecision) +
 			styles.Text(" - ") +
-			u.ConvertFloatToString(asset.QuoteExtended.FiftyTwoWeekHigh, asset.Meta.IsVariablePrecision)
+			u.ConvertFloatToString(fiftyTwoWeekHigh, asset.Meta.IsVariablePrecision)
 	}
 
 	return ""

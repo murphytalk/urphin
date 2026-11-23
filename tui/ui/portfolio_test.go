@@ -313,7 +313,8 @@ func TestPortfolioAssetsPreserveQuoteFieldsBothCostsAndRequestedOrder(t *testing
 	})
 	q := uiTestQuote("A", "USD", 100, 90)
 	q.Class, q.QuoteSource = c.AssetClassFutures, c.QuoteSourceAlpaca
-	q.QuoteExtended = c.QuoteExtended{MarketCap: 1000, Volume: 500, FiftyTwoWeekHigh: 150, FiftyTwoWeekLow: 50}
+	q.Fundamental = &c.Fundamental{Ticker: "A", Name: q.Name, FiftyTwoWeekHigh: 150, FiftyTwoWeekLow: 50}
+	q.QuoteExtended = c.QuoteExtended{MarketCap: 1000, Volume: 500}
 	q.QuoteFutures = c.QuoteFutures{SymbolUnderlying: "INDEX", IndexPrice: 90, Basis: 1.5, OpenInterest: 7, Expiry: "2027", ContractSize: 2}
 	q.Exchange = c.Exchange{Name: "Test", Delay: 15, State: c.ExchangeStateOpen, IsActive: true}
 	q.Meta = c.Meta{OrderIndex: 99, IsVariablePrecision: true, SymbolInSourceAPI: "SOURCE"}
@@ -324,7 +325,7 @@ func TestPortfolioAssetsPreserveQuoteFieldsBothCostsAndRequestedOrder(t *testing
 		t.Fatal("assets lost requested order or used backend/provider aliases")
 	}
 	localQuote, _ := q.ToAssetQuote(nil)
-	if asset.Name != q.Name || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != localQuote.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.quotes["A"].Meta.OrderIndex != 99 {
+	if asset.Name != q.Name || asset.Fundamental == nil || *asset.Fundamental != *q.Fundamental || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != localQuote.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.quotes["A"].Meta.OrderIndex != 99 {
 		t.Fatal("quote metadata not forwarded intact or source cache mutated")
 	}
 	want := c.Position{Quantity: 2, UnitCost: 80, AvgCost: 70, Cost: 160, UnitValue: 100, Value: 200, DayChange: c.PositionChange{Amount: 20, Percent: 20.0 / 180 * 100}, TotalChange: c.PositionChange{Amount: 40, Percent: 25}, Weight: 100}

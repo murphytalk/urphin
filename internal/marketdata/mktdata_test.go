@@ -571,14 +571,14 @@ func TestYahooMetadataEnrichesCoveredLiveQuoteAndSeedsLateSubscriber(t *testing.
 	}
 	post(c.QuoteSourceAlpaca, c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}})
 	wantQuote(t, first, c.AssetQuote{Symbol: "AAPL", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca})
-	post(c.QuoteSourceYahoo, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 90}, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
-	wantQuote(t, first, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
+	post(c.QuoteSourceYahoo, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Fundamental: &c.Fundamental{Ticker: "AAPL", Name: "Apple", FiftyTwoWeekHigh: 200}, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 90}})
+	wantQuote(t, first, c.AssetQuote{Symbol: "AAPL", Name: "Apple", Fundamental: &c.Fundamental{Ticker: "AAPL", Name: "Apple", FiftyTwoWeekHigh: 200}, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca})
 	second, err := service.Service.Subscribe([]string{"AAPL"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	wantQuote(t, second.Updates(), c.AssetQuote{Symbol: "AAPL", Name: "Apple", Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca, QuoteExtended: c.QuoteExtended{FiftyTwoWeekHigh: 200}})
+	wantQuote(t, second.Updates(), c.AssetQuote{Symbol: "AAPL", Name: "Apple", Fundamental: &c.Fundamental{Ticker: "AAPL", Name: "Apple", FiftyTwoWeekHigh: 200}, Class: c.AssetClassStock, QuotePrice: c.QuotePrice{Price: 100}, QuoteSource: c.QuoteSourceAlpaca})
 }
 
 func TestEquityCoverageEndsWithLastSubscription(t *testing.T) {
@@ -758,7 +758,8 @@ func TestSubscriptionSnapshotDoesNotOverwriteNewerLiveQuote(t *testing.T) {
 func TestLatestProviderQuoteKeepsYahooNameFromSnapshot(t *testing.T) {
 	yahooQuote := c.AssetQuote{
 		Symbol: "AAPL", Name: "Apple Inc.", Class: c.AssetClassStock,
-		QuoteExtended: c.QuoteExtended{MarketCap: 1000, FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80, Volume: 300},
+		Fundamental:   &c.Fundamental{Ticker: "AAPL", Name: "Apple Inc.", FiftyTwoWeekHigh: 200, FiftyTwoWeekLow: 80},
+		QuoteExtended: c.QuoteExtended{MarketCap: 1000, Volume: 300},
 		QuoteSource:   c.QuoteSourceYahoo, QuotePrice: c.QuotePrice{Price: 100},
 	}
 	service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{
