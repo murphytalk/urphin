@@ -643,19 +643,29 @@ func TestEquityCoverageRequiresAcceptedUsablePriceAndDemand(t *testing.T) {
 		price        *float64
 		class        c.AssetClass
 		generation   int
+		revision     int64
+		fx           bool
 		want         bool
 	}{
 		{name: "nil price", symbol: "AAPL", class: c.AssetClassStock},
 		{name: "zero price", symbol: "AAPL", price: ptrFloat(0), class: c.AssetClassStock},
 		{name: "NaN price", symbol: "AAPL", price: ptrFloat(math.NaN()), class: c.AssetClassStock},
 		{name: "unsubscribed", symbol: "MSFT", price: ptrFloat(10), class: c.AssetClassStock},
+		{name: "configured FX pair", symbol: "EURUSD", price: ptrFloat(1.1), class: c.AssetClassFx, fx: true},
 		{name: "positive equity", symbol: "AAPL", price: ptrFloat(10), class: c.AssetClassStock, want: true},
 		{name: "signed future", symbol: "AAPL", price: ptrFloat(-1), class: c.AssetClassFutures, want: true},
 		{name: "pending generation", symbol: "AAPL", price: ptrFloat(10), class: c.AssetClassStock, generation: 2},
+		{name: "rejected revision", symbol: "AAPL", price: ptrFloat(10), class: c.AssetClassStock, generation: 1, revision: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := newTestMktData(t, map[c.QuoteSource]mktfeed.MktDataFeed{c.QuoteSourceYahoo: &testMktDataFeed{}, c.QuoteSourceAlpaca: &testMktDataFeed{}})
-			subscribeQuotes(t, service, "watch", make(chan c.QuoteUpdate, 4), "AAPL")
+			watch := "AAPL"
+			if test.fx {
+				service.mu.Lock()
+				service.fxPairSet[test.symbol] = struct{}{}
+				service.mu.Unlock()
+			}
+			subscribeQuotes(t, service, "watch", make(chan c.QuoteUpdate, 4), watch)
 			var price *c.QuotePrice
 			if test.price != nil {
 				price = &c.QuotePrice{Price: *test.price}
@@ -668,7 +678,13 @@ func TestEquityCoverageRequiresAcceptedUsablePriceAndDemand(t *testing.T) {
 				service.feeds[c.QuoteSourceAlpaca].mu.Unlock()
 				service.mu.Unlock()
 			}
-			update := c.QuoteUpdate{Symbol: test.symbol, Class: test.class, QuotePrice: price, QuoteSource: c.QuoteSourceAlpaca, Generation: test.generation}
+			if test.revision != 0 {
+				service.mu.Lock()
+				service.router.generations[c.QuoteSourceAlpaca] = 1
+				service.router.versions[c.QuoteSourceAlpaca] = map[string]quoteVersion{"AAPL": {generation: 1, revision: 2}}
+				service.mu.Unlock()
+			}
+			update := c.QuoteUpdate{Symbol: test.symbol, Class: test.class, QuotePrice: price, QuoteSource: c.QuoteSourceAlpaca, Generation: test.generation, Revision: test.revision}
 			service.mu.Lock()
 			service.handleQuote(c.QuoteSourceAlpaca, update)
 			_, got := service.coveredSymbols[test.symbol]
