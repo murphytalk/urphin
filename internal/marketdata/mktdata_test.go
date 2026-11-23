@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -409,7 +410,7 @@ func wantQuote(t testing.TB, updates <-chan c.QuoteUpdate, want c.AssetQuote) {
 	select {
 	case got, open := <-updates:
 		local, hasPrice := got.ToAssetQuote(nil)
-		if !open || !hasPrice || local != want {
+		if !open || !hasPrice || !reflect.DeepEqual(local, want) {
 			t.Fatalf("quote = %+v (open=%t), want %+v", got, open, want)
 		}
 	case <-time.After(2 * time.Second):
@@ -1166,7 +1167,7 @@ func TestLatestProviderQuoteKeepsYahooNameFromSnapshot(t *testing.T) {
 
 	latest := c.AssetQuote{
 		Symbol: "AAPL", Class: c.AssetClassStock, QuoteSource: c.QuoteSourceAlpaca,
-		QuotePrice: c.QuotePrice{Price: 101}, Exchange: c.Exchange{Name: "Alpaca"},
+		Fundamental: yahooQuote.Fundamental, QuotePrice: c.QuotePrice{Price: 101}, Exchange: c.Exchange{Name: "Alpaca"},
 	}
 	service.routeQuote(c.QuoteSourceAlpaca, latest)
 	latest.Name = "Apple Inc."
