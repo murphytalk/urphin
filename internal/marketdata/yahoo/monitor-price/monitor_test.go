@@ -265,6 +265,50 @@ func TestFreshSnapshotWaitsForFullSetAfterSubsetFetch(t *testing.T) {
 	}
 }
 
+func TestSetSymbolsFetchesOnlyNewMembersAndRetainsSnapshots(t *testing.T) {
+	requests := make(chan []string, 8)
+	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
+		query, _ := url.ParseQuery(request.URL.RawQuery)
+		symbols := strings.Split(query.Get("symbols"), ",")
+		requests <- symbols
+		quotes := make([]unary.ResponseQuote, 0, len(symbols))
+		for _, symbol := range symbols {
+			quotes = append(quotes, quoteResponse(symbol, symbol, "USD", 10))
+		}
+		return response(t, request, quotes...), nil
+	})
+	monitor := NewMonitorPriceYahoo(Config{Ctx: context.Background(), UnaryAPI: api})
+	t.Cleanup(func() { _ = monitor.Stop() })
+	set := func(symbols []string, generation int, wantRequest []string) {
+		t.Helper()
+		if err := monitor.SetSymbols(context.Background(), symbols, generation); err != nil {
+			t.Fatal(err)
+		}
+		if wantRequest == nil {
+			return
+		}
+		if got := <-requests; !slices.Equal(got, wantRequest) {
+			t.Fatalf("requested symbols = %v, want %v", got, wantRequest)
+		}
+	}
+	set([]string{"AAPL", "MSFT"}, 1, []string{"AAPL", "MSFT"})
+	set([]string{"AAPL", "MSFT", "IBM"}, 2, []string{"IBM"})
+	quotes, err := monitor.Snapshot(context.Background(), false)
+	if err != nil || len(quotes) != 3 || quotes[0].Symbol != "AAPL" || quotes[1].Symbol != "MSFT" || quotes[2].Symbol != "IBM" {
+		t.Fatalf("retained snapshot = %v, %v", quotes, err)
+	}
+	set([]string{"MSFT", "IBM"}, 3, nil)
+	quotes, err = monitor.Snapshot(context.Background(), false)
+	if err != nil || len(quotes) != 2 || quotes[0].Symbol != "MSFT" || quotes[1].Symbol != "IBM" {
+		t.Fatalf("pruned snapshot = %v, %v", quotes, err)
+	}
+	set([]string{"MSFT", "IBM", "AAPL"}, 4, []string{"AAPL"})
+	quotes, err = monitor.Snapshot(context.Background(), false)
+	if err != nil || len(quotes) != 3 || quotes[2].Symbol != "AAPL" {
+		t.Fatalf("re-added snapshot = %v, %v", quotes, err)
+	}
+}
+
 func TestSnapshotsOwnIndependentPricesAndConcurrentCallsAreSafe(t *testing.T) {
 	api := testAPI(t, func(request *http.Request) (*http.Response, error) {
 		return response(t, request, quoteResponse("AAPL", "Apple", "USD", 42)), nil

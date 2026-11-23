@@ -366,6 +366,12 @@ func (owner *priceOwner) setSymbols(cmd command) {
 	symbols := cmd.symbols
 	slices.Sort(symbols)
 	symbols = slices.Compact(symbols)
+	newSymbols := make([]string, 0, len(symbols))
+	for _, symbol := range symbols {
+		if !slices.Contains(owner.symbols, symbol) {
+			newSymbols = append(newSymbols, symbol)
+		}
+	}
 	owner.configID++
 	owner.generation = cmd.generation
 	owner.symbols = symbols
@@ -402,7 +408,7 @@ func (owner *priceOwner) setSymbols(cmd command) {
 		owner.pending = nil
 	}
 	waiters = append(waiters, fetchWaiter{kind: cmd.kind, reply: cmd.reply})
-	owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation, symbols: symbols,
+	owner.enqueue(&quoteFetch{ctx: cmd.ctx, configID: owner.configID, generation: owner.generation, symbols: newSymbols,
 		publish: publish, reportErrors: reportErrors, waiters: waiters})
 }
 
