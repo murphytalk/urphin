@@ -1,6 +1,6 @@
 DTX       | Show stock transactions since date
 TX        | Show stock transactions
-FXTX      | Show stock transactions
+FXTX      | Show FX transactions
 AOTX      | Add an option transaction
 COTX      | Close an option transaction
 ATX       | Add a stock transaction
@@ -13,7 +13,7 @@ HELP      | Show help
 P         | List opt positions that made 90.0% profit
 CALL      | List callable tickers
 QQQ       | QQQ LEAP strategy advisor: show positions, delta, DTE, and recommendations
-MTX       | Show stock data in the past given months (or this month if not specified)
+MTX       | Summarize stock transactions since the selected month
 R         | Option trades return
 OPTCF     | Show total cash flow and fee for option trades
 PCAL      | PUT calendar

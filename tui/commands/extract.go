@@ -114,7 +114,7 @@ func keyFor(suffix string) (string, error) {
 
 // caseSensitiveKeys are looked up verbatim: prop_path is a case-sensitive JSON
 // path, value is free-form user text (PROP).
-var caseSensitiveKeys = map[string]bool{"prop_path": true, "value": true}
+var caseSensitiveKeys = map[string]bool{"prop_path": true, "value": true, "tickers": true}
 
 // normalize uppercases every other value once here: commands match values against
 // the database or uppercase keyword sets, and caseInsensitive preserves user case

@@ -21,6 +21,9 @@ func registerAll(r *Registry) {
 
 func registerPublic(r *Registry) {
 	r.Register(&TxCmd{})
+	r.Register(&DtxCmd{})
+	r.Register(&MtxCmd{})
+	r.Register(&FxtxCmd{})
 	r.Register(&WatchCmd{})
 	r.Register(&HelpCmd{})
 }

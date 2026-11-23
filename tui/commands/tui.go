@@ -8,7 +8,7 @@ import (
 	"github.com/murphytalk/urphin/tui/setup"
 )
 
-// TUIResult contains either static command output or an interactive table.
+// TUIResult contains static content, an interactive table, or both.
 type TUIResult struct {
 	Content string
 	Table   *table.Model

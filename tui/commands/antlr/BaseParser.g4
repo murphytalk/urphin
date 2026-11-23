@@ -26,7 +26,9 @@ tx        : TX (b=brokers (t=tickerArg)? | c=CCY | t=tickerArg)? ;
 atx       : ATX b=brokers s=SIDE d=DATE t=tickerArg price=number sh=number fee=number ;
 trans     : TRANS t=tickerArg d=DATE b1=brokers b2=brokers (sh=number)? ;
 pos       : POS (b=brokers (t=tickerArg)? | t=tickerArg)? ;
-mtx       : MTX (m=INT (ts=tickerList)? | ts=tickerList)? ;
+mtx       : MTX (m=mtxMonths (ts=mtxTickerList)? | ts=mtxTickerList)? ;
+mtxMonths : INT ;
+mtxTickerList : TICKERS_LIST ;
 splitCmd  : SPLIT t=tickerArg ratio=number ;
 
 // FX
