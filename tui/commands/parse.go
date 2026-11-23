@@ -2,10 +2,14 @@ package commands
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
 )
+
+var mtxTickersPattern = regexp.MustCompile(`^[A-Za-z,]+$`)
 
 // Parse turns one input line into an uppercase command name and its arguments.
 // Argument values are raw token text
@@ -25,7 +29,19 @@ func Parse(raw string) (string, map[string]string, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return strings.ToUpper(commandName(tree)), args, nil
+	name := strings.ToUpper(commandName(tree))
+	if name == "MTX" {
+		if months, ok := args["months"]; ok {
+			value, parseErr := strconv.Atoi(months)
+			if parseErr != nil || value < 0 || value > 99 || strconv.Itoa(value) != months {
+				return "", nil, &ParseError{Line: 1, Col: len(input), Msg: "MTX months must be 0 through 99 without leading zeroes", Input: raw}
+			}
+		}
+		if tickers, ok := args["tickers"]; ok && !mtxTickersPattern.MatchString(tickers) {
+			return "", nil, &ParseError{Line: 1, Col: len(input), Msg: "MTX tickers must contain only letters and commas", Input: raw}
+		}
+	}
+	return name, args, nil
 }
 
 // errorCollector implements antlr.ErrorListener and records errors as ParseError

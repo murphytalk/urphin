@@ -28,7 +28,7 @@ trans     : TRANS t=tickerArg d=DATE b1=brokers b2=brokers (sh=number)? ;
 pos       : POS (b=brokers (t=tickerArg)? | t=tickerArg)? ;
 mtx       : MTX (m=mtxMonths (ts=mtxTickerList)? | ts=mtxTickerList)? ;
 mtxMonths : INT ;
-mtxTickerList : TICKERS_LIST ;
+mtxTickerList : TICKERS_LIST | TICKER | PORTFOLIO ;
 splitCmd  : SPLIT t=tickerArg ratio=number ;
 
 // FX

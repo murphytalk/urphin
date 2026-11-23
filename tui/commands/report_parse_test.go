@@ -25,4 +25,12 @@ func TestReportParsing(t *testing.T) {
 			t.Errorf("Parse(%q)=(%s,%v), want (%s,%v)", test.input, name, args, test.name, test.args)
 		}
 	}
+	for _, input := range []string{"MTX 100", "MTX 01", "MTX 1.0", "MTX 0700.HK"} {
+		if _, _, err := Parse(input); err == nil {
+			t.Errorf("Parse(%q) accepted", input)
+		}
+	}
+	if _, args, err := Parse("MTX AAPL"); err != nil || args["tickers"] != "AAPL" {
+		t.Errorf("Parse(MTX AAPL) = %v, %v", args, err)
+	}
 }

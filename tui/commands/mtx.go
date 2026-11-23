@@ -92,7 +92,13 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		rows = append(rows, table.NewRow(data))
 	}
 	for _, total := range result.Totals {
-		rows = append(rows, table.NewRow(table.RowData{keys[0]: "Total", keys[1]: total.Currency, keys[4]: u.ConvertFloatToStringWithThousandsSeparator(total.CashFlow, false)}))
+		data := table.RowData{keys[0]: "Total", keys[4]: u.ConvertFloatToStringWithThousandsSeparator(total.CashFlow, false)}
+		if len(currencies) > 1 {
+			data["currency"] = total.Currency
+		} else {
+			data[keys[1]] = total.Currency
+		}
+		rows = append(rows, table.NewRow(data))
 	}
 	if len(result.Rows) == 0 {
 		rows = append(rows, table.NewRow(table.RowData{keys[0]: "Total", keys[4]: "0.00"}))
