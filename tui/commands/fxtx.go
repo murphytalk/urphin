@@ -105,5 +105,10 @@ func newFxTxTable(txs []databackend.Tx, styles theme.Styles) table.Model {
 	for i, key := range keys {
 		columns = append(columns, table.NewColumn(key, titles[i], widths[i]+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
 	}
-	return table.New(columns).WithRows(rows).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(styles.TextColor)).WithBorderForeground(styles.MutedColor).HeaderStyle(styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
+	return table.New(columns).WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		if input.Index%2 == 0 {
+			return styles.Selected
+		}
+		return styles.Popup
+	}).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(styles.TextColor)).WithBorderForeground(styles.MutedColor).HeaderStyle(styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
 }

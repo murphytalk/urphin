@@ -141,5 +141,13 @@ func newMtxTable(result mtxResult, app *setup.AppCtx) table.Model {
 		}
 		columns = append(columns, table.NewColumn(key, headers[i], widths[key]+2).WithStyle(lipgloss.NewStyle().Padding(0, 1)))
 	}
-	return table.New(columns).WithRows(rows).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
+	return table.New(columns).WithRows(rows).WithRowStyleFunc(func(input table.RowStyleFuncInput) lipgloss.Style {
+		if input.Row.Data[keys[0]] == "Total" {
+			return lipgloss.NewStyle()
+		}
+		if input.Index%2 == 0 {
+			return app.Styles.Selected
+		}
+		return app.Styles.Popup
+	}).WithBaseStyle(lipgloss.NewStyle().Align(lipgloss.Right).Foreground(app.Styles.TextColor)).WithBorderForeground(app.Styles.MutedColor).HeaderStyle(app.Styles.Accent.Bold(true)).WithRowBorder(true).Focused(true)
 }
