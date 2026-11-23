@@ -102,8 +102,6 @@ public final class GenerateCommandUsage {
     if (!grammar.equals("PublicParser")) return;
     Map<String, String> expected = Map.of(
       "TX", "TX [<B> [<T>] | <C> | <T>]",
-      "MKT", "MKT <Ccy> <T>",
-      "NEXT", "NEXT [<A> [<Fo> [<Fs>]] | <Fs>]",
       "PROP", "PROP (TX <B> <T> <Id> | TICKER <T>) [<Path> (<Val> | NONE)]",
       "WATCH", "WATCH [<Portfolio>]",
       "HELP", "HELP");

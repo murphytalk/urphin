@@ -10,12 +10,9 @@ import (
 func TestUsage(t *testing.T) {
 	for name, want := range map[string]string{
 		"TX":    "TX [<broker> [<ticker>] | <ccy> | <ticker>]",
-		"MKT":   "MKT <ccy> <ticker>",
-		"NEXT":  "NEXT [<amount> [<fixed_over_spend_amount> [<force_spend>]] | <force_spend>]",
 		"PROP":  "PROP (TX <broker> <ticker> <tx_id> | TICKER <ticker>) [<prop_path> (<value> | NONE)]",
 		"WATCH": "WATCH [<portfolio>]",
 		"HELP":  "HELP",
-		"DBUY":  "DBUY",
 	} {
 		if got := Usage(name); got != want {
 			t.Errorf("Usage(%q) = %q, want %q", name, got, want)

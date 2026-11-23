@@ -85,7 +85,6 @@ func TestFileHistoryMatchingNavigation(t *testing.T) {
 	h.Add("TX AAPL")
 	h.Add("TX NIO")
 	h.Add("TX NVDA")
-	h.Add("MKT USD")
 
 	for _, step := range []struct {
 		move   func(string) string

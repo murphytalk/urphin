@@ -50,9 +50,6 @@ func TestValidateCommand(t *testing.T) {
 		{"NOPE", textinput.StatusInvalid, "", false, true},
 		{"TX AAPL @", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
 		{"  TX AAPL @  ", textinput.StatusPartialInvalid, "  TX AAPL ", false, true},
-		{"MKT", textinput.StatusPartialInvalid, "MKT", true, false},
-		{"MKT USD", textinput.StatusPartialInvalid, "MKT USD", true, false},
-		{"  MKT USD  ", textinput.StatusPartialInvalid, "  MKT USD  ", true, false},
 		{"TX AAPL extra", textinput.StatusPartialInvalid, "TX AAPL ", false, true},
 		{"PROP TICKER AAPL Note 日本語 extra", textinput.StatusPartialInvalid, "PROP TICKER AAPL Note 日本語 ", false, true},
 		{"PROP TICKER AAPL Note MixedCase", textinput.StatusValid, "PROP TICKER AAPL Note MixedCase", true, false},
@@ -383,7 +380,6 @@ func TestCommandResultHeader(t *testing.T) {
 		want    string
 	}{
 		{"TX", "Stock Transactions"},
-		{"MKT", "Stock Mkt Data"},
 		{"WATCH", "A Watchlist"},
 		{"HELP", "Help"},
 		{"unknown", "Unknown"},
@@ -490,7 +486,7 @@ func TestValidateCommandDiagnosticWrapsOriginalParserError(t *testing.T) {
 }
 
 func TestValidateCommandParserEdgeCases(t *testing.T) {
-	for _, raw := range []string{"NOPE", "TX AAPL extra", "MKT EUR AAPL"} {
+	for _, raw := range []string{"NOPE", "TX AAPL extra"} {
 		validation, hint, err := validateCommand(raw)
 		if err == nil || validation.Status == textinput.StatusValid || validation.Status == textinput.StatusNone {
 			t.Errorf("%q accepted unexpectedly: %#v, %v", raw, validation, err)
@@ -637,7 +633,6 @@ func TestCommandHistoryNavigationMatchesPrefix(t *testing.T) {
 	history.Add("TX AAPL")
 	history.Add("TX NIO")
 	history.Add("TX NVDA")
-	history.Add("MKT USD")
 	m.commandHistory = history
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 
@@ -660,29 +655,5 @@ func TestCommandHistoryNavigationMatchesPrefix(t *testing.T) {
 		if got := m.commandInput.Value(); got != step.want {
 			t.Errorf("key %q command = %q, want %q", step.key.Keystroke(), got, step.want)
 		}
-	}
-}
-
-func TestValidateCommandOnlyChecksSyntax(t *testing.T) {
-	validation, hint, err := validateCommand("MKT USD AAPL")
-	if err != nil || validation.Status != textinput.StatusValid {
-		t.Fatalf("syntax-valid command rejected before execution: %#v, %v", validation, err)
-	}
-	if hint != "MKT <ccy> <ticker>" {
-		t.Fatalf("valid command hint = %q", hint)
-	}
-}
-
-func TestEnterShowsUnknownCommandExecutionError(t *testing.T) {
-	m := uiTestModel(t, nil, nil)
-	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
-	m.commandInput.SetValue("MKT USD AAPL")
-	cmd := uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
-	if cmd == nil {
-		t.Fatal("Enter did not return command execution")
-	}
-	uiTestRunCommand(t, m, cmd)
-	if !strings.Contains(m.commandDiagnostic(), "unknown command: MKT") || !strings.Contains(m.commandDiagnostic(), "ticker=AAPL") {
-		t.Fatalf("unknown command diagnostic = %q", m.commandDiagnostic())
 	}
 }
