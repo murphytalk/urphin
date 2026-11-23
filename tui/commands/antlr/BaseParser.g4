@@ -21,18 +21,18 @@ number    : INT | FLOAT ;
 tickerList: TICKERS_LIST | tickerArg ;
 
 // STOCK
-dtx       : DTX d=DATE (b=brokers (t=tickerArg)?)? ;
+dtx       : DTX (d1=DATE b1=brokers t1=tickerArg | d2=DATE b2=brokers | d3=DATE)+ ;
 tx        : TX (b=brokers (t=tickerArg)? | c=CCY | t=tickerArg)? ;
 atx       : ATX b=brokers s=SIDE d=DATE t=tickerArg price=number sh=number fee=number ;
 trans     : TRANS t=tickerArg d=DATE b1=brokers b2=brokers (sh=number)? ;
 pos       : POS (b=brokers (t=tickerArg)? | t=tickerArg)? ;
-mtx       : MTX (m=mtxMonths (ts=mtxTickerList)? | ts=mtxTickerList)? ;
+mtx       : MTX (m1=mtxMonths ts1=mtxTickerList | ts2=mtxTickerList | m2=mtxMonths)* ;
 mtxMonths : INT ;
 mtxTickerList : TICKERS_LIST | TICKER | PORTFOLIO ;
 splitCmd  : SPLIT t=tickerArg ratio=number ;
 
 // FX
-fxtx      : FXTX (b=brokers (ccyPair=CCY_PAIR)? | ccyPair=CCY_PAIR)? ;
+fxtx      : FXTX (b1=brokers cp1=CCY_PAIR | cp2=CCY_PAIR | b2=brokers)+ ;
 
 // METAL
 

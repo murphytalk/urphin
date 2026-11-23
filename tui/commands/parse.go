@@ -30,6 +30,9 @@ func Parse(raw string) (string, map[string]string, error) {
 		return "", nil, err
 	}
 	name := strings.ToUpper(commandName(tree))
+	if name == "DTX" || name == "FXTX" || name == "MTX" {
+		args = reportArgs(name, input)
+	}
 	if name == "MTX" {
 		if months, ok := args["months"]; ok {
 			value, parseErr := strconv.Atoi(months)
@@ -42,6 +45,96 @@ func Parse(raw string) (string, map[string]string, error) {
 		}
 	}
 	return name, args, nil
+}
+
+func reportArgs(name, input string) map[string]string {
+	fields := strings.Fields(input)
+	args := map[string]string{}
+	switch name {
+	case "DTX":
+		var full, brokered, dated map[string]string
+		for i := 1; i < len(fields); {
+			group := map[string]string{"date": fields[i]}
+			i++
+			if i < len(fields) && isBrokerToken(fields[i]) {
+				group["broker"] = strings.ToUpper(fields[i])
+				i++
+				if i < len(fields) && !isReportDate(fields[i]) && !isBrokerToken(fields[i]) {
+					group["ticker"] = strings.ToUpper(fields[i])
+					i++
+					full = group
+				} else {
+					brokered = group
+				}
+			} else {
+				dated = group
+			}
+		}
+		if full != nil {
+			return full
+		}
+		if brokered != nil {
+			return brokered
+		}
+		if dated != nil {
+			return dated
+		}
+	case "FXTX":
+		var combined, pairOnly, brokerOnly map[string]string
+		for i := 1; i < len(fields); i++ {
+			if isBrokerToken(fields[i]) {
+				if i+1 < len(fields) && isCurrencyPair(fields[i+1]) {
+					combined = map[string]string{"broker": strings.ToUpper(fields[i]), "ccy_pair": strings.ToUpper(fields[i+1])}
+					i++
+				} else {
+					brokerOnly = map[string]string{"broker": strings.ToUpper(fields[i])}
+				}
+			} else if isCurrencyPair(fields[i]) {
+				pairOnly = map[string]string{"ccy_pair": strings.ToUpper(fields[i])}
+			}
+		}
+		if combined != nil {
+			return combined
+		}
+		if pairOnly != nil {
+			return pairOnly
+		}
+		if brokerOnly != nil {
+			return brokerOnly
+		}
+	case "MTX":
+		for _, field := range fields[1:] {
+			if _, err := strconv.Atoi(field); err == nil {
+				args["months"] = field
+			} else {
+				args["tickers"] = field
+			}
+		}
+	}
+	return args
+}
+
+func isReportDate(s string) bool { return len(s) == 8 && allDigits(s) }
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+func isCurrencyPair(s string) bool {
+	return regexp.MustCompile(`^(USD|JPY|CNY|HKD)\.(USD|JPY|CNY|HKD)$`).MatchString(strings.ToUpper(s))
+}
+func isBrokerToken(s string) bool {
+	switch strings.ToUpper(s) {
+	case "B1", "B2", "B3", "B4", "B5", "B6", "B7", "IB", "IB2", "IB3", "SWB", "FST", "YJB", "HT":
+		return true
+	}
+	return false
 }
 
 // errorCollector implements antlr.ErrorListener and records errors as ParseError

@@ -12,7 +12,7 @@ import (
 // args key of ANTLR_INTEGRATION.md §8. A label missing here fails every parse
 // that contains it, so the table must cover all labels in both grammars.
 var labelKeys = map[string]string{
-	"A": "amount", "B": "broker", "B1": "broker", "B2": "broker2",
+	"A": "amount", "B": "broker", "B1": "broker", "B2": "broker2", "D1": "date", "D2": "date", "D3": "date", "T1": "ticker", "M1": "months", "M2": "months", "Ts1": "tickers", "Ts2": "tickers", "Cp1": "ccy_pair", "Cp2": "ccy_pair",
 	"C": "ccy", "Ccy": "ccy", "CcyPair": "ccy_pair", "Cp": "cp",
 	"D": "date", "E": "edate", "E1": "exp_date1", "E2": "exp_date2",
 	"F": "filter", "Fee": "fee", "Fo": "fixed_over_spend_amount",

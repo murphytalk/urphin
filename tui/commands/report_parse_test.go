@@ -33,4 +33,19 @@ func TestReportParsing(t *testing.T) {
 	if _, args, err := Parse("MTX AAPL"); err != nil || args["tickers"] != "AAPL" {
 		t.Errorf("Parse(MTX AAPL) = %v, %v", args, err)
 	}
+	for _, test := range []struct {
+		input string
+		want  map[string]string
+	}{
+		{"FXTX USD.JPY HKD.CNY", map[string]string{"ccy_pair": "HKD.CNY"}},
+		{"MTX 1 2", map[string]string{"months": "2"}},
+		{"MTX AAPL MSFT", map[string]string{"tickers": "MSFT"}},
+		{"MTX 1 AAPL 2 MSFT", map[string]string{"months": "2", "tickers": "MSFT"}},
+		{"MTX 1 AAPL 2", map[string]string{"months": "2", "tickers": "AAPL"}},
+	} {
+		_, got, err := Parse(test.input)
+		if err != nil || !reflect.DeepEqual(got, test.want) {
+			t.Errorf("Parse(%q)=(%v,%v), want %v", test.input, got, err, test.want)
+		}
+	}
 }
