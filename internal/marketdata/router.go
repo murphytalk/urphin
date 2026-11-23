@@ -84,9 +84,17 @@ func (r *router) accept(source c.QuoteSource, update c.QuoteUpdate, symbol strin
 		if update.QuoteExtended.Volume == 0 {
 			update.QuoteExtended.Volume = yahoo.QuoteExtended.Volume
 		}
+		if update.Sector == "" {
+			update.Sector = yahoo.Sector
+		}
+		if update.Industry == "" {
+			update.Industry = yahoo.Industry
+		}
 	}
 	if source == c.QuoteSourceYahoo {
-		r.fundamentals[symbol] = c.AssetQuote{Name: update.Name, QuoteExtended: update.QuoteExtended}
+		r.fundamentals[symbol] = c.AssetQuote{
+			Name: update.Name, Sector: update.Sector, Industry: update.Industry, QuoteExtended: update.QuoteExtended,
+		}
 	}
 	if r.versions[source] == nil {
 		r.versions[source] = make(map[string]quoteVersion)
@@ -180,9 +188,26 @@ func (o *Service) handleQuoteTo(source c.QuoteSource, update c.QuoteUpdate, targ
 		return
 	}
 	if source == c.QuoteSourceYahoo {
+		previous := o.fundamentals[symbol]
+		current := previous
+		if accepted.Name != "" {
+			current.Name = accepted.Name
+		}
+		if accepted.Sector != "" {
+			current.Sector = accepted.Sector
+		}
+		if accepted.Industry != "" {
+			current.Industry = accepted.Industry
+		}
+		if current != previous {
+			o.fundamentals[symbol] = current
+			slog.Info("Yahoo ticker fundamentals", "symbol", symbol, "sector", current.Sector, "industry", current.Industry)
+		}
+	}
+	if source == c.QuoteSourceYahoo {
 		if live, covered := o.coveredSymbols[symbol]; covered {
 			enriched := mergeYahooMetadata(live, accepted)
-			if enriched.Name == live.Name && enriched.QuoteExtended == live.QuoteExtended {
+			if enriched.Name == live.Name && enriched.Sector == live.Sector && enriched.Industry == live.Industry && enriched.QuoteExtended == live.QuoteExtended {
 				return
 			}
 			o.coveredSymbols[symbol] = enriched.Clone()
@@ -218,6 +243,12 @@ func mergeYahooMetadata(live, yahoo c.QuoteUpdate) c.QuoteUpdate {
 	if live.Name == "" {
 		live.Name = yahoo.Name
 	}
+	if live.Sector == "" {
+		live.Sector = yahoo.Sector
+	}
+	if live.Industry == "" {
+		live.Industry = yahoo.Industry
+	}
 	if live.QuoteExtended.MarketCap == 0 {
 		live.QuoteExtended.MarketCap = yahoo.QuoteExtended.MarketCap
 	}
@@ -244,6 +275,14 @@ func (o *Service) LatestPrice(symbol string) (float64, bool) {
 	defer o.priceMu.RUnlock()
 	price, ok := o.prices[symbol]
 	return price, ok
+}
+
+// Fundamental returns the latest company metadata for symbol.
+func (o *Service) Fundamental(symbol string) (Fundamental, bool) {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	fundamental, ok := o.fundamentals[symbol]
+	return fundamental, ok
 }
 
 func (o *Service) LatestOptionPrice(option c.Option) (float64, bool) {

@@ -238,42 +238,6 @@ func (u *UnaryAPI) GetAssetQuotes(ctx context.Context, symbols []string) ([]c.As
 	return quotes, quotesBySymbol, nil
 }
 
-// GetAssetProfiles fetches Yahoo company profiles, continuing after per-symbol errors.
-func (u *UnaryAPI) GetAssetProfiles(ctx context.Context, symbols []string) ([]AssetProfile, error) {
-	if len(symbols) == 0 {
-		return []AssetProfile{}, nil
-	}
-	if u.owner.randomMktData {
-		return nil, errors.New("Yahoo asset profiles are unavailable in random market-data mode")
-	}
-	ctx, cancel := u.requestContext(ctx)
-	defer cancel()
-
-	profiles := make([]AssetProfile, 0, len(symbols))
-	var profileErrors []error
-	for _, symbol := range symbols {
-		var response ResponseQuoteSummary
-		query := url.Values{"modules": {"assetProfile"}}
-		path := "/v10/finance/quoteSummary/" + url.PathEscape(symbol)
-		if err := u.owner.getJSON(ctx, path, query, &response); err != nil {
-			profileErrors = append(profileErrors, fmt.Errorf("failed to get Yahoo profile for %s: %w", symbol, err))
-			continue
-		}
-		if response.QuoteSummary.Error != nil {
-			profileErrors = append(profileErrors, fmt.Errorf("Yahoo profile returned an error for %s: %v", symbol, response.QuoteSummary.Error))
-			continue
-		}
-		if len(response.QuoteSummary.Result) == 0 {
-			profileErrors = append(profileErrors, fmt.Errorf("Yahoo returned no profile for %s", symbol))
-			continue
-		}
-		profile := response.QuoteSummary.Result[0].AssetProfile
-		profile.Symbol = symbol
-		profiles = append(profiles, profile)
-	}
-	return profiles, errors.Join(profileErrors...)
-}
-
 // GetOptionLastPrice returns Yahoo's last-traded price for one option contract.
 func (u *UnaryAPI) GetOptionLastPrice(ctx context.Context, ticker, optionType, expiration string, strike float64) (OptionPriceSnapshot, error) {
 	ctx, cancel := u.requestContext(ctx)
@@ -282,7 +246,7 @@ func (u *UnaryAPI) GetOptionLastPrice(ctx context.Context, ticker, optionType, e
 }
 
 func (u *requestOwner) getAssetQuotes(ctx context.Context, symbols []string) ([]c.QuoteUpdate, error) {
-	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "marketState", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap"})
+	result, err := u.getQuotes(ctx, symbols, []string{"shortName", "marketState", "currency", "regularMarketChange", "regularMarketChangePercent", "regularMarketPrice", "regularMarketPreviousClose", "regularMarketOpen", "regularMarketDayRange", "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume", "postMarketChange", "postMarketChangePercent", "postMarketPrice", "preMarketChange", "preMarketChangePercent", "preMarketPrice", "fiftyTwoWeekHigh", "fiftyTwoWeekLow", "marketCap", "sector", "industry"})
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get quotes: %w", err)

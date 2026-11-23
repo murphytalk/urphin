@@ -16,9 +16,11 @@ func transformResponseQuote(responseQuote ResponseQuote) c.AssetQuote {
 	isVariablePrecision := (assetClass == c.AssetClassCryptocurrency)
 
 	assetQuote := c.AssetQuote{
-		Name:   responseQuote.ShortName,
-		Symbol: responseQuote.Symbol,
-		Class:  assetClass,
+		Name:     responseQuote.ShortName,
+		Symbol:   responseQuote.Symbol,
+		Sector:   responseQuote.Sector,
+		Industry: responseQuote.Industry,
+		Class:    assetClass,
 		Currency: c.Currency{
 			FromCurrencyCode: responseQuote.Currency,
 		},

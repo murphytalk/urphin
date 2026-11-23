@@ -27,6 +27,13 @@ type MktDataFeed = mktfeed.MktDataFeed
 type MktDataConfig = mktfeed.MktDataConfig
 type MktFeedFactory = mktfeed.MktFeedFactory
 
+// Fundamental contains company identity and classification metadata.
+type Fundamental struct {
+	Name     string
+	Sector   string
+	Industry string
+}
+
 type MktData interface {
 	Start(config mktfeed.MktDataConfig) error
 	Stop() error
@@ -35,6 +42,8 @@ type MktData interface {
 	RegisterMktDataFeed(feedName c.QuoteSource, feed mktfeed.MktDataFeed)
 	Status() map[c.QuoteSource]ProviderStatus
 	LatestPrice(symbol string) (float64, bool)
+	// Fundamental returns the latest company metadata for symbol.
+	Fundamental(symbol string) (Fundamental, bool)
 	LatestOptionPrice(option c.Option) (float64, bool)
 	LatestOptionClosePrice(option c.Option, side string) (float64, bool)
 }
@@ -136,6 +145,7 @@ type Service struct {
 	mu             sync.RWMutex
 	priceMu        sync.RWMutex
 	prices         map[string]float64
+	fundamentals   map[string]Fundamental
 	optionPrices   map[c.Option]c.OptionQuote
 	coveredSymbols map[string]c.QuoteUpdate
 	coveredOptions map[c.Option]struct{}
@@ -185,7 +195,7 @@ func newService(feeds map[c.QuoteSource]mktfeed.MktDataFeed, state lifecycleStat
 		registry: registry{state: state, subscribers: make(map[*Subscription]struct{}), optionSubscribers: make(map[*OptionSubscription]struct{}),
 			fxPairSet: make(map[string]struct{}), fxQuotes: make(map[string]c.AssetQuote)},
 		feeds:  make(map[c.QuoteSource]*providerRuntime),
-		prices: make(map[string]float64), optionPrices: make(map[c.Option]c.OptionQuote),
+		prices: make(map[string]float64), fundamentals: make(map[string]Fundamental), optionPrices: make(map[c.Option]c.OptionQuote),
 		coveredSymbols: make(map[string]c.QuoteUpdate), coveredOptions: make(map[c.Option]struct{}),
 		factories: MktFeedFactoryMap{c.QuoteSourceAlpaca: alpacaFactory},
 		router:    newRouter(),
@@ -299,7 +309,13 @@ func (o *Service) run() {
 			o.mu.Unlock()
 		case <-o.prune:
 			o.mu.Lock()
-			o.router.prune(o.routingUnion())
+			union := o.routingUnion()
+			o.router.prune(union)
+			for symbol := range o.fundamentals {
+				if _, subscribed := union[symbol]; !subscribed {
+					delete(o.fundamentals, symbol)
+				}
+			}
 			o.mu.Unlock()
 		case result := <-o.cleanup:
 			o.mu.Lock()

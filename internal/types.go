@@ -169,6 +169,8 @@ type Meta struct {
 type AssetQuote struct {
 	Name          string
 	Symbol        string
+	Sector        string
+	Industry      string
 	Class         AssetClass
 	Currency      Currency
 	QuotePrice    QuotePrice
@@ -184,6 +186,8 @@ type AssetQuote struct {
 type QuoteUpdate struct {
 	Name          string
 	Symbol        string
+	Sector        string
+	Industry      string
 	Class         AssetClass
 	Currency      Currency
 	QuotePrice    *QuotePrice
@@ -215,7 +219,7 @@ type OptionQuote struct {
 func NewQuoteUpdate(quote AssetQuote, generation int, revision int64) QuoteUpdate {
 	price := quote.QuotePrice
 	return QuoteUpdate{
-		Name: quote.Name, Symbol: quote.Symbol, Class: quote.Class,
+		Name: quote.Name, Symbol: quote.Symbol, Sector: quote.Sector, Industry: quote.Industry, Class: quote.Class,
 		Currency: quote.Currency, QuotePrice: &price,
 		QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
 		QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
@@ -236,7 +240,7 @@ func (quote QuoteUpdate) Clone() QuoteUpdate {
 // and reports false when no prior price exists.
 func (quote QuoteUpdate) ToAssetQuote(previous *AssetQuote) (AssetQuote, bool) {
 	result := AssetQuote{
-		Name: quote.Name, Symbol: quote.Symbol, Class: quote.Class,
+		Name: quote.Name, Symbol: quote.Symbol, Sector: quote.Sector, Industry: quote.Industry, Class: quote.Class,
 		Currency: quote.Currency, QuoteExtended: quote.QuoteExtended,
 		QuoteFutures: quote.QuoteFutures, QuoteSource: quote.QuoteSource,
 		Exchange: quote.Exchange, Meta: quote.Meta,
