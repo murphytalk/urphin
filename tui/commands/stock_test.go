@@ -22,9 +22,14 @@ type txTestBackend struct {
 
 type reportSpyBackend struct {
 	txTestBackend
+	watchlists          []databackend.Watchlist
 	ccy, ticker, broker *string
 	since               *time.Time
 	classes             []c.AssetClass
+}
+
+func (b *reportSpyBackend) GetWatchList(context.Context, *string) ([]databackend.Watchlist, error) {
+	return b.watchlists, nil
 }
 
 func (b *reportSpyBackend) GetEquityTx(_ context.Context, ccy, ticker, broker *string, since *time.Time, classes []c.AssetClass) ([]databackend.Tx, error) {

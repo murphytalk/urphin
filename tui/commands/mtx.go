@@ -43,6 +43,25 @@ func (*MtxCmd) Execute(ctx context.Context, app *setup.AppCtx, args map[string]s
 		}
 	}
 	now := time.Now()
+	if raw, ok := args["tickers"]; ok && !strings.Contains(raw, ",") {
+		lists := app.Watchlists
+		if lists == nil {
+			var err error
+			lists, err = app.Db.GetWatchList(ctx, nil)
+			if err != nil {
+				return "", fmt.Errorf("get MTX watchlists: %w", err)
+			}
+		}
+		for _, list := range lists {
+			name := strings.TrimSpace(list.Name)
+			upper := strings.ToUpper(name)
+			if !strings.EqualFold(name, strings.TrimSpace(raw)) || (strings.HasPrefix(upper, "OTHER(") && strings.HasSuffix(upper, ")")) {
+				continue
+			}
+			args["tickers"] = strings.Join(list.Tickers, ",")
+			break
+		}
+	}
 	since, err := mtxSince(now, args["months"])
 	if err != nil {
 		return "", err
@@ -52,14 +71,16 @@ func (*MtxCmd) Execute(ctx context.Context, app *setup.AppCtx, args map[string]s
 		return "", fmt.Errorf("get MTX transactions: %w", err)
 	}
 	filter := map[string]bool{}
+	filterEnabled := false
 	if raw, ok := args["tickers"]; ok {
+		filterEnabled = true
 		for _, ticker := range strings.Split(raw, ",") {
 			filter[strings.TrimSpace(ticker)] = true
 		}
 	}
 	inputs := make([]fin.SummaryTransaction, 0, len(txs))
 	for _, tx := range txs {
-		if len(filter) > 0 && !filter[tx.Ticker] {
+		if filterEnabled && !filter[tx.Ticker] {
 			continue
 		}
 		inputs = append(inputs, fin.SummaryTransaction{Currency: tx.Ccy, Ticker: tx.Ticker, Side: string(tx.Side), Shares: tx.Shares, Price: tx.Price, Fee: float64(tx.Fee)})

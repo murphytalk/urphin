@@ -38,7 +38,6 @@ import (
 type Model struct {
 	ctx                    context.Context
 	app                    setup.AppCtx
-	lists                  []databackend.Watchlist
 	symbols                []string
 	fxPairs                []string
 	fxPairSet              map[string]struct{}
@@ -104,6 +103,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load watchlists: %w", err)
 	}
+	app.Watchlists = lists
 	seen := make(map[string]struct{})
 	for i := range lists {
 		unique := make(map[string]struct{})
@@ -156,7 +156,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		app.Settings.SelectedWatchlist = lists[selected].Name
 	}
 	m := &Model{
-		ctx: ctx, app: app, lists: lists, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
+		ctx: ctx, app: app, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), selected: selected,
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
@@ -475,7 +475,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if name == "WATCH" {
 				if portfolio, ok := args["portfolio"]; ok {
-					selected := slices.IndexFunc(m.lists, func(list databackend.Watchlist) bool {
+					selected := slices.IndexFunc(m.app.Watchlists, func(list databackend.Watchlist) bool {
 						return strings.EqualFold(list.Name, portfolio)
 					})
 					if selected < 0 {
@@ -661,10 +661,10 @@ func waitForMarketUpdate(inv *commandInvocation) tea.Cmd {
 }
 
 func (m *Model) visibleSymbols() []string {
-	if len(m.lists) == 0 {
+	if len(m.app.Watchlists) == 0 {
 		return nil
 	}
-	return m.lists[m.selected].Tickers
+	return m.app.Watchlists[m.selected].Tickers
 }
 
 func (m *Model) subscriptionSymbols() []string {
@@ -678,13 +678,13 @@ func (m *Model) subscriptionSymbols() []string {
 }
 
 func (m *Model) changeWatchlist(step int) tea.Cmd {
-	if len(m.lists) == 0 || (step != 0 && len(m.lists) < 2) {
+	if len(m.app.Watchlists) == 0 || (step != 0 && len(m.app.Watchlists) < 2) {
 		return nil
 	}
 	if step != 0 {
-		m.selected = (m.selected + step + len(m.lists)) % len(m.lists)
+		m.selected = (m.selected + step + len(m.app.Watchlists)) % len(m.app.Watchlists)
 	}
-	m.app.Settings.SelectedWatchlist = m.lists[m.selected].Name
+	m.app.Settings.SelectedWatchlist = m.app.Watchlists[m.selected].Name
 	m.viewport.GotoTop()
 	cmd := m.setWatchlist()
 	if m.app.Settings.FollowWatchlist {
@@ -749,10 +749,10 @@ func (m *Model) resize() {
 }
 
 func (m *Model) listName() string {
-	if len(m.lists) == 0 {
+	if len(m.app.Watchlists) == 0 {
 		return "None"
 	}
-	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(m.lists[m.selected].Name)
+	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(m.app.Watchlists[m.selected].Name)
 }
 
 func (m *Model) View() tea.View {

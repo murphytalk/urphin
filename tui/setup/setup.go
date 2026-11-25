@@ -20,6 +20,7 @@ type AppCtx struct {
 	Debug              bool                    // set by --debug-log, app only reads it
 	Styles             theme.Styles            // resolved once during application startup
 	Db                 databackend.DataBackend // initialized in setup, used by app
+	Watchlists         []databackend.Watchlist
 	MktData            mktdata.MktData
 	OnMarketDataUpdate func()
 }

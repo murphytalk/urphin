@@ -140,8 +140,8 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	}
 	wantLists := slices.Clone(lists)
 	wantLists[0].Tickers, wantLists[1].Tickers = []string{"B", "A"}, []string{"C", "B", "Z"}
-	if !reflect.DeepEqual(m.lists, wantLists) || !reflect.DeepEqual(m.positions, positions) {
-		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.lists, m.positions)
+	if !reflect.DeepEqual(m.app.Watchlists, wantLists) || !reflect.DeepEqual(m.positions, positions) {
+		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.app.Watchlists, m.positions)
 	}
 	if !m.app.Settings.FollowWatchlist {
 		t.Fatal("follow mode must be enabled by default")

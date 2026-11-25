@@ -2,6 +2,8 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +82,42 @@ func TestDtxAndFxtxRejectDirectInvalidArguments(t *testing.T) {
 	}
 	if _, err := (&FxtxCmd{}).Execute(context.Background(), app, map[string]string{"ccy_pair": "EUR.USD"}, true); err == nil {
 		t.Fatal("FXTX accepted unsupported currency pair")
+	}
+}
+
+func TestMtxExpandsSingleWatchlistTicker(t *testing.T) {
+	tests := []struct {
+		name  string
+		lists []databackend.Watchlist
+		input string
+		want  []string
+	}{
+		{"named", []databackend.Watchlist{{Name: "Core", Tickers: []string{"AAPL", "MSFT"}}}, "core", []string{"AAPL", "MSFT"}},
+		{"empty", []databackend.Watchlist{{Name: "Empty"}}, "Empty", nil},
+		{"plain OTHER", []databackend.Watchlist{{Name: "OTHER", Tickers: []string{"AAPL"}}}, "OTHER", []string{"AAPL"}},
+		{"currency OTHER stays literal", []databackend.Watchlist{{Name: "OTHER(USD)", Tickers: []string{"AAPL"}}}, "other(usd)", nil},
+		{"unmatched stays literal", nil, "AAPL", []string{"AAPL"}},
+		{"multiple stay literal", []databackend.Watchlist{{Name: "Core", Tickers: []string{"AAPL"}}}, "Core,MSFT", []string{"MSFT", "Core"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &reportSpyBackend{watchlists: tt.lists, txTestBackend: txTestBackend{txs: []databackend.Tx{{Ticker: "AAPL", Ccy: "USD", Side: databackend.SideBuy}, {Ticker: "MSFT", Ccy: "USD", Side: databackend.SideBuy}, {Ticker: "Core", Ccy: "USD", Side: databackend.SideBuy}}}}
+			args := map[string]string{"tickers": tt.input}
+			output, err := (&MtxCmd{}).Execute(context.Background(), &setup.AppCtx{Db: b}, args, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result mtxResult
+			if err := json.Unmarshal([]byte(output), &result); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, row := range result.Rows {
+				got = append(got, row.Ticker)
+			}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("tickers = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
