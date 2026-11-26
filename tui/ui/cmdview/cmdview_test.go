@@ -57,6 +57,19 @@ func TestResultHeaderUsesThemeColorsAcrossWidth(t *testing.T) {
 	}
 }
 
+func TestResultWrappingPreservesOSC8DashboardLink(t *testing.T) {
+	url := "http://127.0.0.1:12345"
+	content := "Portfolio dashboard started\n" + ansi.SetHyperlink(url) + url + ansi.ResetHyperlink()
+	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
+	m.Update(tea.WindowSizeMsg{Width: 12, Height: 8})
+	m.Update(SetResultMsg{Header: "G", Content: content})
+	wrapped := m.viewport.GetContent()
+	plainURL := strings.ReplaceAll(ansi.Strip(wrapped), "\n", "")
+	if !strings.Contains(wrapped, ansi.SetHyperlink(url)) || !strings.Contains(wrapped, url) || !strings.Contains(wrapped, ansi.ResetHyperlink()) || !strings.Contains(plainURL, url) {
+		t.Fatalf("wrapped hyperlink = %q", wrapped)
+	}
+}
+
 func TestRunningResultStartsSpinnerAndStopsOnCompletion(t *testing.T) {
 	m := NewModel(theme.Styles{TextBold: func(s string) string { return s }})
 	m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})

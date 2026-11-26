@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
+	"github.com/murphytalk/urphin/tui/dashboard"
 	"github.com/murphytalk/urphin/tui/setup"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
@@ -56,6 +58,11 @@ func (m *startupModel) Init() tea.Cmd {
 			slog.Error("UI startup failed during backend or feed initialization", "error", err)
 			return startupResult{err: err, close: closeFn}
 		}
+		app.MktData = data
+		if app.Dashboard == nil {
+			app.Dashboard = dashboard.New(m.ctx, app.Db, app.Settings, app.Cfg, data)
+		}
+		closeFn = closeDashboardBefore(closeFn, app.Dashboard)
 		slog.Info("UI startup loading watchlists and positions")
 		model, err := NewModel(m.ctx, app)
 		if err == nil && data == nil {
@@ -71,6 +78,18 @@ func (m *startupModel) Init() tea.Cmd {
 		}
 		return startupResult{model: model, data: data, start: start, close: closeFn}
 	})
+}
+
+func closeDashboardBefore(closeFn func() error, service *dashboard.Service) func() error {
+	return func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		dashboardErr := service.Close(ctx)
+		cancel()
+		if closeFn != nil {
+			return errors.Join(dashboardErr, closeFn())
+		}
+		return dashboardErr
+	}
 }
 
 func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

@@ -222,8 +222,22 @@ func TestMutationAlertOverlaysHomeAndEscClosesIt(t *testing.T) {
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
 	cmd := m.alert.NewAlertCmd("Info", "ATX added AAPL")
 	uiTestUpdate(t, m, cmd())
-	if !m.alert.HasActiveAlert() || !strings.Contains(ansi.Strip(m.View().Content), "ATX added AAPL") {
+	content := ansi.Strip(m.View().Content)
+	if !m.alert.HasActiveAlert() || !strings.Contains(content, "ATX added AAPL") {
 		t.Fatal("alert was not rendered over the home screen")
+	}
+	lines := strings.Split(content, "\n")
+	if strings.TrimSpace(lines[len(lines)-1]) != strings.TrimSpace(ansi.Strip(m.footer())) {
+		t.Fatalf("alert covered command input: last line %q, want footer %q", lines[len(lines)-1], ansi.Strip(m.footer()))
+	}
+	alertLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, "ATX added AAPL") {
+			alertLine = i
+		}
+	}
+	if alertLine < 0 || alertLine >= len(lines)-1 {
+		t.Fatalf("alert line %d is not above command input at %d", alertLine, len(lines)-1)
 	}
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 40, Height: 4})
 	if got := m.View().Content; len(strings.Split(got, "\n")) != 4 || !strings.HasSuffix(got, m.footer()) {

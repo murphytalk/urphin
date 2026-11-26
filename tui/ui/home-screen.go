@@ -28,6 +28,7 @@ import (
 	"github.com/murphytalk/urphin/internal/watchlist/row"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/commands/registry"
+	"github.com/murphytalk/urphin/tui/dashboard"
 	"github.com/murphytalk/urphin/tui/setup"
 	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
@@ -164,7 +165,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		ctx: ctx, app: app, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), selected: selected,
-		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose(),
+		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose().WithPosition(bubbleup.BottomCenterPosition),
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
@@ -223,6 +224,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 // Run owns the UI session; the application owner starts/stops feeds and closes the backend.
 func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err error) {
 	app.MktData = marketData
+	app.Dashboard = dashboard.New(ctx, app.Db, app.Settings, app.Cfg, marketData)
 	m, err := NewModel(ctx, app)
 	if err != nil {
 		return err
@@ -237,6 +239,9 @@ func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err
 	}
 	m.session = newQuoteSession(ctx, marketData, m.subscriptionSymbols())
 	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err = errors.Join(err, app.Dashboard.Close(shutdownCtx))
+		cancel()
 		err = errors.Join(err, m.session.Close())
 		if m.commandHistory != nil {
 			err = errors.Join(err, m.commandHistory.Persist())
@@ -705,6 +710,14 @@ var (
 func (m *Model) renderAlert(content string) string {
 	if m.width < 64 || m.height < 5 {
 		return content
+	}
+	if m.commandVisible() {
+		lines := strings.Split(content, "\n")
+		if len(lines) > 1 {
+			footer := lines[len(lines)-1]
+			alertArea := m.alert.Render(strings.Join(lines[:len(lines)-1], "\n"))
+			return alertArea + "\n" + footer
+		}
 	}
 	return m.alert.Render(content)
 }

@@ -12,6 +12,7 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/theme"
+	"github.com/murphytalk/urphin/tui/dashboard"
 )
 
 type AppCtx struct {
@@ -23,6 +24,7 @@ type AppCtx struct {
 	Watchlists         []databackend.Watchlist
 	MktData            mktdata.MktData
 	OnMarketDataUpdate func()
+	Dashboard          *dashboard.Service
 }
 
 // LoadConfig reads the YAML file at path into a Config.

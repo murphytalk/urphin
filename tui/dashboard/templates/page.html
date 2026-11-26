@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Portfolio dashboard</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Portfolio home"><span class="brand-mark" aria-hidden="true">U</span><span>URPHIN</span></a>
+      <form class="toolbar" method="get" hx-get="/" hx-target="#portfolio" hx-swap="outerHTML" hx-sync="this:replace">
+        <label class="sr-only" for="scope">Portfolio scope</label>
+        <select id="scope" name="scope">
+          <option value="__all" {{if eq .Scope "__all"}}selected{{end}}>All holdings</option>
+          {{range .Lists}}<option value="{{.Name}}" {{if eq .Name $.Scope}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <button class="refresh-button" name="refresh" value="1" aria-label="Refresh portfolio"><span aria-hidden="true">↻</span><span>Refresh</span></button>
+      </form>
+    </header>
+    {{template "wrapper" .}}
+    <footer class="page-footer"><span>Portfolio monitoring</span><span>Values shown in {{.Base}}</span></footer>
+  </main>
+</body>
+</html>

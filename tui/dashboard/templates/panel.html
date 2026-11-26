@@ -1,0 +1,71 @@
+{{define "wrapper"}}
+<section id="portfolio" hx-ext="sse" sse-connect="/events?scope={{.Scope}}">
+  <div sse-swap="portfolio">{{template "panel" .}}</div>
+</section>
+{{end}}
+{{define "panel"}}
+<div class="dashboard-heading">
+  <div>
+    <p class="eyebrow">PORTFOLIO <span>/</span> {{.ScopeLabel}}</p>
+    <h1>Portfolio overview</h1>
+    <p class="subtitle">Exposure, holdings, and sector performance at a glance.</p>
+  </div>
+  <p class="connection-status is-live" role="status">Live updates connected</p>
+</div>
+{{if .Status}}<p class="status-banner" role="status">{{.Status}}</p>{{end}}
+{{if .Partial}}<p class="status-banner is-warning" role="status"><span class="status-icon" aria-hidden="true">!</span> Some values are unavailable. Totals and charts include valued holdings only.</p>{{end}}
+{{if and (eq .GrossBase 0.0) .Rows}}<p class="status-banner" role="status">No comparable exposure can be charted yet.</p>{{end}}
+
+<section class="summary-grid" aria-label="Portfolio summary">
+  <article class="summary-card summary-card-primary">
+    <p class="card-label">Gross exposure</p>
+    <p class="summary-value">{{money .GrossBase}} <span>{{.Base}}</span></p>
+    <div class="currency-breakdown" aria-label="Gross exposure by native currency">{{range .NativeGross}}<span><b>{{.Currency}}</b> {{money .Amount}}</span>{{else}}<span class="muted">No valued positions</span>{{end}}</div>
+    <p class="card-note">Total valued market exposure</p>
+  </article>
+  <article class="summary-card">
+    <p class="card-label">Net exposure</p>
+    <p class="summary-value {{if gt .NetBase 0.0}}positive{{else if lt .NetBase 0.0}}negative{{else}}neutral{{end}}">{{signedMoney .NetBase}} <span>{{.Base}}</span></p>
+    <div class="currency-breakdown" aria-label="Net exposure by native currency">{{range .NativeNet}}<span><b>{{.Currency}}</b> {{signedMoney .Amount}}</span>{{else}}<span class="muted">No valued positions</span>{{end}}</div>
+    <p class="card-note">Signed value of priced holdings</p>
+  </article>
+  <article class="summary-card">
+    <p class="card-label">Positions</p>
+    <p class="summary-value">{{.ValuedCount}} <span class="summary-total">/ {{len .Rows}}</span></p>
+    <p class="card-note">{{if .UnvaluedCount}}{{.UnvaluedCount}} awaiting usable data{{else}}All positions valued{{end}}</p>
+  </article>
+</section>
+
+<div class="charts">
+  <section class="panel-card holdings-panel">
+    <div class="panel-heading"><div><p class="section-kicker">ALLOCATION</p><h2>Holdings</h2></div><span class="panel-meta">{{.ValuedCount}} valued</span></div>
+    <div class="holdings-layout">
+      <div class="donut-wrap"><svg id="holdings-chart" role="img" aria-label="Holding exposure donut chart"></svg></div>
+      <ul class="holding-legend" aria-label="Holding values">
+        {{range .Rows}}{{if .BaseAvailable}}<li data-symbol="{{.Symbol}}"><span class="legend-dot"></span><span class="legend-main"><strong>{{.Symbol}}</strong><small>{{signedMoney .Native}} {{.Currency}}</small></span><span class="legend-side"><strong>{{percent .Exposure}}</strong><small>{{signedMoney .Base}} {{$.Base}}</small></span></li>{{end}}{{end}}
+      </ul>
+    </div>
+  </section>
+  <section class="panel-card sector-panel">
+    <div class="panel-heading"><div><p class="section-kicker">PERFORMANCE</p><h2>Sector map</h2></div><span class="panel-meta">Daily change</span></div>
+    <svg id="sector-chart" role="img" aria-label="Sector daily performance treemap"></svg>
+    <div class="performance-key" aria-label="Performance colors"><span><i class="sector-swatch is-negative"></i>Down</span><span><i class="sector-swatch is-neutral"></i>Flat</span><span><i class="sector-swatch is-positive"></i>Up</span><span><i class="sector-swatch is-unavailable"></i>Unavailable</span></div>
+    <div class="sector-legend" aria-label="Sector values">
+      {{range .Sectors}}<div class="sector-row"><span class="sector-name"><i class="sector-swatch {{if .DailyChangeAvailable}}{{if gt .DailyChange 0.0}}is-positive{{else if lt .DailyChange 0.0}}is-negative{{else}}is-neutral{{end}}{{else}}is-unavailable{{end}}"></i>{{.Name}}</span><strong class="{{if .DailyChangeAvailable}}{{if gt .DailyChange 0.0}}positive{{else if lt .DailyChange 0.0}}negative{{else}}neutral{{end}}{{else}}muted{{end}}">{{if .DailyChangeAvailable}}{{printf "%+.2f%%" .DailyChange}}{{else}}Unavailable{{end}}</strong><span>{{percent .Exposure}}</span></div>{{end}}
+    </div>
+    <p class="chart-note">Tile area shows gross exposure. Daily change uses current quantities and FX.</p>
+  </section>
+</div>
+
+<section class="panel-card positions-panel">
+  <div class="panel-heading"><div><p class="section-kicker">DETAIL</p><h2>Positions</h2></div><span class="panel-meta">{{len .Rows}} total</span></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th scope="col">Asset</th><th scope="col">Sector</th><th scope="col">Native value</th><th scope="col">Base value</th><th scope="col">Weight</th><th scope="col">Status</th></tr></thead>
+    <tbody>
+      {{range .Rows}}<tr><td><strong class="ticker">{{.Symbol}}</strong></td><td>{{.Sector}}</td><td>{{if .NativeAvailable}}<span class="{{if gt .Native 0.0}}positive{{else if lt .Native 0.0}}negative{{else}}neutral{{end}}">{{signedMoney .Native}}</span> <span class="currency">{{.Currency}}</span>{{else}}<span class="muted">—</span>{{end}}</td><td>{{if .BaseAvailable}}<span class="{{if gt .Base 0.0}}positive{{else if lt .Base 0.0}}negative{{else}}neutral{{end}}">{{signedMoney .Base}}</span> <span class="currency">{{$.Base}}</span>{{else}}<span class="muted">—</span>{{end}}</td><td>{{if .BaseAvailable}}{{percent .Exposure}}{{else}}<span class="muted">—</span>{{end}}</td><td>{{if .Status}}<span class="status-pill">{{.Status}}</span>{{else}}<span class="muted">Live</span>{{end}}</td></tr>
+      {{else}}<tr><td class="empty-state" colspan="6">{{if eq .Status "Waiting for quotes"}}Waiting for quote data{{else if eq .Status "No open holdings in this watchlist"}}No open holdings in this watchlist{{else}}No open holdings{{end}}</td></tr>{{end}}
+    </tbody>
+  </table></div>
+</section>
+<script type="application/json" id="dashboard-data">{{.ChartJSON}}</script>
+{{end}}

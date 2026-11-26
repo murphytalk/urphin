@@ -20,6 +20,7 @@ func registerAll(r *Registry) {
 }
 
 func registerPublic(r *Registry) {
+	r.Register(&DashboardCmd{})
 	r.Register(&TxCmd{})
 	r.Register(&DtxCmd{})
 	r.Register(&MtxCmd{})
