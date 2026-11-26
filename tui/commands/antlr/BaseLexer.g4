@@ -5,6 +5,7 @@ WS: [ \t\r\n]+ -> skip;
 
 DTX      : 'DTX'       -> pushMode(ARGS);
 FXTX     : 'FXTX'      -> pushMode(ARGS);
+G        : 'G'         -> pushMode(ARGS);
 HELP     : 'HELP'      -> pushMode(ARGS);
 MTX      : 'MTX'       -> pushMode(ARGS);
 POS      : 'POS'       -> pushMode(ARGS);

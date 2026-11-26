@@ -57,3 +57,19 @@ func TestParsePortfolioWordOverTenLetters(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardGrammar(t *testing.T) {
+	name, args, err := commands.Parse("G")
+	if err != nil || name != "G" || len(args) != 0 {
+		t.Fatalf("Parse(G) = %q, %v, %v", name, args, err)
+	}
+	if _, _, err := commands.Parse("G extra"); err == nil {
+		t.Error("G accepted an argument")
+	}
+	if _, args, err := commands.Parse("POS G"); err != nil || args["ticker"] != "G" {
+		t.Errorf("POS G ticker = %q, error = %v", args["ticker"], err)
+	}
+	if commands.Usage("G") != "G" || commands.CmdHelp("G") == "" {
+		t.Error("missing dashboard usage or help")
+	}
+}

@@ -9,6 +9,7 @@ INCOME    | Show incomes
 POS       | Show stock positions
 OPT       | Show open option strategy chain trades
 OPTP      | Show option strategy chain trades
+G         | Start the live portfolio dashboard or show its URL if already running
 HELP      | Show help
 P         | List opt positions that made 90.0% profit
 CALL      | List callable tickers

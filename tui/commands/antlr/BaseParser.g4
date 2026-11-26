@@ -6,7 +6,7 @@ cmd     : baseCmd ;
 baseCmd
   : dtx | tx | fxtx | atx | trans | pos | mtx
   | splitCmd
-  | help
+  | help | dashboard
   | prop
   | watch
   ;
@@ -39,6 +39,7 @@ fxtx      : FXTX (b1=brokers cp1=CCY_PAIR | cp2=CCY_PAIR | b2=brokers)+ ;
 
 // urphin
 help      : HELP ;
+dashboard : G ;
 
 // PROP
 prop        : PROP (txTarget | tickerTarget)
