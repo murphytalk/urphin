@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 
 type Snapshot struct {
 	Lists          []backend.Watchlist
+	FXPairs        []string
 	Symbols        []string
 	Positions      map[string]backend.Position
 	PositionErrors map[string]error
@@ -27,7 +29,7 @@ type watchlistError struct{ error }
 
 func (e watchlistError) Unwrap() error { return e.error }
 
-func load(ctx context.Context, db backend.DataBackend, initial bool) (Snapshot, error) {
+func load(ctx context.Context, db backend.DataBackend, previous *Snapshot) (Snapshot, error) {
 	lists, err := db.GetWatchList(ctx, nil)
 	if err != nil {
 		return Snapshot{}, watchlistError{fmt.Errorf("load watchlists: %w", err)}
@@ -79,7 +81,8 @@ func load(ctx context.Context, db backend.DataBackend, initial bool) (Snapshot, 
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return Snapshot{}, err
 			}
-			if watched[symbol] && initial && !errors.Is(err, backend.ErrUnmatchedPositionLot) {
+			knownPosition := previous != nil && previous.Positions[symbol].Shares != 0
+			if !errors.Is(err, backend.ErrUnmatchedPositionLot) && (knownPosition || (previous == nil && watched[symbol])) {
 				return Snapshot{}, fmt.Errorf("load position %q: %w", symbol, err)
 			}
 			snapshot.PositionErrors[symbol] = err
@@ -93,4 +96,28 @@ func load(ctx context.Context, db backend.DataBackend, initial bool) (Snapshot, 
 		}
 	}
 	return snapshot, ctx.Err()
+}
+
+// FXRates indexes usable rates by the currency direction reported by the feed.
+func (s Snapshot) FXRates() map[string]float64 {
+	rates := make(map[string]float64, len(s.FXPairs))
+	for _, pair := range s.FXPairs {
+		q, ok := s.Quotes[pair]
+		if !ok {
+			continue
+		}
+		from := strings.ToUpper(strings.TrimSpace(q.Currency.FromCurrencyCode))
+		to := strings.ToUpper(strings.TrimSpace(q.Currency.ToCurrencyCode))
+		if from == "" || to == "" {
+			from, to, _ = c.ParseCurrencyPair(pair)
+		}
+		rate := q.Currency.Rate
+		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			rate = q.QuotePrice.Price
+		}
+		if rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
+			rates[from+to] = rate
+		}
+	}
+	return rates
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,12 +18,14 @@ import (
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/theme"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
+	"github.com/murphytalk/urphin/shared/portfolio"
 	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type uiTestBackend struct {
 	databackend.DataBackend
 	lists         []databackend.Watchlist
+	candidates    []string
 	positions     map[string]databackend.Position
 	watchErr      error
 	positionErr   map[string]error
@@ -40,8 +43,20 @@ type mutationFollowupBackend struct {
 	txErr   error
 }
 
-func (b *mutationFollowupBackend) AddTrade(context.Context, databackend.Tx) (databackend.TradeResult, error) {
+func (b *mutationFollowupBackend) AddTrade(_ context.Context, trade databackend.Tx) (databackend.TradeResult, error) {
 	b.events = append(b.events, "write")
+	if b.positions != nil {
+		b.candidates = []string{trade.Ticker}
+		position := b.positions[trade.Ticker]
+		switch trade.Side {
+		case databackend.SideBuy:
+			position.Shares += trade.Shares
+		case databackend.SideSell:
+			position.Shares -= trade.Shares
+		}
+		position.Ccy = "USD"
+		b.positions[trade.Ticker] = position
+	}
 	return databackend.TradeResult{ID: 44}, nil
 }
 
@@ -60,6 +75,10 @@ func (b *mutationFollowupBackend) GetEquityTx(_ context.Context, _, ticker, brok
 		b.filters["broker"] = *broker
 	}
 	return nil, b.txErr
+}
+
+func (b *uiTestBackend) GetAssetsWithPositions(context.Context, *string, []c.AssetClass) ([]string, error) {
+	return slices.Clone(b.candidates), nil
 }
 
 func (b *uiTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
@@ -112,6 +131,7 @@ func uiTestModel(t *testing.T, lists []databackend.Watchlist, positions map[stri
 		t.Fatalf("NewModel: %v", err)
 	}
 	m.Init()
+	t.Cleanup(m.portfolio.Close)
 	return m
 }
 
@@ -131,8 +151,24 @@ func uiTestKey(code rune, modifiers ...tea.KeyMod) tea.KeyPressMsg {
 	return tea.KeyPressMsg(key)
 }
 
+type QuoteBatchMsg []c.QuoteUpdate
+
 func uiTestUpdate(t *testing.T, m *Model, msg tea.Msg) tea.Cmd {
 	t.Helper()
+	if updates, ok := msg.(QuoteBatchMsg); ok {
+		next := m.snapshot
+		next.Quotes = make(map[string]c.AssetQuote, len(m.snapshot.Quotes))
+		maps.Copy(next.Quotes, m.snapshot.Quotes)
+		for _, q := range updates {
+			if q.Symbol == "" {
+				q.Symbol = q.Meta.SymbolInSourceAPI
+			}
+			if slices.Contains(next.Symbols, q.Symbol) || slices.Contains(next.FXPairs, q.Symbol) {
+				portfolio.MergeQuote(next.Quotes, q)
+			}
+		}
+		return m.applySnapshot(next)
+	}
 	updated, cmd := m.Update(msg)
 	if updated != m {
 		t.Fatal("Update replaced the sole portfolio owner")
@@ -159,8 +195,8 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 		t.Fatal(err)
 	}
 	wantSymbols := []string{"A", "B", "C", "Z"}
-	if !slices.Equal(m.symbols, wantSymbols) || !slices.Equal(b.positionCalls, wantSymbols) || b.watchCalls != 1 {
-		t.Fatalf("symbols %v, backend loads %v, watch calls %d", m.symbols, b.positionCalls, b.watchCalls)
+	if !slices.Equal(m.snapshot.Symbols, wantSymbols) || !slices.Equal(b.positionCalls, wantSymbols) || b.watchCalls != 1 {
+		t.Fatalf("symbols %v, backend loads %v, watch calls %d", m.snapshot.Symbols, b.positionCalls, b.watchCalls)
 	}
 	for _, broker := range b.brokers {
 		if broker != nil {
@@ -169,8 +205,8 @@ func TestNewModelDeduplicatesBackendLoadsAndPreservesListMetadata(t *testing.T) 
 	}
 	wantLists := slices.Clone(lists)
 	wantLists[0].Tickers, wantLists[1].Tickers = []string{"B", "A"}, []string{"C", "B", "Z"}
-	if !reflect.DeepEqual(m.app.Watchlists, wantLists) || !reflect.DeepEqual(m.positions, positions) {
-		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.app.Watchlists, m.positions)
+	if !reflect.DeepEqual(m.app.Watchlists, wantLists) || !reflect.DeepEqual(m.snapshot.Positions, positions) {
+		t.Fatalf("list metadata/order or native backend fields lost: lists %#v, positions %#v", m.app.Watchlists, m.snapshot.Positions)
 	}
 	if !m.app.Settings.FollowWatchlist {
 		t.Fatal("follow mode must be enabled by default")
@@ -190,8 +226,8 @@ func TestNewModelUsesZeroForUnmatchedPositionLot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if position, exists := m.positions["A"]; !exists || position.Shares != 0 || !m.positionErrors["A"] || m.positions["B"].Shares != 2 || !slices.Equal(backend.positionCalls, []string{"A", "B"}) {
-		t.Fatalf("positions=%v, calls=%v", m.positions, backend.positionCalls)
+	if position, exists := m.snapshot.Positions["A"]; !exists || position.Shares != 0 || m.snapshot.PositionErrors["A"] == nil || m.snapshot.Positions["B"].Shares != 2 || !slices.Equal(backend.positionCalls, []string{"A", "B"}) {
+		t.Fatalf("positions=%v, calls=%v", m.snapshot.Positions, backend.positionCalls)
 	}
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 10, 9), uiTestQuote("B", "USD", 20, 19)})
 	if asset := m.assets([]string{"A"})[0]; asset.Position.Quantity != 0 || asset.Position.Value != 0 || !asset.PositionError || asset.QuoteUnavailable {
@@ -248,7 +284,7 @@ func TestNewModelEmptyListsAndEmptyWatchlists(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, tc.lists, nil)
-			if len(m.symbols) != 0 || len(m.visibleSymbols()) != 0 || m.listName() != tc.label {
+			if len(m.snapshot.Symbols) != 0 || len(m.visibleSymbols()) != 0 || m.listName() != tc.label {
 				t.Fatal("empty portfolio state is not inert")
 			}
 			uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
@@ -257,7 +293,7 @@ func TestNewModelEmptyListsAndEmptyWatchlists(t *testing.T) {
 				t.Fatalf("empty state not rendered: %q", view)
 			}
 			uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("UNKNOWN", "USD", 5, 4)})
-			if len(m.quotes) != 0 {
+			if len(m.snapshot.Quotes) != 0 {
 				t.Fatal("unknown symbol accepted into empty portfolio")
 			}
 		})
@@ -281,38 +317,6 @@ func TestModelAllViewportBindingsReserveLetterKeys(t *testing.T) {
 	}
 	if k.HalfPageUp.Enabled() || k.HalfPageDown.Enabled() {
 		t.Fatal("half-page letter shortcuts must be disabled")
-	}
-}
-
-func TestModelInitCommandsRequireSessionAndSymbols(t *testing.T) {
-	for _, hasSymbols := range []bool{false, true} {
-		for _, hasSession := range []bool{false, true} {
-			t.Run(fmt.Sprintf("symbols=%t/session=%t", hasSymbols, hasSession), func(t *testing.T) {
-				lists := []databackend.Watchlist{{}}
-				if hasSymbols {
-					lists[0].Tickers = []string{"A"}
-				}
-				m := uiTestModel(t, lists, nil)
-				feed := newSessionTestFeed(t)
-				if hasSession {
-					m.session = newQuoteSession(context.Background(), feed, m.symbols)
-					t.Cleanup(func() { _ = m.session.Close() })
-				}
-				cmd := m.Init()
-				if cmd == nil {
-					t.Fatalf("Init command present: %t", cmd != nil)
-				}
-				if hasSession && hasSymbols {
-					batch, ok := cmd().(tea.BatchMsg)
-					if !ok || len(batch) != 4 {
-						t.Fatal("Init must start cursor, visibility, receiver, and subscription")
-					}
-				}
-				if len(feed.snapshot().subscriptions) != 0 {
-					t.Fatal("Init itself performed feed work rather than returning commands")
-				}
-			})
-		}
 	}
 }
 
@@ -351,15 +355,14 @@ func TestModelWatchlistNavigationWrapsInBothDirectionsWithoutFeedCalls(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Name: "A", Tickers: []string{"A"}}, {Name: "B", Tickers: []string{"B"}}, {Name: "C"}}, nil)
 			feed := newSessionTestFeed(t)
-			m.session = newQuoteSession(context.Background(), feed, m.symbols)
-			t.Cleanup(func() { _ = m.session.Close() })
+			m.startPortfolio(feed)
 			for _, want := range tc.want {
 				uiTestUpdate(t, m, tc.key)
 				if m.selected != want {
 					t.Fatalf("selected %d, want %d", m.selected, want)
 				}
 			}
-			if calls := feed.snapshot(); len(calls.subscriptions) != 0 || len(calls.unsubscriptions) != 0 {
+			if calls := feed.snapshot(); len(calls.subscriptions) != 1 || len(calls.unsubscriptions) != 0 {
 				t.Fatal("navigation touched the all-symbol subscription")
 			}
 		})
@@ -380,8 +383,7 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: []string{"Z", "A"}}}, nil)
 			m.app.Settings.Sort = start
 			feed := newSessionTestFeed(t)
-			m.session = newQuoteSession(context.Background(), feed, m.symbols)
-			t.Cleanup(func() { _ = m.session.Close() })
+			m.startPortfolio(feed)
 			modes := []string{"ticker", "value", "change", "user"}
 			index := slices.Index(modes, start)
 			if start == "alpha" {
@@ -400,8 +402,8 @@ func TestModelSortCycleIncludesTickerAlphaAliasAndNeverSubscribes(t *testing.T) 
 					}
 				}
 			}
-			if len(feed.snapshot().subscriptions) != 0 {
-				t.Fatal("sorting subscribed")
+			if len(feed.snapshot().subscriptions) != 1 {
+				t.Fatal("sorting changed subscriptions")
 			}
 		})
 	}
@@ -600,27 +602,16 @@ func TestModelInitializationNarrowViewAndSanitizedWatchlistHeading(t *testing.T)
 	}
 }
 
-func TestModelQuitKeysCancelSessionEvenDuringResizeNotice(t *testing.T) {
+func TestModelQuitKeysDuringResizeNotice(t *testing.T) {
 	for _, key := range []tea.KeyPressMsg{uiTestKey(tea.KeyF10), uiTestKey('c', tea.ModCtrl)} {
-		for _, hasSession := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/session=%t", key.Keystroke(), hasSession), func(t *testing.T) {
-				m := uiTestModel(t, nil, nil)
-				if hasSession {
-					m.session = newQuoteSession(context.Background(), newSessionTestFeed(t), nil)
-					t.Cleanup(func() { _ = m.session.Close() })
-				}
-				uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 8, Height: 1})
-				cmd := uiTestUpdate(t, m, key)
-				if cmd == nil {
-					t.Fatal("quit key did not return quit")
-				}
-				if _, ok := cmd().(tea.QuitMsg); !ok {
-					t.Fatal("quit command returned a different message")
-				}
-				if hasSession {
-					sessionTestAwait(t, m.session.ctx.Done(), "quit session cancellation")
-				}
-			})
+		m := uiTestModel(t, nil, nil)
+		uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 8, Height: 1})
+		cmd := uiTestUpdate(t, m, key)
+		if cmd == nil {
+			t.Fatal("quit key did not return quit")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatal("quit command returned a different message")
 		}
 	}
 }
@@ -636,7 +627,7 @@ func TestModelQuoteEventsLatestWinsRejectUnknownAndRetainOffscreenCache(t *testi
 	late := uiTestQuote("", "EUR", 21, 20)
 	late.Meta.SymbolInSourceAPI = "B"
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("B", "EUR", 20, 19), uiTestQuote("UNKNOWN", "USD", 99, 98), {}, late})
-	if m.watchlist.View() != beforeRow || m.summary.View() == beforeSummary || len(m.quotes) != 2 || m.quotes["B"].QuotePrice.Price != 21 {
+	if m.watchlist.View() != beforeRow || m.summary.View() == beforeSummary || len(m.snapshot.Quotes) != 2 || m.snapshot.Quotes["B"].QuotePrice.Price != 21 {
 		t.Fatal("offscreen/unknown quotes modified visible rows or failed to update whole-portfolio/latest cache")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
@@ -644,7 +635,7 @@ func TestModelQuoteEventsLatestWinsRejectUnknownAndRetainOffscreenCache(t *testi
 		t.Fatal("navigation did not use the latest cached offscreen quote")
 	}
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("B", "EUR", 25, 24), uiTestQuote("B", "EUR", 22, 21)})
-	if m.quotes["B"].QuotePrice.Price != 22 || !strings.Contains(ansi.Strip(m.watchlist.View()), "22.00") {
+	if m.snapshot.Quotes["B"].QuotePrice.Price != 22 || !strings.Contains(ansi.Strip(m.watchlist.View()), "22.00") {
 		t.Fatal("late quote batch is not applied in delivery order")
 	}
 }
@@ -656,12 +647,12 @@ func TestModelForwardsRowFramesAndRefreshesViewportWithoutPortfolioMutation(t *t
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 11, 10)})
 	rows := reflect.ValueOf(m.watchlist).Elem().FieldByName("rows")
 	id := int(rows.Index(0).Elem().FieldByName("id").Int())
-	quote, summary := m.quotes["A"], m.summary.View()
+	quote, summary := m.snapshot.Quotes["A"], m.summary.View()
 	for frame := 1; frame <= 4; frame++ {
 		if cmd := uiTestUpdate(t, m, row.FrameMsg(id)); cmd == nil || rows.Index(0).Elem().FieldByName("frame").Int() != int64(frame) {
 			t.Fatalf("row frame %d was not forwarded", frame)
 		}
-		if m.viewport.GetContent() != strings.TrimSuffix(m.watchlist.View(), "\n") || m.quotes["A"] != quote || m.summary.View() != summary {
+		if m.viewport.GetContent() != strings.TrimSuffix(m.watchlist.View(), "\n") || m.snapshot.Quotes["A"] != quote || m.summary.View() != summary {
 			t.Fatal("frame did not refresh the renderer or mutated portfolio data")
 		}
 	}
@@ -677,7 +668,7 @@ func TestModelSubscriptionResultsAndUnrelatedMessagesDoNotMutateView(t *testing.
 	m := uiTestModel(t, nil, nil)
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 10})
 	before := m.View().Content
-	for _, msg := range []tea.Msg{subscriptionMsg{}, subscriptionMsg{err: errors.New("partial failure")}, struct{}{}, nil, tea.KeyReleaseMsg(tea.Key{Code: tea.KeyTab})} {
+	for _, msg := range []tea.Msg{struct{}{}, nil, tea.KeyReleaseMsg(tea.Key{Code: tea.KeyTab})} {
 		if cmd := uiTestUpdate(t, m, msg); cmd != nil || m.View().Content != before {
 			t.Fatal("non-data result changed display state or started feed work")
 		}
@@ -735,18 +726,34 @@ func TestMutationWorkerRunsFilteredTXAfterCommit(t *testing.T) {
 	}
 }
 
-func TestMutationWorkerKeepsSuccessWhenFollowupReadFails(t *testing.T) {
-	b := &mutationFollowupBackend{uiTestBackend: &uiTestBackend{}, txErr: errors.New("read failed")}
+func TestMutationWorkerRefreshesOpenAndClosedPositionWhenFollowupReadFails(t *testing.T) {
+	b := &mutationFollowupBackend{uiTestBackend: &uiTestBackend{positions: map[string]databackend.Position{}}, txErr: errors.New("read failed")}
 	app := uiTestApp(b.uiTestBackend)
 	app.Db = b
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	inv := &commandInvocation{id: 2, name: "ATX", args: map[string]string{"broker": "IB", "side": "BUY", "date": "20260101", "ticker": "AAPL", "price": "8", "shares": "2", "fee": "0"}, ctx: ctx, cancel: cancel}
-	msg := executeCommand(inv, false, app)().(commandResultMsg)
-	if msg.err != nil || msg.table != nil || !strings.Contains(msg.content, "ATX added") || !strings.Contains(msg.content, "TX read warning:") || !strings.Contains(msg.content, "read failed") {
-		t.Fatalf("follow-up failure hid committed write: %+v", msg)
+	ctx := t.Context()
+	m, err := NewModel(ctx, app)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(b.events, []string{"write", "tx"}) {
+	feed := newSessionTestFeed(t)
+	t.Cleanup(m.portfolio.Close)
+	m.startPortfolio(feed)
+	for i, side := range []string{"BUY", "SELL"} {
+		inv := &commandInvocation{id: 2, name: "ATX", args: map[string]string{"broker": "IB", "side": side, "date": "20260101", "ticker": "AAPL", "price": "8", "shares": "2", "fee": "0"}, ctx: ctx, portfolio: m.portfolio}
+		msg := executeCommand(inv, false, app)().(commandResultMsg)
+		if msg.err != nil || msg.table != nil || !strings.Contains(msg.content, "ATX added") || !strings.Contains(msg.content, "TX read warning:") || !strings.Contains(msg.content, "read failed") {
+			t.Fatalf("follow-up failure hid committed write: %+v", msg)
+		}
+		m.Update(portfolioChangedMsg{})
+		want := 1 - i
+		if len(m.visibleSymbols()) != want || len(m.snapshot.Positions) != want || len(feed.snapshot().subscriptions) != 1 {
+			t.Fatalf("%s positions = %v, visible %v, subscriptions %v", side, m.snapshot.Positions, m.visibleSymbols(), feed.snapshot().subscriptions)
+		}
+		if b.watchCalls != i+2 {
+			t.Fatalf("%s refresh called %d times", side, b.watchCalls-1)
+		}
+	}
+	if !reflect.DeepEqual(b.events, []string{"write", "tx", "write", "tx"}) {
 		t.Fatalf("follow-up failure events = %v", b.events)
 	}
 }

@@ -33,7 +33,7 @@ type Service struct {
 }
 
 func New(ctx context.Context, db backend.DataBackend, pairs []string) (*Service, error) {
-	snapshot, err := load(ctx, db, true)
+	snapshot, err := load(ctx, db, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -43,6 +43,7 @@ func New(ctx context.Context, db backend.DataBackend, pairs []string) (*Service,
 			fx = append(fx, from+to)
 		}
 	}
+	snapshot.FXPairs = fx
 	ctx, cancel := context.WithCancel(ctx)
 	return &Service{ctx: ctx, cancel: cancel, db: db, fx: fx, gate: make(chan struct{}, 1), snapshot: snapshot, changed: make(chan struct{})}, nil
 }
@@ -92,7 +93,8 @@ func (s *Service) Refresh(ctx context.Context) error {
 		return err
 	}
 
-	next, err := load(ctx, s.db, false)
+	previous, _ := s.Observe()
+	next, err := load(ctx, s.db, &previous)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if canceled := errors.Join(ctx.Err(), s.ctx.Err()); canceled != nil {
@@ -104,13 +106,13 @@ func (s *Service) Refresh(ctx context.Context) error {
 		s.publishLocked()
 		return err
 	}
-	s.snapshot.WatchlistError = nil
 	if err == nil {
 		err = s.subscribeLocked(next, ctx)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
+	s.snapshot.WatchlistError = nil
 	if err != nil {
 		s.snapshot.Status = err
 		s.publishLocked()
@@ -122,7 +124,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 			next.Quotes[symbol] = q
 		}
 	}
-	next.Revision = s.snapshot.Revision
+	next.Revision, next.FXPairs = s.snapshot.Revision, s.fx
 	s.snapshot = next
 	s.publishLocked()
 	return nil
@@ -174,8 +176,11 @@ func (s *Service) subscribeLocked(snapshot Snapshot, ctx context.Context) error 
 	}
 	var next *mktdata.Subscription
 	var err error
+	replacing := s.sub != nil && len(demand) != 0
 	if len(demand) != 0 {
-		if feed, ok := s.feed.(mktdata.VisibleSubscriber); ok {
+		if s.sub != nil {
+			next, err = s.sub.Replace(ctx, demand, visible)
+		} else if feed, ok := s.feed.(mktdata.VisibleSubscriber); ok {
 			next, err = feed.SubscribeWithVisibility(demand, visible)
 		} else {
 			next, err = s.feed.Subscribe(demand)
@@ -184,7 +189,7 @@ func (s *Service) subscribeLocked(snapshot Snapshot, ctx context.Context) error 
 			}
 		}
 	}
-	if err == nil {
+	if err == nil && !replacing {
 		err = errors.Join(ctx.Err(), s.ctx.Err())
 	}
 	if err != nil {
@@ -193,7 +198,7 @@ func (s *Service) subscribeLocked(snapshot Snapshot, ctx context.Context) error 
 		}
 		return fmt.Errorf("portfolio quote subscription: %w", err)
 	}
-	if s.sub != nil {
+	if s.sub != nil && !replacing {
 		s.sub.Close()
 	}
 	s.sub, s.demand = next, demand
@@ -262,6 +267,9 @@ func MergeQuote(quotes map[string]c.AssetQuote, update c.QuoteUpdate) c.AssetQuo
 			update.Currency = prior.Currency
 		}
 		if update.QuotePrice == nil {
+			if update.Meta == (c.Meta{}) {
+				update.Meta = prior.Meta
+			}
 			if update.Class == 0 {
 				update.Class = prior.Class
 			}

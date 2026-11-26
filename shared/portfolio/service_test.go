@@ -142,3 +142,19 @@ func TestMergeQuoteRetainsPriceAndCurrency(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestCloseCancelsRefreshBeforeReturning(t *testing.T) {
+	db := &testBackend{}
+	service, err := New(t.Context(), db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.block = make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- service.Refresh(t.Context()) }()
+	<-db.block
+	service.Close()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("refresh after shutdown: %v", err)
+	}
+}

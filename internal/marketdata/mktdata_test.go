@@ -1939,3 +1939,32 @@ func TestQuoteQueueCapacity(t *testing.T) {
 		}
 	}
 }
+
+func TestReplaceSubscriptionKeepsOldOnFailureAndClosesItOnSuccess(t *testing.T) {
+	service := NewMktData().(*Service)
+	defer service.Stop()
+	sub, err := service.SubscribeWithVisibility([]string{"A", "B"}, []string{"A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	if _, err := sub.Replace(t.Context(), []string{"B", "C"}, []string{"A"}); err == nil {
+		t.Fatal("replacement accepted invalid visibility")
+	}
+	if err := sub.SetVisibleSymbols([]string{"B"}); err != nil {
+		t.Fatalf("failed replacement lost old subscription: %v", err)
+	}
+	replacement, err := sub.Replace(t.Context(), []string{"B", "C"}, []string{"C"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if _, open := <-sub.Updates(); open {
+		t.Fatal("previous subscription still open")
+	}
+	service.mu.RLock()
+	defer service.mu.RUnlock()
+	if len(service.subscribers) != 1 {
+		t.Fatalf("active subscriptions = %d", len(service.subscribers))
+	}
+}

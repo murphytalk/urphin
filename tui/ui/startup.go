@@ -8,13 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	mktdata "github.com/murphytalk/urphin/internal/marketdata"
-	"github.com/murphytalk/urphin/tui/dashboard"
 	"github.com/murphytalk/urphin/tui/setup"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
 )
@@ -23,7 +23,6 @@ type startupResult struct {
 	model *Model
 	data  mktdata.MktData
 	start func() error
-	close func() error
 	err   error
 }
 
@@ -33,18 +32,26 @@ type marketDataResult struct {
 }
 
 type startupModel struct {
-	ctx   context.Context
-	init  func(context.Context) (setup.AppCtx, mktdata.MktData, func() error, func() error, error)
-	spin  spinner.Model
-	app   *Model
-	close func() error
-	err   error
-	size  tea.WindowSizeMsg
+	ctx    context.Context
+	init   func(context.Context) (setup.AppCtx, mktdata.MktData, func() error, func() error, error)
+	spin   spinner.Model
+	app    *Model
+	initMu sync.Mutex
+	close  func() error
+	err    error
+	size   tea.WindowSizeMsg
 }
 
 func RunWithStartup(ctx context.Context, initialize func(context.Context) (setup.AppCtx, mktdata.MktData, func() error, func() error, error)) error {
-	m := startupModel{ctx: ctx, init: initialize, spin: spinner.New()}
+	initCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	m := startupModel{ctx: initCtx, init: initialize, spin: spinner.New()}
 	_, err := tea.NewProgram(&m, tea.WithContext(ctx)).Run()
+	if m.app == nil {
+		cancel()
+	}
+	m.initMu.Lock()
+	defer m.initMu.Unlock()
 	if m.close != nil {
 		err = errors.Join(err, m.close())
 	}
@@ -53,38 +60,44 @@ func RunWithStartup(ctx context.Context, initialize func(context.Context) (setup
 
 func (m *startupModel) Init() tea.Cmd {
 	return tea.Batch(m.spin.Tick, func() tea.Msg {
+		m.initMu.Lock()
+		defer m.initMu.Unlock()
+		if m.ctx.Err() != nil {
+			return nil
+		}
 		app, data, start, closeFn, err := m.init(m.ctx)
+		m.close = closeFn
 		if err != nil {
 			slog.Error("UI startup failed during backend or feed initialization", "error", err)
-			return startupResult{err: err, close: closeFn}
+			return startupResult{err: err}
 		}
 		app.MktData = data
-		if app.Dashboard == nil {
-			app.Dashboard = dashboard.New(m.ctx, app.Db, app.Settings, app.Cfg, data)
-		}
-		closeFn = closeDashboardBefore(closeFn, app.Dashboard)
 		slog.Info("UI startup loading watchlists and positions")
 		model, err := NewModel(m.ctx, app)
+		if model != nil {
+			m.close = closeSession(model, closeFn)
+		}
 		if err == nil && data == nil {
 			err = errors.New("UI requires market data")
 		}
 		if err != nil {
 			slog.Error("UI startup failed while loading watchlists and positions", "error", err)
-			return startupResult{err: err, close: closeFn}
+			return startupResult{err: err}
 		}
 		slog.Info("UI startup complete")
 		if home, e := os.UserHomeDir(); e == nil {
 			model.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history.log"), slog.Default())
 		}
-		return startupResult{model: model, data: data, start: start, close: closeFn}
+		return startupResult{model: model, data: data, start: start}
 	})
 }
 
-func closeDashboardBefore(closeFn func() error, service *dashboard.Service) func() error {
+func closeSession(model *Model, closeFn func() error) func() error {
 	return func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		dashboardErr := service.Close(ctx)
+		dashboardErr := model.app.Dashboard.Close(ctx)
 		cancel()
+		model.portfolio.Close()
 		if closeFn != nil {
 			return errors.Join(dashboardErr, closeFn())
 		}
@@ -94,7 +107,7 @@ func closeDashboardBefore(closeFn func() error, service *dashboard.Service) func
 
 func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if result, ok := msg.(startupResult); ok {
-		m.close, m.err = result.close, result.err
+		m.err = result.err
 		if result.err != nil {
 			return m, nil
 		}
@@ -117,11 +130,17 @@ func (m *startupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.app.app.MktData = result.data
-		m.app.session = newQuoteSession(m.ctx, result.data, m.app.subscriptionSymbols())
+		m.app.startPortfolio(result.data)
 		return m, m.app.Init()
 	}
 	if m.app != nil {
 		if m.app.marketLoading {
+			if key, ok := msg.(tea.KeyPressMsg); ok {
+				switch key.Keystroke() {
+				case "ctrl+c", "ctrl+d", "f10":
+					return m, tea.Quit
+				}
+			}
 			var cmd tea.Cmd
 			m.app.marketSpinner, cmd = m.app.marketSpinner.Update(msg)
 			return m, cmd

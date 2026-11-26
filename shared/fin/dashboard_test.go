@@ -61,9 +61,9 @@ func TestCalculateDashboardValuesMarksOverflowedDailyBasisUnavailable(t *testing
 	}
 }
 
-func TestCalculateDashboardValuesKeepsNativeValueOnCurrencyMismatch(t *testing.T) {
+func TestCalculateDashboardValuesRejectsNativeValueOnCurrencyMismatch(t *testing.T) {
 	got := CalculateDashboardValues([]DashboardHolding{{Symbol: "X", Currency: "EUR", Shares: 2, Price: 5, CurrencyMismatch: true}}, "USD", map[string]float64{"EURUSD": 1.2})
-	if len(got.Rows) != 1 || !got.Rows[0].NativeAvailable || got.Rows[0].Native != 10 || got.Rows[0].BaseAvailable || !got.Partial {
+	if len(got.Rows) != 1 || got.Rows[0].NativeAvailable || got.Rows[0].Native != 0 || got.Rows[0].BaseAvailable || !got.Partial {
 		t.Fatalf("dashboard=%+v", got)
 	}
 }

@@ -1,6 +1,6 @@
 {{define "wrapper"}}
-<section id="portfolio" hx-ext="sse" sse-connect="/events?scope={{.Scope}}">
-  <div sse-swap="portfolio">{{template "panel" .}}</div>
+<section id="portfolio" data-stream="{{.StreamURL}}">
+  {{template "panel" .}}
 </section>
 {{end}}
 {{define "panel"}}
@@ -10,8 +10,10 @@
     <h1>Portfolio overview</h1>
     <p class="subtitle">Exposure, holdings, and sector performance at a glance.</p>
   </div>
-  <p class="connection-status is-live" role="status">Live updates connected</p>
+  <p class="connection-status" role="status">Live updates pending</p>
 </div>
+{{if .RefreshError}}<p class="status-banner" role="status">Portfolio refresh failed. {{.RefreshError}}</p>{{end}}
+{{if .WatchlistError}}<p class="status-banner" role="status">{{.WatchlistError}}</p>{{end}}
 {{if .Status}}<p class="status-banner" role="status">{{.Status}}</p>{{end}}
 {{if .Partial}}<p class="status-banner is-warning" role="status"><span class="status-icon" aria-hidden="true">!</span> Some values are unavailable. Totals and charts include valued holdings only.</p>{{end}}
 {{if and (eq .GrossBase 0.0) .Rows}}<p class="status-banner" role="status">No comparable exposure can be charted yet.</p>{{end}}

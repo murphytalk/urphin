@@ -66,6 +66,26 @@ func (s *Subscription) Close() {
 	if s.closed {
 		return
 	}
+	s.removeLocked()
+
+	s.service.reconcileSymbols()
+}
+
+// Replace changes demand atomically with respect to market-data routing.
+func (s *Subscription) Replace(ctx context.Context, symbols, visible []string) (*Subscription, error) {
+	service := s.service
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if s.closed {
+		return nil, errors.New("market data subscription is closed")
+	}
+	return service.subscribeLocked(symbols, visible, s)
+}
+
+func (s *Subscription) removeLocked() {
 	s.closed = true
 	delete(s.service.subscribers, s)
 	slog.Debug("Market-data subscription closed", "symbol_count", len(s.symbols), "subscriber_count", len(s.service.subscribers))
@@ -76,7 +96,6 @@ func (s *Subscription) Close() {
 			delete(s.service.coveredSymbols, symbol)
 		}
 	}
-	s.service.reconcileSymbols()
 	select {
 	case s.service.prune <- struct{}{}:
 	default:
@@ -117,6 +136,10 @@ func (m *Service) Subscribe(symbols []string) (*Subscription, error) {
 func (m *Service) SubscribeWithVisibility(symbols, visible []string) (*Subscription, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.subscribeLocked(symbols, visible, nil)
+}
+
+func (m *Service) subscribeLocked(symbols, visible []string, old *Subscription) (*Subscription, error) {
 	if m.state == lifecycleStopping || m.state == lifecycleStopped {
 		return nil, errors.New("market data service is stopped")
 	}
@@ -138,6 +161,9 @@ func (m *Service) SubscribeWithVisibility(symbols, visible []string) (*Subscript
 	}
 	sub := &Subscription{service: m, symbols: members, visible: slices.Clone(visible), updates: make(chan c.QuoteUpdate, max(subscriptionChannelSize, len(members)))}
 	m.subscribers[sub] = struct{}{}
+	if old != nil {
+		old.removeLocked()
+	}
 	slog.Debug("Market-data subscription created", "symbol_count", len(members), "subscriber_count", len(m.subscribers))
 	for symbol := range members {
 		if quote, ok := m.fxQuotes[symbol]; ok {

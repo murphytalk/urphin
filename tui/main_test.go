@@ -36,6 +36,10 @@ func (b *startUITestBackend) GetWatchList(context.Context, *string) ([]databacke
 	return nil, b.err
 }
 
+func (*startUITestBackend) GetAssetsWithPositions(context.Context, *string, []c.AssetClass) ([]string, error) {
+	return nil, nil
+}
+
 func (b *startUITestBackend) Close(context.Context) error {
 	b.closed = true
 	return nil

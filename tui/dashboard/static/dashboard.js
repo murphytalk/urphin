@@ -50,7 +50,7 @@
     chart.attr('viewBox', `0 0 ${width} ${height}`);
     if (!data.sectors.length) return;
 
-    const root = d3.hierarchy({children: data.sectors}).sum(item => Math.max(item.exposure, .1));
+    const root = d3.hierarchy({children: data.sectors}).sum(item => item.exposure ?? 0);
     d3.treemap().size([width, height]).padding(4).round(true)(root);
     const tiles = chart.selectAll('g').data(root.leaves()).join('g')
       .attr('transform', item => `translate(${item.x0},${item.y0})`);
@@ -74,31 +74,105 @@
     });
   }
 
-  function renderCharts() {
-    const dataNode = document.querySelector('#dashboard-data');
-    if (!dataNode || !window.d3) return;
-    let data;
+  function readData() {
+    const node = document.querySelector('#dashboard-data');
+    if (!node) return null;
     try {
-      data = JSON.parse(dataNode.textContent);
+      return JSON.parse(node.textContent);
     } catch {
-      return;
+      return null;
     }
+  }
+
+  function renderCharts() {
+    const data = readData();
+    if (!data || !window.d3) return;
     drawHoldings(data);
     drawSectors(data);
   }
 
-  function setConnectionState(connected) {
-    document.querySelectorAll('.connection-status').forEach(node => {
-      node.textContent = connected ? 'Live updates connected' : 'Reconnecting to live updates';
-      node.classList.toggle('is-live', connected);
-      node.classList.toggle('is-reconnecting', !connected);
+  let active;
+  const connectionLabel = {
+    pending: 'Live updates pending',
+    live: 'Live updates connected',
+    reconnecting: 'Reconnecting to live updates'
+  };
+
+  function showConnectionState(panel, state) {
+    const node = panel.querySelector('.connection-status');
+    if (!node) return;
+    node.textContent = connectionLabel[state];
+    node.classList.toggle('is-live', state === 'live');
+    node.classList.toggle('is-reconnecting', state === 'reconnecting');
+  }
+
+  function updateOptions(data) {
+    const select = document.querySelector('#scope');
+    if (!select) return;
+    const options = [['__all', 'All holdings'], ...data.lists.map(name => [`list:${name}`, name])];
+    const matches = options.length === select.options.length && options.every(([value, label], index) => {
+      const existing = select.options[index];
+      return existing.value === value && existing.text === label;
+    });
+    const selected = select.value;
+    if (!matches) {
+      select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+    }
+    if (!options.some(([value]) => value === selected)) {
+      select.value = data.scope;
+    } else if (!matches) {
+      select.value = selected;
+    }
+  }
+
+  function updateDashboard() {
+    const panel = document.querySelector('#portfolio');
+    const data = readData();
+    if (!panel || !data) return;
+    updateOptions(data);
+    const url = new URL(location.href);
+    if (data.scope === '__all') url.searchParams.delete('scope');
+    else url.searchParams.set('scope', data.scope);
+    url.searchParams.delete('refresh');
+    if (url.href !== location.href) history.replaceState(history.state, '', url);
+    renderCharts();
+    if (!window.EventSource) return;
+
+    if (active?.url === data.stream) {
+      active.panel = panel;
+      showConnectionState(panel, active.state);
+      return;
+    }
+    const state = active?.state === 'reconnecting' ? 'reconnecting' : 'pending';
+    active?.source.close();
+    const source = new EventSource(data.stream);
+    const stream = {source, panel, url: data.stream, state};
+    active = stream;
+    showConnectionState(panel, stream.state);
+
+    function current() {
+      return active === stream && stream.panel.isConnected;
+    }
+
+    source.onopen = () => {
+      if (!current()) return;
+      stream.state = 'live';
+      showConnectionState(stream.panel, stream.state);
+    };
+    source.onerror = () => {
+      if (!current()) return;
+      stream.state = 'reconnecting';
+      showConnectionState(stream.panel, stream.state);
+    };
+    source.addEventListener('portfolio', event => {
+      if (!current()) return;
+      stream.panel.innerHTML = event.data;
+      updateDashboard();
     });
   }
 
-  document.addEventListener('DOMContentLoaded', renderCharts);
-  document.addEventListener('htmx:afterSwap', renderCharts);
-  document.addEventListener('htmx:sseOpen', () => setConnectionState(true));
-  document.addEventListener('htmx:sseError', () => setConnectionState(false));
+  document.addEventListener('DOMContentLoaded', updateDashboard);
+  document.addEventListener('htmx:afterSwap', updateDashboard);
   document.addEventListener('change', event => {
     if (event.target.matches('#scope')) event.target.form.requestSubmit();
   });

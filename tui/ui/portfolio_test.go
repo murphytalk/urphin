@@ -137,8 +137,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 		t.Fatal("follow mode must be enabled by default")
 	}
 	feed := newSessionTestFeed(t)
-	m.session = newQuoteSession(context.Background(), feed, m.symbols)
-	t.Cleanup(func() { _ = m.session.Close() })
+	m.startPortfolio(feed)
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 100, 90), uiTestQuote("B", "EUR", 20, 19), uiTestQuote("C", "USD", 30, 29)})
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab))
 	if scope, _ := uiTestSummaries(m); !m.app.Settings.FollowWatchlist || scope != "Watchlist: Second" {
@@ -148,7 +147,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 	uiTestFloat(t, "shared cached EUR", uiTestSummary(t, m, "EUR").Value, 40)
 	before := m.summary.View()
 	uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", "USD", 110, 100)})
-	if m.summary.View() != before || m.quotes["A"].QuotePrice.Price != 110 {
+	if m.summary.View() != before || m.snapshot.Quotes["A"].QuotePrice.Price != 110 {
 		t.Fatal("offscope quote changed follow summary or was not cached globally")
 	}
 	uiTestUpdate(t, m, uiTestKey(tea.KeyTab, tea.ModShift))
@@ -166,7 +165,7 @@ func TestPortfolioFollowSwitchUsesSharedCachedTickerAndToggleNeverSubscribes(t *
 		t.Fatal("F3 did not restore whole-portfolio scope")
 	}
 	uiTestFloat(t, "whole USD restored with latest quotes", uiTestSummary(t, m, "USD").Value, 200)
-	if calls := feed.snapshot(); len(calls.subscriptions) != 0 || len(calls.unsubscriptions) != 0 || calls.starts != 0 || calls.stops != 0 {
+	if calls := feed.snapshot(); len(calls.subscriptions) != 1 || len(calls.unsubscriptions) != 0 || calls.starts != 0 || calls.stops != 0 {
 		t.Fatal("follow/navigation toggles touched market-data lifecycle")
 	}
 }
@@ -201,7 +200,7 @@ func TestPortfolioCurrencyPrecedenceFallbackUnknownAndMismatchRecovery(t *testin
 		t.Run(tc.name, func(t *testing.T) {
 			m := uiTestModel(t, []databackend.Watchlist{{Tickers: []string{"A"}}}, map[string]databackend.Position{"A": {Shares: 2, VWAP: 3, AvgCost: 4, Ccy: tc.backend}})
 			uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", tc.quote, 10, 9)})
-			if m.currency("A") != tc.currency || m.mismatches["A"] != tc.mismatch {
+			if m.currency("A") != tc.currency || m.currencyMismatch("A") != tc.mismatch {
 				t.Fatal("native currency precedence or mismatch detection incorrect")
 			}
 			s, asset := uiTestSummary(t, m, tc.currency), m.assets([]string{"A"})[0]
@@ -213,7 +212,7 @@ func TestPortfolioCurrencyPrecedenceFallbackUnknownAndMismatchRecovery(t *testin
 			uiTestFloat(t, "backend average cost", s.AvgCost, 8)
 			if tc.mismatch {
 				uiTestUpdate(t, m, QuoteBatchMsg{uiTestQuote("A", tc.backend, 11, 10)})
-				if m.mismatches["A"] || uiTestSummary(t, m, tc.currency).ValueUnavailable || m.assets([]string{"A"})[0].PositionUnavailable {
+				if m.currencyMismatch("A") || uiTestSummary(t, m, tc.currency).ValueUnavailable || m.assets([]string{"A"})[0].PositionUnavailable {
 					t.Fatal("consistent late quote failed to clear mismatch")
 				}
 			}
@@ -325,7 +324,7 @@ func TestPortfolioAssetsPreserveQuoteFieldsBothCostsAndRequestedOrder(t *testing
 		t.Fatal("assets lost requested order or used backend/provider aliases")
 	}
 	localQuote, _ := q.ToAssetQuote(nil)
-	if asset.Name != q.Name || asset.Fundamental == nil || *asset.Fundamental != *q.Fundamental || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != localQuote.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.quotes["A"].Meta.OrderIndex != 99 {
+	if asset.Name != q.Name || asset.Fundamental == nil || *asset.Fundamental != *q.Fundamental || asset.Class != q.Class || asset.Currency != q.Currency || asset.QuotePrice != localQuote.QuotePrice || asset.QuoteExtended != q.QuoteExtended || asset.QuoteFutures != q.QuoteFutures || asset.QuoteSource != q.QuoteSource || asset.Exchange != q.Exchange || !asset.Meta.IsVariablePrecision || asset.Meta.SymbolInSourceAPI != "SOURCE" || m.snapshot.Quotes["A"].Meta.OrderIndex != 99 {
 		t.Fatal("quote metadata not forwarded intact or source cache mutated")
 	}
 	want := c.Position{Quantity: 2, UnitCost: 80, AvgCost: 70, Cost: 160, UnitValue: 100, Value: 200, DayChange: c.PositionChange{Amount: 20, Percent: 20.0 / 180 * 100}, TotalChange: c.PositionChange{Amount: 40, Percent: 25}, Weight: 100}
@@ -425,7 +424,7 @@ func TestPortfolioSummaryHeaderReceivesFXRates(t *testing.T) {
 		t.Fatal(err)
 	}
 	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
-	if got := m.subscriptionSymbols(); !slices.Equal(got, []string{"EURUSD", "USDJPY"}) {
+	if got := m.snapshot.FXPairs; !slices.Equal(got, []string{"EURUSD", "USDJPY", "EURGBP"}) {
 		t.Fatalf("FX subscriptions = %v", got)
 	}
 	check := func(want string) {

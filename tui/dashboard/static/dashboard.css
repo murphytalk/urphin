@@ -45,7 +45,8 @@ h1 { margin-bottom: 5px; color: #f3f6fa; font-size: clamp(1.6rem, 3vw, 2rem); fo
 h2 { margin: 0; color: #e8edf5; font-size: 1rem; font-weight: 620; letter-spacing: -.015em; }
 .subtitle { margin: 0; color: var(--muted); font-size: .88rem; }
 .connection-status { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 5px; color: #a5b3c4; font-size: .76rem; white-space: nowrap; }
-.connection-status::before { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px #4bd3a366; content: ""; }
+.connection-status::before { width: 7px; height: 7px; border-radius: 50%; background: #a5b3c4; content: ""; }
+.connection-status.is-live::before { background: var(--green); box-shadow: 0 0 10px #4bd3a366; }
 .connection-status.is-reconnecting::before { background: var(--amber); box-shadow: 0 0 10px #f2bd6966; }
 .status-banner { display: flex; align-items: center; gap: 9px; margin: 0 0 16px; padding: 11px 14px; border: 1px solid #34455a; border-radius: 10px; background: #172231; color: #c3cfdd; font-size: .83rem; }
 .status-banner.is-warning { border-color: #725c38; background: #2a241a; color: #e9ca91; }

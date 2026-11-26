@@ -6,6 +6,7 @@ import (
 
 	c "github.com/murphytalk/urphin/internal"
 	"github.com/murphytalk/urphin/internal/summary"
+	"github.com/murphytalk/urphin/shared/fin"
 )
 
 func finite(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
@@ -22,66 +23,37 @@ func percentage(amount, basis float64) float64 {
 }
 
 func (m *Model) currency(symbol string) string {
-	if currency := m.positions[symbol].Ccy; currency != "" {
-		return currency
+	currency, _ := fin.ResolveQuoteCurrency(m.snapshot.Positions[symbol].Ccy, m.snapshot.Quotes[symbol].Currency.FromCurrencyCode)
+	if currency == "" {
+		return "Unknown"
 	}
-	if currency := m.quotes[symbol].Currency.FromCurrencyCode; currency != "" {
-		return currency
-	}
-	return "Unknown"
+	return currency
+}
+
+func (m *Model) currencyMismatch(symbol string) bool {
+	_, mismatch := fin.ResolveQuoteCurrency(m.snapshot.Positions[symbol].Ccy, m.snapshot.Quotes[symbol].Currency.FromCurrencyCode)
+	return mismatch
 }
 
 func (m *Model) quoteUsable(symbol string) bool {
-	quote, exists := m.quotes[symbol]
+	quote, exists := m.snapshot.Quotes[symbol]
 	return exists && finite(quote.QuotePrice.Price) && quote.QuotePrice.Price > 0
-}
-
-func (m *Model) fxRate(from, to string) (float64, bool) {
-	from, to = strings.ToUpper(strings.TrimSpace(from)), strings.ToUpper(strings.TrimSpace(to))
-	if from == to && from != "" {
-		return 1, true
-	}
-	for _, pair := range m.fxPairs {
-		quote, exists := m.quotes[pair]
-		if !exists {
-			continue
-		}
-		rate := quote.Currency.Rate
-		if rate <= 0 || !finite(rate) {
-			rate = quote.QuotePrice.Price
-		}
-		if rate <= 0 || !finite(rate) {
-			continue
-		}
-		quoteFrom := strings.ToUpper(quote.Currency.FromCurrencyCode)
-		quoteTo := strings.ToUpper(quote.Currency.ToCurrencyCode)
-		switch {
-		case quoteFrom == from && quoteTo == to:
-			return rate, true
-		case quoteFrom == to && quoteTo == from:
-			inverse := 1 / rate
-			if finite(inverse) {
-				return inverse, true
-			}
-		}
-	}
-	return 0, false
 }
 
 func (m *Model) assets(symbols []string) []c.Asset {
 	assets := make([]c.Asset, 0, len(symbols))
 	values := make(map[string]float64)
 	for i, symbol := range symbols {
-		quote := m.quotes[symbol]
-		position := m.positions[symbol]
+		quote := m.snapshot.Quotes[symbol]
+		position := m.snapshot.Positions[symbol]
 		usable := m.quoteUsable(symbol)
 		asset := c.Asset{
 			Symbol: symbol, Name: quote.Name, Class: quote.Class, Currency: quote.Currency,
 			Fundamental: quote.Fundamental,
 			QuotePrice:  quote.QuotePrice, QuoteExtended: quote.QuoteExtended, QuoteFutures: quote.QuoteFutures,
 			QuoteSource: quote.QuoteSource, Exchange: quote.Exchange, Meta: quote.Meta,
-			QuoteUnavailable: !usable, PositionUnavailable: !usable || m.mismatches[symbol] || !finite(position.VWAP) || !finite(position.AvgCost),
-			PositionError: m.positionErrors[symbol],
+			QuoteUnavailable: !usable, PositionUnavailable: !usable || m.currencyMismatch(symbol) || !finite(position.VWAP) || !finite(position.AvgCost),
+			PositionError: m.snapshot.PositionErrors[symbol] != nil,
 			Position:      c.Position{Quantity: position.Shares, UnitCost: position.VWAP, AvgCost: position.AvgCost, Cost: position.Shares * position.VWAP},
 		}
 		asset.Meta.OrderIndex = i
@@ -110,18 +82,19 @@ func (m *Model) assets(symbols []string) []c.Asset {
 
 // updateSummary sends native totals and configured base-currency values to the summary renderer.
 func (m *Model) updateSummary() {
-	symbols, scope := m.symbols, "Whole portfolio"
+	symbols, scope := m.snapshot.Symbols, "Whole portfolio"
 	baseCurrency := strings.ToUpper(strings.TrimSpace(m.app.Settings.BaseCurrency))
 	if baseCurrency == "" {
 		baseCurrency = "USD"
 	}
-	if m.app.Settings.FollowWatchlist {
+	if m.app.Settings.FollowWatchlist && len(m.snapshot.Lists) != 0 {
 		symbols, scope = m.visibleSymbols(), "Watchlist: "+m.listName()
 	}
+	rates := m.snapshot.FXRates()
 	totals := make(map[string]*summary.CurrencySummary)
 	previous := make(map[string]float64)
 	for _, symbol := range symbols {
-		position := m.positions[symbol]
+		position := m.snapshot.Positions[symbol]
 		if position.Shares == 0 {
 			continue
 		}
@@ -141,8 +114,8 @@ func (m *Model) updateSummary() {
 		} else {
 			s.AvgCostUnavailable, s.ChangeUnavailable = true, true
 		}
-		quote := m.quotes[symbol]
-		if !m.quoteUsable(symbol) || m.mismatches[symbol] {
+		quote := m.snapshot.Quotes[symbol]
+		if !m.quoteUsable(symbol) || m.currencyMismatch(symbol) {
 			s.ValueUnavailable, s.DayChangeUnavailable, s.ChangeUnavailable = true, true, true
 			continue
 		}
@@ -157,7 +130,7 @@ func (m *Model) updateSummary() {
 	currencies := make([]summary.CurrencySummary, 0, len(totals))
 	for currency, s := range totals {
 		if baseCurrency != "" && strings.ToUpper(strings.TrimSpace(currency)) != baseCurrency {
-			if rate, ok := m.fxRate(currency, baseCurrency); ok && !s.ValueUnavailable {
+			if rate, ok := fin.FXRate(currency, baseCurrency, rates); ok && !s.ValueUnavailable {
 				s.BaseValue = s.Value * rate
 				s.BaseValueUnavailable = !finite(s.BaseValue)
 			} else {
@@ -173,8 +146,8 @@ func (m *Model) updateSummary() {
 	for _, pair := range m.fxPairs {
 		from, to, ok := c.ParseCurrencyPair(pair)
 		if ok {
-			if rate, available := m.fxRate(from, to); available {
-				quote := m.quotes[pair].QuotePrice
+			if rate, available := fin.FXRate(from, to, rates); available {
+				quote := m.snapshot.Quotes[pair].QuotePrice
 				quote.Price = rate
 				fxRates[pair] = quote
 			}

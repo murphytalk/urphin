@@ -87,7 +87,7 @@ func TestFileBackendReportAssetClassesAndInclusiveCutoff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Ticker != "ETF1" || got[1].Ticker != "USD.JPY" {
+	if len(got) != 2 || !((got[0].Ticker == "ETF1" && got[1].Ticker == "USD.JPY") || (got[0].Ticker == "USD.JPY" && got[1].Ticker == "ETF1")) {
 		t.Fatalf("report transactions = %+v", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,33 +20,75 @@ import (
 	"github.com/murphytalk/urphin/internal/marketdata"
 	"github.com/murphytalk/urphin/internal/marketdata/mktfeed"
 	"github.com/murphytalk/urphin/shared/fin"
+	"github.com/murphytalk/urphin/shared/portfolio"
 )
 
-func TestPageEscapesDataAndKeepsSyntheticAllDistinct(t *testing.T) {
-	s := &Service{
-		lists: []databackend.Watchlist{{Name: "ALL", Tickers: []string{"<A>"}}},
-		rows:  []fin.DashboardValue{{Symbol: "<A>", Sector: "<sector>", Currency: "USD", Native: 12, Base: 12, BaseAvailable: true, Exposure: 100}},
+type snapshotFixture struct {
+	mu       sync.Mutex
+	snapshot portfolio.Snapshot
+	changed  chan struct{}
+}
+
+func (f *snapshotFixture) Observe() (portfolio.Snapshot, <-chan struct{}) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.snapshot, f.changed
+}
+func (*snapshotFixture) Refresh(context.Context) error { return nil }
+func (f *snapshotFixture) applyQuote(q c.QuoteUpdate) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snapshot.Quotes = maps.Clone(f.snapshot.Quotes)
+	portfolio.MergeQuote(f.snapshot.Quotes, q)
+	close(f.changed)
+	f.changed = make(chan struct{})
+}
+func fixtureDashboard(t *testing.T, lists []databackend.Watchlist, holdings []fin.DashboardHolding, quotes []c.QuoteUpdate) (*Service, *snapshotFixture) {
+	t.Helper()
+	snapshot := portfolio.Snapshot{Lists: lists, Positions: map[string]databackend.Position{}, Quotes: map[string]c.AssetQuote{}, FXPairs: []string{"EURUSD"}}
+	for _, h := range holdings {
+		snapshot.Positions[h.Symbol] = databackend.Position{Shares: h.Shares, Ccy: h.Currency}
+		portfolio.MergeQuote(snapshot.Quotes, c.QuoteUpdate{Symbol: h.Symbol, Currency: c.Currency{FromCurrencyCode: h.Currency}, QuotePrice: &c.QuotePrice{Price: h.Price, PricePrevClose: h.PreviousClose}, Fundamental: &c.Fundamental{Sector: h.Sector}})
 	}
+	for _, q := range quotes {
+		portfolio.MergeQuote(snapshot.Quotes, q)
+	}
+	fixture := &snapshotFixture{snapshot: snapshot, changed: make(chan struct{})}
+	return New(t.Context(), fixture, "USD"), fixture
+}
+
+func backendDashboard(t *testing.T, ctx context.Context, db databackend.DataBackend) (*Service, *portfolio.Service) {
+	t.Helper()
+	p, err := portfolio.New(ctx, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	return New(ctx, p, "USD"), p
+}
+
+func TestPageEscapesDataAndKeepsSyntheticAllDistinct(t *testing.T) {
+	s, _ := fixtureDashboard(t, []databackend.Watchlist{{Name: "ALL", Tickers: []string{"<A>"}}}, []fin.DashboardHolding{{Symbol: "<A>", Sector: "<sector>", Currency: "USD", Shares: 1, Price: 12}}, nil)
 	r := httptest.NewRequest("GET", "/?scope=__all", nil)
 	w := httptest.NewRecorder()
 	s.handlePage(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "value=\"__all\" selected") || !strings.Contains(w.Body.String(), "&lt;A&gt;") || strings.Contains(w.Body.String(), "<td><A></td>") {
 		t.Fatalf("page response = %d %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), `value="ALL"`) {
+	if !strings.Contains(w.Body.String(), `value="list:ALL"`) {
 		t.Fatal("saved list named ALL missing beside synthetic ALL scope")
 	}
-	r = httptest.NewRequest("GET", "/?scope=ALL", nil)
+	r = httptest.NewRequest("GET", "/?scope=list%3AALL", nil)
 	w = httptest.NewRecorder()
 	s.handlePage(w, r)
-	if !strings.Contains(w.Body.String(), `value="ALL" selected`) {
+	if !strings.Contains(w.Body.String(), `value="list:ALL" selected`) {
 		t.Fatal("saved ALL scope was not selectable")
 	}
 	r = httptest.NewRequest("GET", "/?scope=__all", nil)
 	r.Header.Set("HX-Request", "true")
 	w = httptest.NewRecorder()
 	s.handlePage(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "sse-connect=\"/events?scope=__all\"") || !strings.Contains(w.Body.String(), "&lt;sector&gt;") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "data-stream=\"/events?scope=__all\"") || !strings.Contains(w.Body.String(), "&lt;sector&gt;") {
 		t.Fatalf("fragment differs from page snapshot: %d %s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest("GET", "/?scope=missing", nil)
@@ -54,13 +97,13 @@ func TestPageEscapesDataAndKeepsSyntheticAllDistinct(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("unknown scope status = %d", w.Code)
 	}
-	partial := &Service{rows: []fin.DashboardValue{{Symbol: "EUR", Currency: "EUR", Sector: "Unknown sector", Native: 5, NativeAvailable: true, Status: "FX conversion unavailable"}}}
+	partial, _ := fixtureDashboard(t, nil, []fin.DashboardHolding{{Symbol: "EUR", Currency: "EUR", Shares: 1, Price: 5}}, nil)
 	w = httptest.NewRecorder()
 	partial.handlePage(w, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(w.Body.String(), "Some values are unavailable") || !strings.Contains(w.Body.String(), "No comparable exposure can be charted yet") || !strings.Contains(w.Body.String(), "FX conversion unavailable") {
 		t.Fatalf("partial page = %s", w.Body.String())
 	}
-	empty := &Service{}
+	empty, _ := fixtureDashboard(t, nil, nil, nil)
 	w = httptest.NewRecorder()
 	empty.handlePage(w, httptest.NewRequest("GET", "/", nil))
 	if !strings.Contains(w.Body.String(), "No open holdings") {
@@ -69,41 +112,32 @@ func TestPageEscapesDataAndKeepsSyntheticAllDistinct(t *testing.T) {
 }
 
 func TestSnapshotKeepsUnlistedHoldingsInAllAndFiltersNamedList(t *testing.T) {
-	s := &Service{
-		lists: []databackend.Watchlist{{Name: "Growth", Tickers: []string{"OWNED", "WATCHED", "OWNED"}}, {Name: "Value", Tickers: []string{"OWNED"}}, {Name: "Empty"}},
-		rows: []fin.DashboardValue{
-			{Symbol: "OWNED", Base: 100, BaseAvailable: true},
-			{Symbol: "UNLISTED", Base: 50, BaseAvailable: true},
-		},
-	}
+	s, _ := fixtureDashboard(t, []databackend.Watchlist{{Name: "Growth", Tickers: []string{"OWNED", "WATCHED", "OWNED"}}, {Name: "Value", Tickers: []string{"OWNED"}}, {Name: "Empty"}}, []fin.DashboardHolding{{Symbol: "OWNED", Currency: "USD", Shares: 1, Price: 100}, {Symbol: "UNLISTED", Currency: "USD", Shares: 1, Price: 50}}, nil)
 	all, ok := s.snapshot("__all")
 	if !ok || len(all.Rows) != 2 {
 		t.Fatalf("ALL rows = %+v, valid=%v, want both open holdings", all.Rows, ok)
 	}
-	named, ok := s.snapshot("Growth")
+	named, ok := s.snapshot("list:Growth")
 	if !ok || len(named.Rows) != 1 || named.Rows[0].Symbol != "OWNED" {
 		t.Fatalf("Growth rows = %+v, valid=%v, want only its open holding", named.Rows, ok)
 	}
-	overlap, ok := s.snapshot("Value")
+	overlap, ok := s.snapshot("list:Value")
 	if !ok || len(overlap.Rows) != 1 || overlap.Rows[0].Symbol != "OWNED" {
 		t.Fatalf("Value rows = %+v, valid=%v, want overlapping holding once", overlap.Rows, ok)
 	}
-	empty, ok := s.snapshot("Empty")
+	empty, ok := s.snapshot("list:Empty")
 	if !ok || len(empty.Rows) != 0 || empty.Status != "No open holdings in this watchlist" {
 		t.Fatalf("Empty rows = %+v, valid=%v, want empty-list status", empty.Rows, ok)
 	}
 	w := httptest.NewRecorder()
-	s.handlePage(w, httptest.NewRequest("GET", "/?scope=Empty", nil))
+	s.handlePage(w, httptest.NewRequest("GET", "/?scope=list%3AEmpty", nil))
 	if !strings.Contains(w.Body.String(), "No open holdings in this watchlist") {
 		t.Fatalf("empty named list page = %s", w.Body.String())
 	}
 }
 
 func TestSnapshotShowsNativeCurrencyTotalsAndGroupedValues(t *testing.T) {
-	s := &Service{rows: []fin.DashboardValue{
-		{Symbol: "USD", Currency: "USD", Sector: "Technology", Native: 12345.67, Base: 12345.67, NativeAvailable: true, BaseAvailable: true},
-		{Symbol: "EUR", Currency: "EUR", Sector: "Healthcare", Native: -9876.54, Base: -10864.19, NativeAvailable: true, BaseAvailable: true},
-	}}
+	s, _ := fixtureDashboard(t, nil, []fin.DashboardHolding{{Symbol: "USD", Currency: "USD", Sector: "Technology", Shares: 1, Price: 12345.67}, {Symbol: "EUR", Currency: "EUR", Sector: "Healthcare", Shares: -1, Price: 9876.54}}, []c.QuoteUpdate{{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.098886}}})
 	v, ok := s.snapshot("__all")
 	if !ok || len(v.NativeGross) != 2 || v.NativeGross[0] != (currencyAmount{Currency: "EUR", Amount: 9876.54}) || v.NativeNet[0] != (currencyAmount{Currency: "EUR", Amount: -9876.54}) {
 		t.Fatalf("native totals = gross %+v, net %+v, valid=%v", v.NativeGross, v.NativeNet, ok)
@@ -126,16 +160,13 @@ func TestReloadRemovesPositionClosedSincePreviousSnapshot(t *testing.T) {
 		failures:   map[string]error{},
 		calls:      map[string]int{},
 	}
-	s := New(context.Background(), db, nil, nil, nil)
-	if _, err := s.reload(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	s, _ := backendDashboard(t, t.Context(), db)
 	db.positions["OPEN"] = databackend.PositionWithAssetRatio{}
-	if _, err := s.reload(context.Background()); err != nil {
+	if err := s.Refresh(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	all, ok := s.snapshot("__all")
-	if !ok || len(all.Rows) != 0 || all.Status != "No open holdings" {
+	if !ok || len(all.Rows) != 0 {
 		t.Fatalf("refreshed ALL = %+v, valid=%v, want closed position removed", all, ok)
 	}
 }
@@ -195,15 +226,7 @@ func (w *eventWriter) Flush() {
 }
 
 func TestStalledSSEWriterDoesNotBlockHealthyClient(t *testing.T) {
-	s := &Service{
-		settings:    &c.Settings{BaseCurrency: "USD"},
-		holdings:    []fin.DashboardHolding{{Symbol: "LONG", Shares: 1, Currency: "USD"}},
-		quotes:      map[string]c.QuoteUpdate{"LONG": {Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 10, PricePrevClose: 9}}},
-		lists:       []databackend.Watchlist{},
-		subscribers: map[chan struct{}]struct{}{},
-		ctx:         context.Background(),
-	}
-	s.rebuildLocked()
+	s, fixture := fixtureDashboard(t, nil, []fin.DashboardHolding{{Symbol: "LONG", Shares: 1, Currency: "USD", Price: 10, PreviousClose: 9}}, nil)
 	ctxSlow, cancelSlow := context.WithCancel(context.Background())
 	slow := newEventWriter(true)
 	doneSlow := make(chan struct{})
@@ -234,7 +257,7 @@ func TestStalledSSEWriterDoesNotBlockHealthyClient(t *testing.T) {
 			t.Fatalf("healthy client did not flush event %d while other client stalled", want)
 		}
 		if want == 1 {
-			s.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 12, PricePrevClose: 9}})
+			fixture.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 12, PricePrevClose: 9}})
 		}
 	}
 
@@ -275,19 +298,17 @@ func TestLoadHoldingsDeduplicatesAndSubscribesOnlyOpenPositions(t *testing.T) {
 		failures: map[string]error{"BAD": os.ErrPermission},
 		calls:    map[string]int{},
 	}
-	s := New(context.Background(), b, nil, nil, nil)
-	holdings, symbols, err := s.loadHoldings(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(symbols, ",") != "OPEN" {
-		t.Fatalf("subscription symbols = %v, want only open positions", symbols)
+	s, p := backendDashboard(t, t.Context(), b)
+	snapshot, _ := p.Observe()
+	if strings.Join(snapshot.Symbols, ",") != "AAA,OPEN" {
+		t.Fatalf("subscription symbols = %v, want watch-only and open positions", snapshot.Symbols)
 	}
 	if b.calls["OPEN"] != 1 || b.calls["CLOSED"] != 1 || b.calls["BAD"] != 1 {
 		t.Fatalf("position reads = %v, want one per backend ticker", b.calls)
 	}
-	if len(holdings) != 2 || holdings[0].Shares != -3 || holdings[0].Currency != "EUR" || holdings[1].Symbol != "BAD" || holdings[1].UnavailableReason == "" {
-		t.Fatalf("holdings = %+v, want open short plus per-symbol diagnostic", holdings)
+	v, _ := s.snapshot(allScope)
+	if len(v.Rows) != 2 || v.Rows[1].Shares != -3 || v.Rows[1].Currency != "EUR" || v.Rows[0].Symbol != "BAD" || !strings.Contains(v.Rows[0].Status, "Position read failed") {
+		t.Fatalf("holdings = %+v, want open short plus per-symbol diagnostic", v.Rows)
 	}
 }
 
@@ -302,7 +323,7 @@ func TestServiceStartSSEAndShutdown(t *testing.T) {
 	defer os.Chdir(workingDir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := New(ctx, testBackend{}, nil, nil, nil)
+	s, _ := backendDashboard(t, ctx, testBackend{})
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	urls := make([]string, 8)
@@ -419,7 +440,7 @@ func TestStartOccupiedPortCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	port := occupied.Addr().(*net.TCPAddr).Port
-	s := New(ctx, testBackend{}, nil, nil, nil)
+	s, _ := backendDashboard(t, ctx, testBackend{})
 	if _, _, err := s.Start(ctx, -1); err == nil {
 		t.Fatal("Start accepted negative web port")
 	}
@@ -441,7 +462,7 @@ func TestStartOccupiedPortCanRetry(t *testing.T) {
 func TestUnexpectedServeExitCanRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := New(ctx, testBackend{}, nil, nil, nil)
+	s, _ := backendDashboard(t, ctx, testBackend{})
 	if _, started, err := s.Start(ctx, 0); err != nil || !started {
 		t.Fatalf("initial start: started=%v err=%v", started, err)
 	}
@@ -481,15 +502,7 @@ func TestUnexpectedServeExitCanRetry(t *testing.T) {
 func TestSSEPublishesPriceAndFXOnlyChanges(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := New(ctx, nil, &c.Settings{BaseCurrency: "USD"}, nil, nil)
-	s.holdings = []fin.DashboardHolding{{Symbol: "LONG", Currency: "USD", Sector: "Mixed", Shares: 10}, {Symbol: "SHORT", Currency: "EUR", Sector: "Mixed", Shares: -2}}
-	s.fxSymbols = []string{"EURUSD"}
-	s.quotes = map[string]c.QuoteUpdate{
-		"LONG":   {Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 12, PricePrevClose: 10}, Fundamental: &c.Fundamental{Sector: "Mixed"}},
-		"SHORT":  {Symbol: "SHORT", Currency: c.Currency{FromCurrencyCode: "EUR"}, QuotePrice: &c.QuotePrice{Price: 50, PricePrevClose: 55}, Fundamental: &c.Fundamental{Sector: "Mixed"}},
-		"EURUSD": {Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.2}, QuotePrice: &c.QuotePrice{Price: 1.2}},
-	}
-	s.rebuildLocked()
+	s, fixture := fixtureDashboard(t, nil, []fin.DashboardHolding{{Symbol: "LONG", Currency: "USD", Sector: "Mixed", Shares: 10, Price: 12, PreviousClose: 10}, {Symbol: "SHORT", Currency: "EUR", Sector: "Mixed", Shares: -2, Price: 50, PreviousClose: 55}}, []c.QuoteUpdate{{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.2}}})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /events", s.handleEvents)
 	server := httptest.NewServer(mux)
@@ -526,25 +539,25 @@ func TestSSEPublishesPriceAndFXOnlyChanges(t *testing.T) {
 	if !strings.Contains(initial, "&#43;120.00 USD") || !strings.Contains(initial, "-120.00 USD") || !strings.Contains(initial, "<span>100%</span>") {
 		t.Fatalf("initial panel: %s", initial)
 	}
-	s.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 13, PricePrevClose: 10}})
+	fixture.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 13, PricePrevClose: 10}})
 	priceUpdate := read()
 	if !strings.Contains(priceUpdate, "&#43;130.00 USD") || !strings.Contains(priceUpdate, "52%") {
 		t.Fatalf("price panel: %s", priceUpdate)
 	}
-	s.applyQuote(c.QuoteUpdate{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.5}, QuotePrice: &c.QuotePrice{Price: 1.5}})
+	fixture.applyQuote(c.QuoteUpdate{Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.5}, QuotePrice: &c.QuotePrice{Price: 1.5}})
 	fxUpdate := read()
 	if !strings.Contains(fxUpdate, "-150.00 USD") || !strings.Contains(fxUpdate, "53.6%") {
 		t.Fatalf("FX panel: %s", fxUpdate)
 	}
 	for price := 14.0; price <= 20; price++ {
-		s.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: price, PricePrevClose: 10}})
+		fixture.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: price, PricePrevClose: 10}})
 	}
 	burst := read()
 	if !strings.Contains(burst, "&#43;200.00 USD") {
 		t.Fatalf("burst did not deliver latest valuation: %s", burst)
 	}
 	stop()
-	s.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 25, PricePrevClose: 10}})
+	fixture.applyQuote(c.QuoteUpdate{Symbol: "LONG", Currency: c.Currency{FromCurrencyCode: "USD"}, QuotePrice: &c.QuotePrice{Price: 25, PricePrevClose: 10}})
 	reconnectCtx, reconnectStop := context.WithCancel(ctx)
 	defer reconnectStop()
 	reconnectRequest, _ := http.NewRequestWithContext(reconnectCtx, "GET", server.URL+"/events?scope=__all", nil)
@@ -608,7 +621,10 @@ func TestDashboardConsumesFakeMarketFeedAndKeepsOtherSubscriber(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := New(ctx, db, &c.Settings{BaseCurrency: "USD"}, nil, market)
+	s, p := backendDashboard(t, ctx, db)
+	if err := p.Start(market); err != nil {
+		t.Fatal(err)
+	}
 	url, _, err := s.Start(ctx, 0)
 	if err != nil {
 		t.Fatal(err)

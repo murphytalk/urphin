@@ -52,10 +52,8 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 		if h.Shares == 0 && h.UnavailableReason == "" {
 			continue
 		}
-		currency := strings.ToUpper(strings.TrimSpace(h.Currency))
-		if currency == "" {
-			currency = strings.ToUpper(strings.TrimSpace(h.QuoteCurrency))
-		}
+		currency, mismatch := ResolveQuoteCurrency(h.Currency, h.QuoteCurrency)
+
 		sector := strings.TrimSpace(h.Sector)
 		if sector == "" {
 			sector = "Unknown sector"
@@ -78,15 +76,15 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 			d.Rows = append(d.Rows, row)
 			continue
 		}
-		row.Native = h.Shares * h.Price
-		row.NativeAvailable = finiteDashboard(row.Native)
-		if h.CurrencyMismatch {
+		if mismatch || h.CurrencyMismatch {
 			row.Status = "Position and quote currencies disagree"
 			d.Partial = true
 			d.Rows = append(d.Rows, row)
 			continue
 		}
-		rate, ok := dashboardRate(currency, base, rates)
+		row.Native = h.Shares * h.Price
+		row.NativeAvailable = finiteDashboard(row.Native)
+		rate, ok := FXRate(currency, base, rates)
 		if !ok || !finiteDashboard(row.Native*rate) {
 			row.Status = "FX conversion unavailable"
 			d.Partial = true
@@ -100,16 +98,22 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 			row.DayChange = h.Shares * (h.Price - h.PreviousClose) * rate
 			row.DayBasis = math.Abs(h.Shares * h.PreviousClose * rate)
 			row.DayChangeAvailable = finiteDashboard(row.DayChange) && finiteDashboard(row.DayBasis) && row.DayBasis > 0
-		} else {
-			sectorUnavailable[sector] = true
 		}
-		denominators[sector] += math.Abs(row.Base)
-		sectorDenominators[sector] += math.Abs(h.Shares * h.PreviousClose * rate)
-		sectorNumerators[sector] += row.DayChange
+		exposure := math.Abs(row.Base)
+		if exposure > 0 {
+			denominators[sector] += exposure
+			if row.DayChangeAvailable {
+				sectorDenominators[sector] += row.DayBasis
+				sectorNumerators[sector] += row.DayChange
+			} else {
+				sectorUnavailable[sector] = true
+			}
+		}
 		d.Rows = append(d.Rows, row)
 	}
 	for _, row := range d.Rows {
 		if !row.BaseAvailable {
+			sectorUnavailable[row.Sector] = true
 			continue
 		}
 		d.GrossBase += math.Abs(row.Base)
@@ -131,8 +135,12 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 			sector.Exposure = denominators[name] / d.GrossBase * 100
 		}
 		basis := sectorDenominators[name]
-		sector.DailyChange = sectorNumerators[name] / basis * 100
-		sector.DailyChangeAvailable = !sectorUnavailable[name] && basis > 0 && finiteDashboard(basis) && finiteDashboard(sector.DailyChange)
+		if !sectorUnavailable[name] && basis > 0 && finiteDashboard(basis) {
+			change := sectorNumerators[name] / basis * 100
+			if finiteDashboard(change) {
+				sector.DailyChange, sector.DailyChangeAvailable = change, true
+			}
+		}
 		if sector.DailyChangeAvailable {
 			sector.DailyChangeLabel = "available"
 		} else {
@@ -152,7 +160,17 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 	return d
 }
 
-func dashboardRate(from, to string, rates map[string]float64) (float64, bool) {
+// ResolveQuoteCurrency returns the native currency and whether the quote agrees.
+func ResolveQuoteCurrency(position, quote string) (currency string, mismatch bool) {
+	position = strings.ToUpper(strings.TrimSpace(position))
+	quote = strings.ToUpper(strings.TrimSpace(quote))
+	if position == "" {
+		return quote, false
+	}
+	return position, quote != "" && position != quote
+}
+
+func FXRate(from, to string, rates map[string]float64) (float64, bool) {
 	if from == to {
 		return 1, from != ""
 	}

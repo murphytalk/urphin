@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/murphytalk/urphin/internal/summary"
 	"github.com/murphytalk/urphin/internal/watchlist"
 	"github.com/murphytalk/urphin/internal/watchlist/row"
+	"github.com/murphytalk/urphin/shared/portfolio"
 	"github.com/murphytalk/urphin/tui/commands"
 	"github.com/murphytalk/urphin/tui/commands/registry"
 	"github.com/murphytalk/urphin/tui/dashboard"
@@ -38,24 +40,21 @@ import (
 	"golang.org/x/text/language"
 )
 
-// Model owns portfolio state; only the UI event loop mutates it.
+// Model owns terminal display state and reads session portfolio snapshots.
 type Model struct {
 	ctx                    context.Context
 	app                    setup.AppCtx
-	symbols                []string
 	fxPairs                []string
-	fxPairSet              map[string]struct{}
-	positions              map[string]databackend.Position
-	positionErrors         map[string]bool
-	quotes                 map[string]c.AssetQuote
-	mismatches             map[string]bool
+	snapshot               portfolio.Snapshot
+	portfolio              *portfolio.Service
+	changed                <-chan struct{}
+	portfolioReady         bool
 	selected               int
 	width, height          int
 	ready                  bool
 	viewport               viewport.Model
 	watchlist              *watchlist.Model
 	summary                *summary.Model
-	session                *quoteSession
 	commandInput           textinput.Model
 	commandErr             error
 	commandHint            string
@@ -82,10 +81,10 @@ type commandInvocation struct {
 	updates      chan struct{}
 	requirements registry.TUIRequirements
 	refreshing   bool
+	portfolio    *portfolio.Service
 }
 
-// QuoteBatchMsg carries market-data receiver output to the portfolio/UI event loop.
-type QuoteBatchMsg []c.QuoteUpdate
+type portfolioChangedMsg struct{}
 
 type commandResultMsg struct {
 	id        uint64
@@ -105,30 +104,19 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	if app.Db == nil || app.Settings == nil {
 		return nil, errors.New("UI requires a data backend and settings")
 	}
-	lists, err := app.Db.GetWatchList(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("load watchlists: %w", err)
-	}
-	app.Watchlists = lists
-	seen := make(map[string]struct{})
-	for i := range lists {
-		unique := make(map[string]struct{})
-		tickers := make([]string, 0, len(lists[i].Tickers))
-		for _, symbol := range lists[i].Tickers {
-			if strings.TrimSpace(symbol) == "" {
-				return nil, fmt.Errorf("watchlist %q contains an empty ticker", lists[i].Name)
-			}
-			if _, exists := unique[symbol]; !exists {
-				tickers = append(tickers, symbol)
-				unique[symbol] = struct{}{}
-			}
-			seen[symbol] = struct{}{}
-		}
-		lists[i].Tickers = tickers
-	}
-	fxPairConfigs := []string(nil)
+	var fxPairConfigs []string
 	if app.Cfg != nil {
 		fxPairConfigs = app.Cfg.App.FxPairs
+	}
+	service, err := portfolio.New(ctx, app.Db, fxPairConfigs)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, changed := service.Observe()
+	app.Watchlists = snapshot.Lists
+	lists := snapshot.Lists
+	if app.Dashboard == nil {
+		app.Dashboard = dashboard.New(ctx, service, app.Settings.BaseCurrency)
 	}
 	fxPairs := make([]string, 0, len(fxPairConfigs))
 	fxPairSet := make(map[string]struct{}, len(fxPairConfigs))
@@ -162,9 +150,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		app.Settings.SelectedWatchlist = lists[selected].Name
 	}
 	m := &Model{
-		ctx: ctx, app: app, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
-		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
-		mismatches: make(map[string]bool), selected: selected,
+		ctx: ctx, app: app, snapshot: snapshot, portfolio: service, changed: changed, fxPairs: fxPairs, selected: selected,
 		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose().WithPosition(bubbleup.BottomCenterPosition),
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
@@ -176,19 +162,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	if app.Settings != nil && app.Settings.TableAlignment != "" {
 		m.result.SetTableAlignment(app.Settings.TableAlignment)
 	}
-	for _, symbol := range m.symbols {
-		position, err := app.Db.CalculatePositionAndVWAP(ctx, nil, symbol)
-		if err != nil {
-			if errors.Is(err, databackend.ErrUnmatchedPositionLot) {
-				slog.Error("Using zero position after calculation error", "symbol", symbol, "error", err)
-				m.positions[symbol] = databackend.Position{Sym: symbol}
-				m.positionErrors[symbol] = true
-				continue
-			}
-			return nil, fmt.Errorf("load position %q: %w", symbol, err)
-		}
-		m.positions[symbol] = position.Pos
-	}
+	_ = service.Select(app.Settings.SelectedWatchlist)
 	// Reserve all letter keys for the future command-input consumer.
 	m.viewport.KeyMap.Up = key.NewBinding(key.WithKeys("up"))
 	m.viewport.KeyMap.Down = key.NewBinding(key.WithKeys("down"))
@@ -224,25 +198,21 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 // Run owns the UI session; the application owner starts/stops feeds and closes the backend.
 func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err error) {
 	app.MktData = marketData
-	app.Dashboard = dashboard.New(ctx, app.Db, app.Settings, app.Cfg, marketData)
 	m, err := NewModel(ctx, app)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, closeSession(m, nil)()) }()
 	if marketData == nil {
 		return errors.New("UI requires market data")
 	}
+	m.startPortfolio(marketData)
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
 		m.commandHistory = textinput.NewFileHistory(filepath.Join(home, ".urphin", "history.log"), slog.Default())
 	} else {
 		slog.Warn("command history disabled", "error", homeErr)
 	}
-	m.session = newQuoteSession(ctx, marketData, m.subscriptionSymbols())
 	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err = errors.Join(err, app.Dashboard.Close(shutdownCtx))
-		cancel()
-		err = errors.Join(err, m.session.Close())
 		if m.commandHistory != nil {
 			err = errors.Join(err, m.commandHistory.Persist())
 		}
@@ -251,17 +221,70 @@ func Run(ctx context.Context, app setup.AppCtx, marketData mktdata.MktData) (err
 	return err
 }
 
-// Init starts the quote receiver and startup subscription producer concurrently.
-func (m *Model) Init() tea.Cmd {
-	cursor := m.commandInput.Focus()
-	if m.session == nil || len(m.session.symbols) == 0 {
-		return cursor
+func (m *Model) startPortfolio(feed mktdata.MktData) {
+	m.portfolioReady = true
+	if err := m.portfolio.Start(feed); err != nil {
+		slog.Error("Portfolio quote subscription failed", "error", err)
 	}
-	visibility := m.session.setVisibleSymbols(m.visibleSymbols())
-	return tea.Batch(cursor, visibility, m.session.receive(), m.session.subscribe())
 }
 
-// Update consumes terminal events and quote-receiver batches; child renderers receive derived state.
+func (m *Model) Init() tea.Cmd {
+	cursor := m.commandInput.Focus()
+	if !m.portfolioReady {
+		return cursor
+	}
+	return tea.Batch(cursor, m.waitForPortfolio())
+}
+
+func (m *Model) waitForPortfolio() tea.Cmd {
+	changed, done := m.changed, m.portfolio.Done()
+	return func() tea.Msg {
+		select {
+		case <-changed:
+			return portfolioChangedMsg{}
+		case <-done:
+			return nil
+		}
+	}
+}
+
+func (m *Model) applySnapshot(next portfolio.Snapshot) tea.Cmd {
+	membershipChanged := !reflect.DeepEqual(m.snapshot.Lists, next.Lists)
+	previous := m.snapshot
+	previousVisible := m.visibleSymbols()
+	m.snapshot, m.app.Watchlists = next, next.Lists
+	var cmd tea.Cmd
+	if membershipChanged {
+		m.selected = max(0, slices.IndexFunc(next.Lists, func(list databackend.Watchlist) bool {
+			return list.Name == m.app.Settings.SelectedWatchlist
+		}))
+		m.app.Settings.SelectedWatchlist = ""
+		if len(next.Lists) > 0 {
+			m.app.Settings.SelectedWatchlist = next.Lists[m.selected].Name
+		}
+		if err := m.portfolio.Select(m.app.Settings.SelectedWatchlist); err != nil {
+			slog.Warn("Update portfolio quote priority", "error", err)
+		}
+	}
+	if membershipChanged || !slices.Equal(previousVisible, m.visibleSymbols()) {
+		cmd = m.setWatchlist()
+	} else {
+		for _, symbol := range m.visibleSymbols() {
+			if previous.Positions[symbol] != next.Positions[symbol] ||
+				(previous.PositionErrors[symbol] == nil) != (next.PositionErrors[symbol] == nil) ||
+				previous.Quotes[symbol] != next.Quotes[symbol] {
+				m.watchlist, cmd = m.watchlist.Update(watchlist.UpdateAssetsMsg(m.assets(m.visibleSymbols())))
+				m.refreshContent()
+				break
+			}
+		}
+	}
+	m.updateSummary()
+	m.resize()
+	return cmd
+}
+
+// Update consumes terminal events and portfolio notifications.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.Keystroke() == "esc" && m.alert.HasActiveAlert() {
 		updated, cmd := m.alert.Update(msg)
@@ -286,66 +309,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.commandVisible() && m.commandInput.Focused() {
 			m.commandInput.Blur()
 		}
-	case QuoteBatchMsg:
-		visible := make(map[string]struct{})
-		for _, symbol := range m.visibleSymbols() {
-			visible[symbol] = struct{}{}
-		}
-		displayed, changed, ratesChanged := false, false, false
-		for _, update := range msg {
-			symbol := update.Symbol
-			if symbol == "" {
-				symbol = update.Meta.SymbolInSourceAPI
-			}
-			previous, hasPrevious := m.quotes[symbol]
-			var previousQuote *c.AssetQuote
-			if hasPrevious {
-				previousQuote = &previous
-			}
-			quote, hasPrice := update.ToAssetQuote(previousQuote)
-			if !hasPrice {
-				if _, isFxPair := m.fxPairSet[symbol]; isFxPair {
-					// FX currency metadata can update independently of its price block.
-				} else {
-					continue
-				}
-			}
-			if quote.Symbol == "" {
-				quote.Symbol = symbol
-			}
-			if _, exists := m.positions[quote.Symbol]; !exists {
-				if _, isFxPair := m.fxPairSet[quote.Symbol]; isFxPair {
-					m.quotes[quote.Symbol] = quote
-					ratesChanged = true
-				}
-				continue
-			}
-			m.quotes[quote.Symbol] = quote
-			changed = true
-			if _, exists := visible[quote.Symbol]; exists {
-				displayed = true
-			}
-			position := m.positions[quote.Symbol]
-			mismatch := position.Ccy != "" && quote.Currency.FromCurrencyCode != "" && position.Ccy != quote.Currency.FromCurrencyCode
-			if mismatch && !m.mismatches[quote.Symbol] {
-				slog.Error("Quote and position currencies disagree", "symbol", quote.Symbol, "position", position.Ccy, "quote", quote.Currency.FromCurrencyCode)
-			}
-			m.mismatches[quote.Symbol] = mismatch
-		}
-		var cmd tea.Cmd
-		if displayed {
-			// Portfolio owner sends live assets to the watchlist renderer; membership stays fixed.
-			m.watchlist, cmd = m.watchlist.Update(watchlist.UpdateAssetsMsg(m.assets(m.visibleSymbols())))
-			m.refreshContent()
-		}
-		if changed || ratesChanged {
-			m.updateSummary()
-			m.resize()
-		}
-		if m.session != nil {
-			return m, tea.Batch(cmd, m.session.receive())
-		}
-		return m, cmd
+	case portfolioChangedMsg:
+		next, changed := m.portfolio.Observe()
+		m.changed = changed
+		return m, tea.Batch(m.applySnapshot(next), m.waitForPortfolio())
 	case commandResultMsg:
 		if msg.id != 0 && (m.commandInvocation == nil || msg.id != m.commandInvocation.id) {
 			if msg.id == m.commandWorkerID {
@@ -437,11 +404,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.result, cmd = m.result.Update(msg)
 		return m, cmd
-	case subscriptionMsg:
-		// Startup subscription producer reports completion; partial failures keep the UI alive.
-		if msg.err != nil {
-			slog.Error("Startup quote subscription exhausted", "error", msg.err)
-		}
 	case row.FrameMsg:
 		// Row animation timers feed the watchlist renderer, never the market-data producer.
 		var cmd tea.Cmd
@@ -465,9 +427,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.commandInvocation.cancel()
 			}
 			slog.Debug("UI quit key received", "key", msg.Keystroke())
-			if m.session != nil {
-				m.session.requestStop()
-			}
 			return m, tea.Quit
 		case "tab":
 			if m.commandInput.CurrentSuggestion() != "" {
@@ -540,7 +499,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.nextCommandID++
 			ctx, cancel := context.WithCancel(m.ctx)
-			inv := &commandInvocation{id: m.nextCommandID, line: line, name: name, args: maps.Clone(args), ctx: ctx, cancel: cancel, requirements: commands.RequirementsForTUI(name)}
+			inv := &commandInvocation{id: m.nextCommandID, line: line, name: name, args: maps.Clone(args), ctx: ctx, cancel: cancel, requirements: commands.RequirementsForTUI(name), portfolio: m.portfolio}
 			if inv.requirements.RefreshOnMarketData {
 				inv.updates = make(chan struct{}, 1)
 			}
@@ -690,6 +649,11 @@ func executeCommand(inv *commandInvocation, refresh bool, app setup.AppCtx) tea.
 			} else {
 				result.Table = followup.Table
 			}
+			if inv.portfolio != nil {
+				if refreshErr := inv.portfolio.Refresh(context.WithoutCancel(inv.ctx)); refreshErr != nil {
+					result.Content += "\nPortfolio refresh warning: " + cleanAlertText(refreshErr.Error())
+				}
+			}
 		}
 		return commandResultMsg{id: inv.id, line: inv.line, name: inv.name, content: result.Content, tableName: result.FollowupName, table: result.Table, err: err, refresh: refresh}
 	}
@@ -738,19 +702,9 @@ func waitForMarketUpdate(inv *commandInvocation) tea.Cmd {
 
 func (m *Model) visibleSymbols() []string {
 	if len(m.app.Watchlists) == 0 {
-		return nil
+		return m.snapshot.Symbols
 	}
 	return m.app.Watchlists[m.selected].Tickers
-}
-
-func (m *Model) subscriptionSymbols() []string {
-	symbols := slices.Clone(m.symbols)
-	for _, pair := range m.fxPairs {
-		if !slices.Contains(symbols, pair) {
-			symbols = append(symbols, pair)
-		}
-	}
-	return symbols
 }
 
 func (m *Model) changeWatchlist(step int) tea.Cmd {
@@ -767,8 +721,8 @@ func (m *Model) changeWatchlist(step int) tea.Cmd {
 		m.updateSummary()
 	}
 	m.resize()
-	if m.session != nil {
-		return tea.Batch(cmd, m.session.setVisibleSymbols(m.visibleSymbols()))
+	if err := m.portfolio.Select(m.app.Settings.SelectedWatchlist); err != nil {
+		slog.Error("Update portfolio quote priority", "error", err)
 	}
 	return cmd
 }
@@ -878,6 +832,9 @@ func (m *Model) View() tea.View {
 		lines = append(lines, m.result.View())
 	} else {
 		heading := m.app.Styles.Accent.Render("WL: "+m.listName()) + m.app.Styles.TextLight(" · Sort: "+m.app.Settings.Sort)
+		if err := errors.Join(m.snapshot.WatchlistError, m.snapshot.Status); err != nil {
+			heading = m.app.Styles.Error.Render(cleanAlertText(err.Error())) + " · " + heading
+		}
 		lines = append(lines, ansi.Truncate(heading, m.width, ""))
 		if m.marketLoading || m.marketError != nil {
 			label := m.marketSpinner.View() + " Starting market data..."
