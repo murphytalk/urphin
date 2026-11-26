@@ -185,6 +185,29 @@ func (b *FileBackend) GetEquityTx(ctx context.Context, ccy *string, ticker *stri
 }
 
 func (b *FileBackend) GetAssetsWithPositions(ctx context.Context, broker *string, assetClasses []c.AssetClass) ([]string, error) {
+	candidates, err := b.PositionCandidates(ctx, assetClasses)
+	if err != nil {
+		return nil, err
+	}
+
+	assets := make([]string, 0, len(candidates))
+	for _, symbol := range candidates {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		position, err := b.CalculatePositionAndVWAP(ctx, broker, symbol)
+		if err != nil {
+			return nil, fmt.Errorf("calculate position for %q: %w", symbol, err)
+		}
+		if position.Pos.Shares != 0 {
+			assets = append(assets, symbol)
+		}
+	}
+	return assets, nil
+}
+
+// PositionCandidates returns symbols with transaction history, including closed positions.
+func (b *FileBackend) PositionCandidates(ctx context.Context, assetClasses []c.AssetClass) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -206,21 +229,12 @@ func (b *FileBackend) GetAssetsWithPositions(ctx context.Context, broker *string
 		candidates[transaction.Ticker] = struct{}{}
 	}
 
-	assets := make([]string, 0, len(candidates))
+	symbols := make([]string, 0, len(candidates))
 	for symbol := range candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		position, err := b.CalculatePositionAndVWAP(ctx, broker, symbol)
-		if err != nil {
-			return nil, fmt.Errorf("calculate position for %q: %w", symbol, err)
-		}
-		if position.Pos.Shares != 0 {
-			assets = append(assets, symbol)
-		}
+		symbols = append(symbols, symbol)
 	}
-	sort.Strings(assets)
-	return assets, nil
+	sort.Strings(symbols)
+	return symbols, nil
 }
 
 func (b *FileBackend) CalculatePositionAndVWAP(ctx context.Context, broker *string, symbol string) (PositionWithAssetRatio, error) {
