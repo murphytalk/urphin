@@ -45,6 +45,7 @@ type AppCfg struct {
 	FxPairs       []string    `yaml:"fx-pairs"`
 	Theme         string      `yaml:"theme"`
 	PriceColors   string      `yaml:"price-colors"`
+	WebPort       int         `yaml:"web-port"`
 }
 
 type Settings struct {
