@@ -19,6 +19,11 @@ func (requirementTestCommand) TUIRequirements() registry.TUIRequirements {
 }
 
 func TestRequirementsForTUI(t *testing.T) {
+	for _, name := range []string{"ATX", "PROP", "TRANS"} {
+		if got := RequirementsForTUI(name); !got.SkipLoadingView || got.RefreshOnMarketData {
+			t.Errorf("%s requirements = %#v", name, got)
+		}
+	}
 	cmdReg.Register(requirementTestCommand{})
 	if got := RequirementsForTUI("TEST_REQUIREMENTS"); !got.RefreshOnMarketData || got.SkipLoadingView {
 		t.Fatalf("opted-in requirements = %#v", got)

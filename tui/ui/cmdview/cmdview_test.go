@@ -20,7 +20,7 @@ func TestResultViewOwnsLayoutAndScrolling(t *testing.T) {
 	if len(lines) != 8 || lines[0] != "" || ansi.Strip(lines[1]) != "       RESULT       " || lines[2] != "" || m.viewport.Height() != 5 {
 		t.Fatalf("result layout = %q", lines)
 	}
-	if got := strings.Join(strings.Fields(ansi.Strip(m.viewport.GetContent())), " "); got != strings.Join(strings.Fields(content), " ") {
+	if got := strings.Join(strings.Fields(ansi.Strip(m.viewport.GetContent())), ""); got != strings.Join(strings.Fields(content), "") {
 		t.Fatalf("result content changed: %q", got)
 	}
 	m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})

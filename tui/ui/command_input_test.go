@@ -217,6 +217,66 @@ func TestCommandInvocationIgnoresStaleCompletionAndCancelsWaiter(t *testing.T) {
 	}
 }
 
+func TestMutationAlertOverlaysHomeAndEscClosesIt(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	cmd := m.alert.NewAlertCmd("Info", "ATX added AAPL")
+	uiTestUpdate(t, m, cmd())
+	if !m.alert.HasActiveAlert() || !strings.Contains(ansi.Strip(m.View().Content), "ATX added AAPL") {
+		t.Fatal("alert was not rendered over the home screen")
+	}
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 40, Height: 4})
+	if got := m.View().Content; len(strings.Split(got, "\n")) != 4 || !strings.HasSuffix(got, m.footer()) {
+		t.Fatalf("short terminal lost footer: %q", got)
+	}
+	if !m.alert.HasActiveAlert() {
+		t.Fatal("resize discarded active alert")
+	}
+	uiTestUpdate(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.alert.HasActiveAlert() {
+		t.Fatal("Esc did not dismiss active alert")
+	}
+}
+
+func TestAlertTextStripsControlsAndCredentials(t *testing.T) {
+	got := cleanAlertText("failed \x1b[31mpostgres://user:secret@db password=hunter2\x1b[0m")
+	if strings.Contains(got, "secret") || strings.Contains(got, "hunter2") || strings.Contains(got, "\x1b[") {
+		t.Fatalf("unsafe alert text: %q", got)
+	}
+}
+
+func TestCommandFailurePostsSanitizedPopup(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	ctx, cancel := context.WithCancel(m.ctx)
+	defer cancel()
+	m.commandInvocation = &commandInvocation{id: 3, line: "ATX", name: "ATX", ctx: ctx, cancel: cancel}
+	cmd := uiTestUpdate(t, m, commandResultMsg{id: 3, line: "ATX", name: "ATX", err: errors.New("failed password=hidden \x1b[31mwrite\x1b[0m")})
+	uiTestRunCommand(t, m, cmd)
+	text := ansi.Strip(m.View().Content)
+	if !m.alert.HasActiveAlert() || strings.Contains(text, "hidden") || strings.Contains(text, "\x1b[") || !strings.Contains(text, "failed") {
+		t.Fatalf("failure popup missing or unsafe: %q", text)
+	}
+}
+
+func TestLargePropResultRemainsScrollableWithShortPopup(t *testing.T) {
+	m := uiTestModel(t, nil, nil)
+	uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+	ctx, cancel := context.WithCancel(m.ctx)
+	defer cancel()
+	m.commandInvocation = &commandInvocation{id: 4, line: "PROP TICKER AAPL", name: "PROP", ctx: ctx, cancel: cancel}
+	content := "{\"payload\":\"" + strings.Repeat("x", 2000) + "\"}"
+	cmd := uiTestUpdate(t, m, commandResultMsg{id: 4, line: "PROP TICKER AAPL", name: "PROP", content: content})
+	uiTestRunCommand(t, m, cmd)
+	if !m.result.Active() || !strings.Contains(m.result.View(), "payload") {
+		t.Fatal("large PROP JSON was not retained in result view")
+	}
+	m.result, _ = m.result.Update(tea.KeyPressMsg{Code: tea.KeyEnd, Mod: tea.ModCtrl})
+	if !strings.Contains(m.result.View(), "}") {
+		t.Fatalf("large PROP JSON tail was not scrollable: %q", m.result.View())
+	}
+}
+
 func TestCommandDiagnosticIsSingleLineAndResizeNoticeCountsIt(t *testing.T) {
 	m := uiTestModel(t, nil, nil)
 	m.commandErr = errors.New("bad\n\x1b[31minput\x1b[0m\tvalue")

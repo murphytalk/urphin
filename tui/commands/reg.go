@@ -24,6 +24,9 @@ func registerPublic(r *Registry) {
 	r.Register(&DtxCmd{})
 	r.Register(&MtxCmd{})
 	r.Register(&FxtxCmd{})
+	r.Register(&AtxCmd{})
+	r.Register(&PropCmd{})
+	r.Register(&TransCmd{})
 	r.Register(&WatchCmd{})
 	r.Register(&HelpCmd{})
 }

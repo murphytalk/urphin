@@ -23,5 +23,5 @@ OPTPOS    | Options open positions
 SPLIT     | Record a stock split (e.g., SPLIT AAPL 4)
 RC        | Roll/Close scanner: short PUT & vertical spreads with ≥50% profit or ≤21 DTE
 ELW       | List options expired last week. Optional: CLOSED to include manually closed trades.
-PROP      | Update/delete a property in transaction or instrument prop JSON
+PROP      | Read or update/delete a property in transaction or instrument prop JSON
 WATCH     | Show a watchlist

@@ -17,6 +17,7 @@ type SetResultMsg struct {
 	Header         string
 	Content        string
 	Table          *table.Model
+	TableHeader    string
 	TableAlignment string
 }
 
@@ -33,6 +34,7 @@ type Model struct {
 	spinner        spinner.Model
 	spinnerIndex   int
 	table          *table.Model
+	tableHeader    string
 	running        bool
 	tableAlignment string
 }
@@ -56,7 +58,7 @@ func (m *Model) SetTableAlignment(align string) {
 func (m *Model) Active() bool { return m.header != "" }
 
 func (m *Model) Clear() {
-	m.header, m.content = "", ""
+	m.header, m.content, m.tableHeader = "", "", ""
 	m.table = nil
 	m.running = false
 	m.viewport.SetContent("")
@@ -81,6 +83,7 @@ func (m *Model) Update(msg tea.Msg) (*Model, tea.Cmd) {
 	case SetResultMsg:
 		m.header, m.content = msg.Header, msg.Content
 		m.table = msg.Table
+		m.tableHeader = msg.TableHeader
 		if msg.TableAlignment != "" {
 			m.tableAlignment = msg.TableAlignment
 		}
@@ -142,6 +145,9 @@ func (m *Model) refreshContent() {
 	if m.table != nil {
 		pos := tablePosition(m.tableAlignment)
 		content := m.table.View()
+		if m.tableHeader != "" {
+			content = m.tableHeader + "\n" + content
+		}
 		if m.content != "" {
 			content = m.content + "\n\n" + content
 		}
@@ -152,7 +158,7 @@ func (m *Model) refreshContent() {
 	if m.running {
 		content = m.spinner.View() + " " + m.styles.Accent.Render(content)
 	}
-	m.viewport.SetContent(ansi.Wordwrap(content, max(1, m.width), " "))
+	m.viewport.SetContent(ansi.Hardwrap(content, max(1, m.width), false))
 }
 
 func tablePosition(alignment string) lipgloss.Position {

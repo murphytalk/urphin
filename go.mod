@@ -19,11 +19,12 @@ require (
 	github.com/longbridge/openapi-protocol/go v0.5.0
 	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mattn/go-runewidth v0.0.30
-	github.com/muesli/reflow v0.2.1-0.20201126184510-3bcb929042f2
+	github.com/muesli/reflow v0.3.0
 	github.com/onsi/ginkgo/v2 v2.33.1
 	github.com/onsi/gomega v1.44.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/shopspring/decimal v1.3.1
+	go.dalton.dog/bubbleup/v2 v2.0.1
 	golang.org/x/text v0.41.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )

@@ -33,6 +33,35 @@ type uiTestBackend struct {
 	closeCalls    int
 }
 
+type mutationFollowupBackend struct {
+	*uiTestBackend
+	events  []string
+	filters map[string]string
+	txErr   error
+}
+
+func (b *mutationFollowupBackend) AddTrade(context.Context, databackend.Tx) (databackend.TradeResult, error) {
+	b.events = append(b.events, "write")
+	return databackend.TradeResult{ID: 44}, nil
+}
+
+func (b *mutationFollowupBackend) TransferPosition(context.Context, databackend.TransferRequest) (databackend.TransferResult, error) {
+	b.events = append(b.events, "write")
+	return databackend.TransferResult{Shares: 2, Price: 8, Currency: "USD"}, nil
+}
+
+func (b *mutationFollowupBackend) GetEquityTx(_ context.Context, _, ticker, broker *string, _ *time.Time, _ []c.AssetClass) ([]databackend.Tx, error) {
+	b.events = append(b.events, "tx")
+	b.filters = map[string]string{}
+	if ticker != nil {
+		b.filters["ticker"] = *ticker
+	}
+	if broker != nil {
+		b.filters["broker"] = *broker
+	}
+	return nil, b.txErr
+}
+
 func (b *uiTestBackend) GetEquityTx(context.Context, *string, *string, *string, *time.Time, []c.AssetClass) ([]databackend.Tx, error) {
 	return slices.Clone(b.txs), nil
 }
@@ -652,5 +681,72 @@ func TestModelSubscriptionResultsAndUnrelatedMessagesDoNotMutateView(t *testing.
 		if cmd := uiTestUpdate(t, m, msg); cmd != nil || m.View().Content != before {
 			t.Fatal("non-data result changed display state or started feed work")
 		}
+	}
+}
+
+func TestMutationWorkerRunsFilteredTXAfterCommit(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args map[string]string
+		want map[string]string
+	}{
+		{"ATX", map[string]string{"broker": "IB", "side": "BUY", "date": "20260101", "ticker": "AAPL", "price": "8", "shares": "2", "fee": "0"}, map[string]string{"broker": "IB", "ticker": "AAPL"}},
+		{"TRANS", map[string]string{"broker": "IB", "broker2": "IB2", "date": "20260101", "ticker": "AAPL"}, map[string]string{"ticker": "AAPL"}},
+	} {
+		b := &mutationFollowupBackend{uiTestBackend: &uiTestBackend{}}
+		app := uiTestApp(b.uiTestBackend)
+		app.Db = b
+		ctx, cancel := context.WithCancel(context.Background())
+		inv := &commandInvocation{id: 1, name: test.name, args: test.args, ctx: ctx, cancel: cancel}
+		msg := executeCommand(inv, false, app)().(commandResultMsg)
+		if msg.err != nil {
+			t.Fatalf("%s: %v", test.name, msg.err)
+		}
+		if !reflect.DeepEqual(b.events, []string{"write", "tx"}) || !reflect.DeepEqual(b.filters, test.want) {
+			t.Fatalf("%s follow-up events=%v filters=%v, want write then TX %v", test.name, b.events, b.filters, test.want)
+		}
+		if msg.tableName != "TX" || msg.table == nil {
+			t.Fatalf("%s follow-up table = %q, %v", test.name, msg.tableName, msg.table)
+		}
+		m, err := NewModel(ctx, app)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		m.commandInvocation = inv
+		uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 12})
+		alertCmd := uiTestUpdate(t, m, msg)
+		if alertCmd == nil {
+			cancel()
+			t.Fatalf("%s result did not schedule popup", test.name)
+		}
+		uiTestUpdate(t, m, alertCmd())
+		if !m.result.Active() || !m.alert.HasActiveAlert() || !strings.Contains(m.result.View(), "TX") {
+			cancel()
+			t.Fatalf("%s popup/table presentation missing", test.name)
+		}
+		uiTestUpdate(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+		uiTestUpdate(t, m, QuoteBatchMsg{})
+		if m.alert.HasActiveAlert() || !m.result.Active() || !reflect.DeepEqual(b.events, []string{"write", "tx"}) {
+			cancel()
+			t.Fatalf("%s popup dismissal or quote event changed committed table/work: active=%t events=%v", test.name, m.result.Active(), b.events)
+		}
+		cancel()
+	}
+}
+
+func TestMutationWorkerKeepsSuccessWhenFollowupReadFails(t *testing.T) {
+	b := &mutationFollowupBackend{uiTestBackend: &uiTestBackend{}, txErr: errors.New("read failed")}
+	app := uiTestApp(b.uiTestBackend)
+	app.Db = b
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inv := &commandInvocation{id: 2, name: "ATX", args: map[string]string{"broker": "IB", "side": "BUY", "date": "20260101", "ticker": "AAPL", "price": "8", "shares": "2", "fee": "0"}, ctx: ctx, cancel: cancel}
+	msg := executeCommand(inv, false, app)().(commandResultMsg)
+	if msg.err != nil || msg.table != nil || !strings.Contains(msg.content, "ATX added") || !strings.Contains(msg.content, "TX read warning:") || !strings.Contains(msg.content, "read failed") {
+		t.Fatalf("follow-up failure hid committed write: %+v", msg)
+	}
+	if !reflect.DeepEqual(b.events, []string{"write", "tx"}) {
+		t.Fatalf("follow-up failure events = %v", b.events)
 	}
 }

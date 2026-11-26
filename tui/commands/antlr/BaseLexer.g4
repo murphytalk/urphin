@@ -9,9 +9,9 @@ HELP     : 'HELP'      -> pushMode(ARGS);
 MTX      : 'MTX'       -> pushMode(ARGS);
 POS      : 'POS'       -> pushMode(ARGS);
 SPLIT    : 'SPLIT'     -> pushMode(ARGS);
-TRANS    : 'TRANS'     -> pushMode(ARGS);
+TRANS    : 'TRANS'     -> pushMode(TRADE_ARGS);
 TX       : 'TX'        -> pushMode(ARGS);
-ATX      : 'ATX'       -> pushMode(ARGS);
+ATX      : 'ATX'       -> pushMode(TRADE_ARGS);
 WATCH    : 'WATCH'     -> pushMode(ARGS);
 PROP     : 'PROP'      -> pushMode(PROP_MODE);
 
@@ -57,6 +57,30 @@ INT   : [0-9]+ ;
 FLOAT : '-'? [0-9]* '.' [0-9]+ ;
 ARGS_WS  : [ \t\r\n]+ -> skip ;
 ARGS_ANY : . ;
+
+mode TRADE_ARGS;
+TRADE_DATE : [0-9][0-9][0-9][0-9] [01][0-9] [0-3][0-9] -> type(DATE) ;
+TRADE_CCY_PAIR : CCY_FRAG '.' CCY_FRAG -> type(CCY_PAIR) ;
+TRADE_CCY : CCY_FRAG -> type(CCY) ;
+TRADE_SIDE : ('BUY' | 'SELL' | 'SPLIT') -> type(SIDE) ;
+TRADE_FILTER : ('ALL' | 'CLOSE' | 'OPEN') -> type(FILTER) ;
+TRADE_TRUE : 'TRUE' -> type(TRUE_KW) ;
+TRADE_BOOL : ('FALSE' | 'YES' | 'NO') -> type(BOOL_KW) ;
+B_BROKER1 : 'B1' -> type(BROKER1);
+B_BROKER2 : 'B2' -> type(BROKER2);
+B_BROKER3 : 'B3' -> type(BROKER3);
+B_BROKER4 : 'B4' -> type(BROKER4);
+B_BROKER5 : 'B5' -> type(BROKER5);
+B_BROKER6 : 'B6' -> type(BROKER6);
+B_BROKER7 : 'B7' -> type(BROKER7);
+TRADE_PORTFOLIO : PORTFOLIO_FRAG -> type(PORTFOLIO) ;
+TRADE_TICKER : TICKER_FRAG -> type(TICKER) ;
+TRADE_TICKERS_LIST : [A-Z,]+ -> type(TICKERS_LIST) ;
+TRADE_NUMBER: '-'? ([0-9]+ ('.' [0-9]*)? | '.' [0-9]+) ('e' [+-]? [0-9]+)? ;
+INT_TRADE : [0-9]+ -> type(INT) ;
+FLOAT_TRADE : '-'? [0-9]* '.' [0-9]+ -> type(FLOAT) ;
+TRADE_WS : [ \t\r\n]+ -> skip ;
+TRADE_ANY : . ;
 
 // PROP mode
 mode PROP_MODE;

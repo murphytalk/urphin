@@ -8,8 +8,10 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
@@ -30,6 +32,7 @@ import (
 	"github.com/murphytalk/urphin/tui/ui/cmdview"
 	"github.com/murphytalk/urphin/tui/ui/runeutil"
 	"github.com/murphytalk/urphin/tui/ui/textinput"
+	"go.dalton.dog/bubbleup/v2"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -66,6 +69,7 @@ type Model struct {
 	marketLoading          bool
 	marketSpinner          spinner.Model
 	marketError            error
+	alert                  bubbleup.AlertModel
 }
 
 type commandInvocation struct {
@@ -83,13 +87,14 @@ type commandInvocation struct {
 type QuoteBatchMsg []c.QuoteUpdate
 
 type commandResultMsg struct {
-	id      uint64
-	line    string
-	name    string
-	content string
-	table   *table.Model
-	err     error
-	refresh bool
+	id        uint64
+	line      string
+	name      string
+	content   string
+	tableName string
+	table     *table.Model
+	err       error
+	refresh   bool
 }
 
 type marketUpdateMsg struct{ id uint64 }
@@ -159,6 +164,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 		ctx: ctx, app: app, symbols: slices.Sorted(maps.Keys(seen)), fxPairs: fxPairs, fxPairSet: fxPairSet,
 		positions: make(map[string]databackend.Position), positionErrors: make(map[string]bool), quotes: make(map[string]c.AssetQuote),
 		mismatches: make(map[string]bool), selected: selected,
+		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose(),
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
@@ -252,6 +258,17 @@ func (m *Model) Init() tea.Cmd {
 
 // Update consumes terminal events and quote-receiver batches; child renderers receive derived state.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Keystroke() == "esc" && m.alert.HasActiveAlert() {
+		updated, cmd := m.alert.Update(msg)
+		m.alert = updated.(bubbleup.AlertModel)
+		return m, cmd
+	}
+	updatedAlert, alertCmd := m.alert.Update(msg)
+	m.alert = updatedAlert.(bubbleup.AlertModel)
+	if alertCmd != nil {
+		return m, alertCmd
+	}
+	var resultAlertCmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height, m.ready = max(0, msg.Width), max(0, msg.Height), true
@@ -332,6 +349,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if !msg.refresh {
+			kind, message := bubbleup.InfoKey, cleanAlertText(msg.content)
+			if msg.err != nil {
+				kind, message = bubbleup.ErrorKey, cleanAlertText(msg.err.Error())
+			}
+			if msg.name != "" {
+				if msg.err == nil && message == "" {
+					message = msg.name + " completed"
+				}
+				if ansi.StringWidth(message) > 160 {
+					message = ansi.Truncate(message, 157, "...")
+				}
+				resultAlertCmd = m.alert.NewAlertCmd(kind, message)
+			}
+		}
 		oldDiagnostic := m.commandDiagnosticRows()
 		invocation := m.commandInvocation
 		if !msg.refresh {
@@ -344,12 +376,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.refresh {
 			if msg.err == nil && (msg.content != "" || msg.table != nil) {
 				align := m.app.Settings.TableAlignment
-				m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: commandResultHeader(msg.name), Content: msg.content, Table: msg.table, TableAlignment: align})
+				m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: commandResultHeader(msg.name), Content: msg.content, Table: msg.table, TableHeader: msg.tableName, TableAlignment: align})
 				m.resize()
 			}
-			return m, waitForMarketUpdate(invocation)
+			return m, tea.Batch(resultAlertCmd, waitForMarketUpdate(invocation))
 		}
 		m.commandErr = msg.err
+		if msg.err != nil {
+			m.commandErr = errors.New(cleanAlertText(msg.err.Error()))
+		}
 		if msg.err == nil && m.commandInput.Value() == msg.line {
 			m.commandInput.Reset()
 			m.refreshCommandSuggestions()
@@ -364,6 +399,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Header:         commandResultHeader(msg.name),
 				Content:        msg.content,
 				Table:          msg.table,
+				TableHeader:    msg.tableName,
 				TableAlignment: align,
 			})
 			m.resize()
@@ -616,9 +652,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if oldDiagnostic != m.commandDiagnosticRows() {
 			m.resize()
 		}
-		return m, cmd
+		return m, tea.Batch(cmd, resultAlertCmd)
 	}
-	return m, nil
+	return m, resultAlertCmd
 }
 
 func (m *Model) resetCommandHistoryNavigation() {
@@ -642,8 +678,35 @@ func executeCommand(inv *commandInvocation, refresh bool, app setup.AppCtx) tea.
 			}
 		}
 		result, err := commands.RunTUI(inv.ctx, &local, inv.name, maps.Clone(inv.args))
-		return commandResultMsg{id: inv.id, line: inv.line, name: inv.name, content: result.Content, table: result.Table, err: err, refresh: refresh}
+		if err == nil && result.FollowupName != "" {
+			followup, followupErr := commands.RunTUI(inv.ctx, &local, result.FollowupName, maps.Clone(result.FollowupArgs))
+			if followupErr != nil {
+				result.Content += "\nTX read warning: " + cleanAlertText(followupErr.Error())
+			} else {
+				result.Table = followup.Table
+			}
+		}
+		return commandResultMsg{id: inv.id, line: inv.line, name: inv.name, content: result.Content, tableName: result.FollowupName, table: result.Table, err: err, refresh: refresh}
 	}
+}
+
+func cleanAlertText(input string) string {
+	input = ansi.Strip(input)
+	input = alertURLCredentials.ReplaceAllString(input, "$1[redacted]@")
+	input = alertKeyCredentials.ReplaceAllString(input, "$1=[redacted]")
+	return strings.Join(strings.Fields(input), " ")
+}
+
+var (
+	alertURLCredentials = regexp.MustCompile(`(?i)(://[^:/@\s]+:)[^@/\s]+@`)
+	alertKeyCredentials = regexp.MustCompile(`(?i)\b(password|passwd|token|secret)=\S+`)
+)
+
+func (m *Model) renderAlert(content string) string {
+	if m.width < 64 || m.height < 5 {
+		return content
+	}
+	return m.alert.Render(content)
 }
 
 func waitForMarketUpdate(inv *commandInvocation) tea.Cmd {
@@ -760,6 +823,7 @@ func (m *Model) View() tea.View {
 	view.AltScreen = true
 	if !m.ready {
 		view.SetContent(m.app.Styles.TextLight("Initializing..."))
+		view.SetContent(m.renderAlert(view.Content))
 		return view
 	}
 	if m.width == 0 || m.height == 0 {
@@ -789,6 +853,7 @@ func (m *Model) View() tea.View {
 		}
 		lines[len(lines)-1] = footer
 		view.SetContent(strings.Join(lines, "\n"))
+		view.SetContent(m.renderAlert(view.Content))
 		m.setCommandCursor(&view)
 		return view
 	}
@@ -816,6 +881,7 @@ func (m *Model) View() tea.View {
 	}
 	lines = append(lines, footer)
 	view.SetContent(strings.Join(lines, "\n"))
+	view.SetContent(m.renderAlert(view.Content))
 	m.setCommandCursor(&view)
 	return view
 }
