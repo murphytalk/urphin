@@ -82,3 +82,105 @@ func TestCalculateDashboardValuesDirectFXKeepsUnknownSectorAndMissingClose(t *te
 		}
 	}
 }
+
+func TestDashboardStoredWeightsApplyAfterFXToLongAndShort(t *testing.T) {
+	got := CalculateDashboardValues([]DashboardHolding{
+		{Symbol: "FUND", Currency: "USD", Sector: "Yahoo sector", Shares: 1, Price: 100, PreviousClose: 90, HasPreviousClose: true, SectorWeights: map[string]float64{"technology": 0.6, "healthcare": 0.4}},
+		{Symbol: "SHORT", Currency: "EUR", Sector: "Technology", Shares: -1, Price: 25, PreviousClose: 30, HasPreviousClose: true},
+	}, "USD", map[string]float64{"EURUSD": 2})
+	if got.GrossBase != 150 || len(got.Sectors) != 2 || got.Rows[0].Sector != "Yahoo sector" {
+		t.Fatalf("%+v", got)
+	}
+	for _, sector := range got.Sectors {
+		area, change := 110.0/150*100, 16.0/114*100
+		if sector.Name == "Healthcare" {
+			area, change = 40.0/150*100, 4.0/36*100
+		}
+		if math.Abs(sector.Exposure-area) > 1e-9 || math.Abs(sector.DailyChange-change) > 1e-9 || !sector.DailyChangeAvailable {
+			t.Errorf("%+v, want %v %v", sector, area, change)
+		}
+	}
+}
+
+func TestDashboardAllocationCoverageAndFallback(t *testing.T) {
+	tests := []struct {
+		name     string
+		weights  map[string]float64
+		fallback string
+		want     map[string]float64
+	}{
+		{"sample near one", map[string]float64{"technology": 0.6, "healthcare": 0.3999}, "Yahoo", map[string]float64{"Technology": 0.6 / 0.9999 * 100, "Healthcare": 0.3999 / 0.9999 * 100}},
+		{"slightly over one", map[string]float64{"technology": 0.6, "healthcare": 0.4009}, "Yahoo", map[string]float64{"Technology": 0.6 / 1.0009 * 100, "Healthcare": 0.4009 / 1.0009 * 100}},
+		{"residual", map[string]float64{"technology": 0.6, "healthcare": 0.2, "zero": 0}, "Yahoo", map[string]float64{"Technology": 60, "Healthcare": 20, "Unknown sector": 20}},
+		{"aliases", map[string]float64{"financial_services": 0.2, "financial-services": 0.3, "Financial Services": 0.1, "realestate": 0.2, "real_estate": 0.2}, "Yahoo", map[string]float64{"Financial Services": 60, "Real Estate": 40}},
+		{"unfamiliar", map[string]float64{"space_travel": 1}, "Yahoo", map[string]float64{"Space Travel": 100}},
+		{"yahoo", nil, "financial_services", map[string]float64{"Financial Services": 100}},
+		{"unknown", nil, "", map[string]float64{"Unknown sector": 100}},
+		{"all zero", map[string]float64{"technology": 0}, "Energy", map[string]float64{"Energy": 100}},
+		{"negative", map[string]float64{"technology": 0.6, "healthcare": -0.1}, "Energy", map[string]float64{"Energy": 100}},
+		{"too large", map[string]float64{"technology": 0.6, "healthcare": 0.5}, "Energy", map[string]float64{"Energy": 100}},
+		{"nonfinite", map[string]float64{"technology": math.NaN()}, "Energy", map[string]float64{"Energy": 100}},
+		{"blank key", map[string]float64{" ": 1}, "Energy", map[string]float64{"Energy": 100}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CalculateDashboardValues([]DashboardHolding{{Symbol: "FUND", Currency: "USD", Sector: tt.fallback, Shares: 1, Price: 100, PreviousClose: 90, HasPreviousClose: true, SectorWeights: tt.weights}}, "USD", nil)
+			if len(got.Sectors) != len(tt.want) {
+				t.Fatalf("%+v", got.Sectors)
+			}
+			for _, sector := range got.Sectors {
+				want, ok := tt.want[sector.Name]
+				if !ok || math.Abs(sector.Exposure-want) > 1e-9 || !sector.DailyChangeAvailable || math.Abs(sector.DailyChange-100.0/9) > 1e-9 {
+					t.Errorf("%+v", sector)
+				}
+			}
+		})
+	}
+}
+
+func TestDashboardAllocationAvailability(t *testing.T) {
+	for _, failure := range []string{"price", "FX", "close", "position", "mismatch"} {
+		t.Run(failure, func(t *testing.T) {
+			weights := map[string]float64{"technology": 0.6, "healthcare": 0.4, "zero": 0}
+			good := DashboardHolding{Symbol: "GOOD", Currency: "USD", SectorWeights: weights, Shares: 1, Price: 100, PreviousClose: 90, HasPreviousClose: true}
+			bad := good
+			bad.Symbol = "BAD"
+			switch failure {
+			case "price":
+				bad.Price = 0
+			case "FX":
+				bad.Currency = "EUR"
+			case "close":
+				bad.HasPreviousClose = false
+			case "position":
+				bad.UnavailableReason = "position failed"
+			case "mismatch":
+				bad.QuoteCurrency = "EUR"
+			}
+			got := CalculateDashboardValues([]DashboardHolding{good, bad}, "USD", nil)
+			if len(got.Sectors) != 2 {
+				t.Fatalf("%+v", got)
+			}
+			for _, sector := range got.Sectors {
+				if sector.DailyChangeAvailable || sector.Exposure <= 0 {
+					t.Errorf("%+v", sector)
+				}
+			}
+			if failure != "close" && got.GrossBase != 100 {
+				t.Fatal(got.GrossBase)
+			}
+		})
+	}
+	got := CalculateDashboardValues([]DashboardHolding{{Symbol: "ZERO", Currency: "USD", Shares: 0, Price: 10, SectorWeights: map[string]float64{"technology": 1}}}, "USD", nil)
+	if got.GrossBase != 0 || len(got.Sectors) != 0 {
+		t.Fatalf("%+v", got)
+	}
+	// Yahoo and stored spellings share one sector.
+	got = CalculateDashboardValues([]DashboardHolding{
+		{Symbol: "FUND", Currency: "USD", Shares: 1, Price: 10, SectorWeights: map[string]float64{"financial-services": 1}},
+		{Symbol: "STOCK", Currency: "USD", Shares: 1, Price: 10, Sector: "Financial Services"},
+	}, "USD", nil)
+	if len(got.Sectors) != 1 || got.Sectors[0].Exposure != 100 {
+		t.Fatalf("%+v", got)
+	}
+}

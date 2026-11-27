@@ -56,6 +56,7 @@ func TestDashboardBrowser(t *testing.T) {
 	s, initial := fixtureDashboard(t, lists, holdings, []c.QuoteUpdate{{
 		Symbol: "EURUSD", Currency: c.Currency{FromCurrencyCode: "EUR", ToCurrencyCode: "USD", Rate: 1.2},
 	}})
+	initial.snapshot.SectorWeightsByTicker = map[string]map[string]float64{"LONG": {"technology": 0.6, "healthcare": 0.4}}
 	f := &browserFixture{snapshotFixture: initial}
 	s.portfolio = f
 	mux := http.NewServeMux()
@@ -88,6 +89,12 @@ func TestDashboardBrowser(t *testing.T) {
 		switch r.PathValue("action") {
 		case "quote":
 			f.applyQuote(c.QuoteUpdate{Symbol: "LONG", QuotePrice: &c.QuotePrice{Price: 13, PricePrevClose: 8}})
+		case "allocation":
+			f.mu.Lock()
+			f.snapshot.SectorWeightsByTicker = map[string]map[string]float64{"LONG": {"realestate": 1}}
+			close(f.changed)
+			f.changed = make(chan struct{})
+			f.mu.Unlock()
 		case "membership":
 			f.mu.Lock()
 			f.snapshot.Lists = []backend.Watchlist{{Name: "ALL", Tickers: []string{"LONG"}}, {Name: "New list", Tickers: []string{"BOND"}}}

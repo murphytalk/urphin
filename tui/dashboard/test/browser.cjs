@@ -56,6 +56,14 @@ async function run() {
 
     await first.selectOption('#scope', 'list:ALL');
     await expectRows(first, ['LONG']);
+    await first.locator('#sector-chart .sector-label').getByText('Technology', { exact: true }).waitFor(options);
+    assert.equal(await first.locator('#sector-chart rect').count(), 2);
+    await first.locator('.sector-legend').getByText('Healthcare', { exact: true }).waitFor(options);
+    await first.locator('.positions-panel').getByText('Tech', { exact: true }).waitFor(options);
+    await action(context, 'allocation');
+    await first.locator('#sector-chart .sector-label').getByText('Real Estate', { exact: true }).waitFor(options);
+    assert.equal(await first.locator('#sector-chart rect').count(), 1);
+    await first.locator('.positions-panel').getByText('Tech', { exact: true }).waitFor(options);
     await second.selectOption('#scope', 'list:__all');
     await expectRows(second, ['SHORT']);
     const specialStream = second.waitForRequest(request => {

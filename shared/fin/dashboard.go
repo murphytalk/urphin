@@ -1,12 +1,15 @@
 package fin
 
 import (
+	"maps"
 	"math"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 type DashboardHolding struct {
+	SectorWeights                           map[string]float64
 	Symbol, Currency, QuoteCurrency, Sector string
 	Shares, Price, PreviousClose            float64
 	HasPreviousClose                        bool
@@ -48,6 +51,7 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 	sectorDenominators := make(map[string]float64)
 	sectorNumerators := make(map[string]float64)
 	sectorUnavailable := make(map[string]bool)
+	allocations := make([]map[string]float64, 0, len(holdings))
 	for _, h := range holdings {
 		if h.Shares == 0 && h.UnavailableReason == "" {
 			continue
@@ -58,6 +62,8 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 		if sector == "" {
 			sector = "Unknown sector"
 		}
+		weights := dashboardSectorWeights(h)
+		allocations = append(allocations, weights)
 		row := DashboardValue{Symbol: h.Symbol, Currency: currency, Sector: sector, Shares: h.Shares, Price: h.Price}
 		if h.UnavailableReason != "" {
 			row.Status = h.UnavailableReason
@@ -101,19 +107,23 @@ func CalculateDashboardValues(holdings []DashboardHolding, base string, rates ma
 		}
 		exposure := math.Abs(row.Base)
 		if exposure > 0 {
-			denominators[sector] += exposure
-			if row.DayChangeAvailable {
-				sectorDenominators[sector] += row.DayBasis
-				sectorNumerators[sector] += row.DayChange
-			} else {
-				sectorUnavailable[sector] = true
+			for name, weight := range weights {
+				denominators[name] += exposure * weight
+				if row.DayChangeAvailable {
+					sectorDenominators[name] += row.DayBasis * weight
+					sectorNumerators[name] += row.DayChange * weight
+				} else {
+					sectorUnavailable[name] = true
+				}
 			}
 		}
 		d.Rows = append(d.Rows, row)
 	}
-	for _, row := range d.Rows {
+	for i, row := range d.Rows {
 		if !row.BaseAvailable {
-			sectorUnavailable[row.Sector] = true
+			for name := range allocations[i] {
+				sectorUnavailable[name] = true
+			}
 			continue
 		}
 		d.GrossBase += math.Abs(row.Base)
@@ -184,3 +194,69 @@ func FXRate(from, to string, rates map[string]float64) (float64, bool) {
 }
 
 func finiteDashboard(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }
+
+func dashboardSectorWeights(h DashboardHolding) map[string]float64 {
+	weights := make(map[string]float64)
+	total := 0.0
+	for _, key := range slices.Sorted(maps.Keys(h.SectorWeights)) {
+		weight := h.SectorWeights[key]
+		if strings.TrimSpace(key) == "" || !finiteDashboard(weight) || weight < 0 || weight > 1 {
+			total = 0
+			break
+		}
+		if weight > 0 {
+			weights[sectorLabel(key)] += weight
+			total += weight
+		}
+	}
+	if total <= 0 || total > 1.001 {
+		return map[string]float64{sectorLabel(h.Sector): 1}
+	}
+	if total >= 0.999 {
+		for name := range weights {
+			weights[name] /= total
+		}
+	} else {
+		weights["Unknown sector"] += 1 - total
+	}
+	return weights
+}
+
+func sectorLabel(value string) string {
+	words := strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(value))
+	key := strings.ToLower(strings.Join(words, ""))
+	switch key {
+	case "":
+		return "Unknown sector"
+	case "technology":
+		return "Technology"
+	case "healthcare":
+		return "Healthcare"
+	case "financialservices":
+		return "Financial Services"
+	case "realestate":
+		return "Real Estate"
+	case "communicationservices":
+		return "Communication Services"
+	case "consumercyclical":
+		return "Consumer Cyclical"
+	case "consumerdefensive":
+		return "Consumer Defensive"
+	case "basicmaterials":
+		return "Basic Materials"
+	case "energy":
+		return "Energy"
+	case "industrials":
+		return "Industrials"
+	case "utilities":
+		return "Utilities"
+	case "unknownsector":
+		return "Unknown sector"
+	}
+	for i, word := range words {
+		letters := []rune(word)
+		letters[0] = unicode.ToUpper(letters[0])
+		words[i] = string(letters)
+	}
+	return strings.Join(words, " ")
+}

@@ -197,7 +197,8 @@ func (s *Service) renderSnapshot(snapshot portfolio.Snapshot, scope string) (vie
 		holding := fin.DashboardHolding{Symbol: symbol, Shares: position.Shares,
 			Currency: position.Ccy, QuoteCurrency: q.Currency.FromCurrencyCode,
 			Price: q.QuotePrice.Price, PreviousClose: q.QuotePrice.PricePrevClose,
-			HasPreviousClose: q.QuotePrice.PricePrevClose > 0}
+			HasPreviousClose: q.QuotePrice.PricePrevClose > 0,
+			SectorWeights:    snapshot.SectorWeightsByTicker[symbol]}
 		if q.Fundamental != nil {
 			holding.Sector = q.Fundamental.Sector
 		}

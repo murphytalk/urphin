@@ -702,3 +702,77 @@ func waitDashboard(t *testing.T, ready func() bool) {
 		}
 	}
 }
+
+func TestStoredSectorWeightsKeepYahooRowsAndUpdateSSE(t *testing.T) {
+	s, fixture := fixtureDashboard(t, []databackend.Watchlist{
+		{Name: "Growth", Tickers: []string{"ETF", "ETF"}}, {Name: "Other", Tickers: []string{"ETF"}},
+	}, []fin.DashboardHolding{
+		{Symbol: "ETF", Currency: "USD", Sector: "Yahoo sector", Shares: 1, Price: 100, PreviousClose: 90},
+		{Symbol: "UNLISTED", Currency: "USD", Sector: "Energy", Shares: 1, Price: 50, PreviousClose: 50},
+	}, nil)
+	fixture.snapshot.SectorWeightsByTicker = map[string]map[string]float64{"ETF": {"technology": 0.6, "healthcare": 0.4}}
+	for _, scope := range []string{allScope, "list:Growth", "list:Other"} {
+		got, ok := s.snapshot(scope)
+		if !ok || got.Rows[0].Sector != "Yahoo sector" {
+			t.Fatalf("%s: %+v", scope, got)
+		}
+		expectedRows := 1
+		if scope == allScope {
+			expectedRows = 2
+		}
+		if len(got.Rows) != expectedRows {
+			t.Fatalf("duplicate ticker in %s: %+v", scope, got.Rows)
+		}
+		if !strings.Contains(string(got.ChartJSON), `"name":"Technology"`) || !strings.Contains(string(got.ChartJSON), `"name":"Healthcare"`) {
+			t.Fatalf("chart payload: %s", got.ChartJSON)
+		}
+		technology := 60.0
+		if scope == allScope {
+			technology = 40
+		}
+		for _, sector := range got.Sectors {
+			if sector.Name == "Technology" && sector.Exposure != technology {
+				t.Fatalf("%s: %+v", scope, sector)
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /events", s.handleEvents)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	request, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/events?scope=list:Growth", nil)
+	response, err := server.Client().Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	read := func() string {
+		var event strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			if line == "\n" {
+				return event.String()
+			}
+			event.WriteString(line)
+		}
+	}
+	initial := read()
+	if !strings.Contains(initial, "Technology") || !strings.Contains(initial, "Healthcare") || !strings.Contains(initial, "Yahoo sector") {
+		t.Fatalf("initial: %s", initial)
+	}
+	fixture.mu.Lock()
+	fixture.snapshot.SectorWeightsByTicker = map[string]map[string]float64{"ETF": {"realestate": 1}}
+	close(fixture.changed)
+	fixture.changed = make(chan struct{})
+	fixture.mu.Unlock()
+	updated := read()
+	if !strings.Contains(updated, "Real Estate") || strings.Contains(updated, "Healthcare") || !strings.Contains(updated, "Yahoo sector") {
+		t.Fatalf("updated: %s", updated)
+	}
+}
