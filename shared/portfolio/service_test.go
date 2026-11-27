@@ -14,6 +14,7 @@ import (
 
 type testBackend struct {
 	backend.DataBackend
+	lists          []backend.Watchlist
 	calls          []string
 	watchError     error
 	candidateError error
@@ -25,6 +26,9 @@ func (b *testBackend) GetWatchList(ctx context.Context, _ *string) ([]backend.Wa
 		close(b.block)
 		<-ctx.Done()
 		return nil, ctx.Err()
+	}
+	if b.lists != nil {
+		return b.lists, b.watchError
 	}
 	return []backend.Watchlist{
 		{Name: "first", Tickers: []string{"B", "A", "A"}, Themes: []string{"theme"}},
@@ -156,5 +160,80 @@ func TestCloseCancelsRefreshBeforeReturning(t *testing.T) {
 	service.Close()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("refresh after shutdown: %v", err)
+	}
+}
+
+func TestAllocationRefreshOwnsMapsAndPreservesDemand(t *testing.T) {
+	sectors := map[string]map[string]float64{"A": {"technology": 1}, "B": {"energy": 1}, "SHORT": {"financial-services": 1}}
+	industry := map[string]map[string]float64{"A": {"software": 1}, "B": {"watch-only": 1}, "SHORT": {"banks": 1}}
+	db := &testBackend{lists: []backend.Watchlist{
+		{Name: "first", Tickers: []string{"A", "B"}, SectorWeightsByTicker: sectors, IndustryWeightsByTicker: industry},
+		{Name: "second", Tickers: []string{"A"}, SectorWeightsByTicker: sectors, IndustryWeightsByTicker: industry},
+		{Name: "OTHER(EUR)", Tickers: []string{"SHORT"}, SectorWeightsByTicker: sectors, IndustryWeightsByTicker: industry},
+	}}
+	s, err := New(t.Context(), db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	before, _ := s.Observe()
+	if len(before.SectorWeightsByTicker) != 3 || before.IndustryWeightsByTicker["SHORT"]["banks"] != 1 || before.IndustryWeightsByTicker["B"]["watch-only"] != 1 {
+		t.Fatalf("%+v", before)
+	}
+	industry["A"]["software"] = 0.5
+	if before.IndustryWeightsByTicker["A"]["software"] != 1 || before.Lists[0].IndustryWeightsByTicker["A"]["software"] != 1 {
+		t.Fatal("backend maps leaked")
+	}
+	market := mktdata.NewMktData()
+	defer market.Stop()
+	if err := s.Start(market); err != nil {
+		t.Fatal(err)
+	}
+	if s.sub == nil {
+		t.Fatal("missing quote subscription")
+	}
+	demand := slices.Clone(s.demand)
+	subscription := s.sub
+	if err := s.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := s.Observe()
+	if updated.IndustryWeightsByTicker["A"]["software"] != 0.5 || !slices.Equal(s.demand, demand) || s.sub != subscription {
+		t.Fatal("industry refresh changed demand or lost data")
+	}
+	delete(industry, "A")
+	if err := s.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cleared, _ := s.Observe()
+	if len(cleared.IndustryWeightsByTicker["A"]) != 0 || cleared.SectorWeightsByTicker["A"]["technology"] != 1 || updated.IndustryWeightsByTicker["A"]["software"] != 0.5 {
+		t.Fatal("removal or snapshot independence failed")
+	}
+	db.watchError = errors.New("failed")
+	if err := s.Refresh(t.Context()); err == nil {
+		t.Fatal("expected failure")
+	}
+	failed, _ := s.Observe()
+	if failed.IndustryWeightsByTicker["B"]["watch-only"] != 1 || failed.SectorWeightsByTicker["A"]["technology"] != 1 {
+		t.Fatal("failure lost weights")
+	}
+	db.watchError = nil
+	canceled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := s.Refresh(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	after, _ := s.Observe()
+	if after.Revision != failed.Revision {
+		t.Fatal("canceled refresh published")
+	}
+	// Industry-only entries remain available independently of sectors.
+	delete(sectors, "B")
+	if err := s.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = s.Observe()
+	if len(after.SectorWeightsByTicker["B"]) != 0 || after.IndustryWeightsByTicker["B"]["watch-only"] != 1 {
+		t.Fatal("industry-only data lost")
 	}
 }

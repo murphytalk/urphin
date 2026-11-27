@@ -14,15 +14,17 @@ import (
 )
 
 type Snapshot struct {
-	Lists          []backend.Watchlist
-	FXPairs        []string
-	Symbols        []string
-	Positions      map[string]backend.Position
-	PositionErrors map[string]error
-	Quotes         map[string]c.AssetQuote
-	WatchlistError error
-	Status         error
-	Revision       uint64
+	SectorWeightsByTicker   map[string]map[string]float64
+	IndustryWeightsByTicker map[string]map[string]float64
+	Lists                   []backend.Watchlist
+	FXPairs                 []string
+	Symbols                 []string
+	Positions               map[string]backend.Position
+	PositionErrors          map[string]error
+	Quotes                  map[string]c.AssetQuote
+	WatchlistError          error
+	Status                  error
+	Revision                uint64
 }
 
 type watchlistError struct{ error }
@@ -35,9 +37,11 @@ func load(ctx context.Context, db backend.DataBackend, previous *Snapshot) (Snap
 		return Snapshot{}, watchlistError{fmt.Errorf("load watchlists: %w", err)}
 	}
 	snapshot := Snapshot{
-		Lists:          make([]backend.Watchlist, 0, len(lists)),
-		Positions:      make(map[string]backend.Position),
-		PositionErrors: make(map[string]error),
+		Lists:                   make([]backend.Watchlist, 0, len(lists)),
+		SectorWeightsByTicker:   make(map[string]map[string]float64),
+		IndustryWeightsByTicker: make(map[string]map[string]float64),
+		Positions:               make(map[string]backend.Position),
+		PositionErrors:          make(map[string]error),
 	}
 	watched := make(map[string]bool)
 	for _, list := range lists {
@@ -54,6 +58,16 @@ func load(ctx context.Context, db backend.DataBackend, previous *Snapshot) (Snap
 			watched[symbol] = true
 		}
 		list.Tickers, list.Themes = tickers, slices.Clone(list.Themes)
+		list.SectorWeightsByTicker = cloneAllocations(list.SectorWeightsByTicker)
+		list.IndustryWeightsByTicker = cloneAllocations(list.IndustryWeightsByTicker)
+		for _, symbol := range tickers {
+			if weights := list.SectorWeightsByTicker[symbol]; len(weights) > 0 {
+				snapshot.SectorWeightsByTicker[symbol] = maps.Clone(weights)
+			}
+			if weights := list.IndustryWeightsByTicker[symbol]; len(weights) > 0 {
+				snapshot.IndustryWeightsByTicker[symbol] = maps.Clone(weights)
+			}
+		}
 		snapshot.Lists = append(snapshot.Lists, list)
 	}
 	var candidates []string
@@ -120,4 +134,15 @@ func (s Snapshot) FXRates() map[string]float64 {
 		}
 	}
 	return rates
+}
+
+func cloneAllocations(source map[string]map[string]float64) map[string]map[string]float64 {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]map[string]float64, len(source))
+	for ticker, weights := range source {
+		result[ticker] = maps.Clone(weights)
+	}
+	return result
 }
