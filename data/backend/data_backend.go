@@ -99,9 +99,11 @@ type PositionWithAssetRatio struct {
 }
 
 type Watchlist struct {
-	Name    string
-	Tickers []string
-	Themes  []string
+	SectorWeightsByTicker   map[string]map[string]float64
+	IndustryWeightsByTicker map[string]map[string]float64
+	Name                    string
+	Tickers                 []string
+	Themes                  []string
 }
 
 type BackendType = string
