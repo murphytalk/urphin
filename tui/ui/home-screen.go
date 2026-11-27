@@ -151,7 +151,7 @@ func NewModel(ctx context.Context, app setup.AppCtx) (*Model, error) {
 	}
 	m := &Model{
 		ctx: ctx, app: app, snapshot: snapshot, portfolio: service, changed: changed, fxPairs: fxPairs, selected: selected,
-		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose().WithPosition(bubbleup.BottomCenterPosition),
+		alert:    bubbleup.NewAlertModel(56, false, 6*time.Second).WithUnicodePrefix().WithAllowEscToClose().WithPosition(bubbleup.BottomRightPosition),
 		viewport: viewport.New(), summary: summary.NewModel(app.Styles, fxPairs), result: cmdview.NewModel(app.Styles),
 		watchlist: watchlist.NewModel(watchlist.Config{
 			Sort: app.Settings.Sort, Separate: app.Settings.Separate, ShowPositions: app.Settings.ShowPositions,
@@ -362,6 +362,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshCommandSuggestions()
 		}
 		m.syncCommandPromptStyle()
+		if msg.name == "G" {
+			if invocation != nil {
+				invocation.cancel()
+				m.commandInvocation = nil
+			}
+			if oldDiagnostic != m.commandDiagnosticRows() {
+				m.resize()
+			}
+			return m, resultAlertCmd
+		}
 		if msg.err == nil && msg.name != "" && (msg.content != "" || msg.table != nil) {
 			align := ""
 			if m.app.Settings != nil {

@@ -6,12 +6,16 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/murphytalk/urphin/tui/commands/registry"
 	"github.com/murphytalk/urphin/tui/setup"
 )
 
 type DashboardCmd struct{}
 
 func (*DashboardCmd) Name() string { return "G" }
+func (*DashboardCmd) TUIRequirements() registry.TUIRequirements {
+	return registry.TUIRequirements{SkipLoadingView: true}
+}
 func (*DashboardCmd) Execute(context.Context, *setup.AppCtx, map[string]string, bool) (string, error) {
 	return "", errors.New("G requires the interactive TUI")
 }

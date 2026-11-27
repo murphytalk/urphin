@@ -731,3 +731,38 @@ func TestCommandHistoryNavigationMatchesPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardCommandOnlyPostsPopupAndPreservesResult(t *testing.T) {
+	for _, previous := range []bool{false, true} {
+		for _, status := range []string{"Portfolio dashboard started", "Portfolio dashboard already running", "failed"} {
+			t.Run(fmt.Sprintf("previous=%v/%s", previous, status), func(t *testing.T) {
+				m := uiTestModel(t, nil, nil)
+				uiTestUpdate(t, m, tea.WindowSizeMsg{Width: 100, Height: 20})
+				if previous {
+					m.result, _ = m.result.Update(cmdview.SetResultMsg{Header: "WATCH", Content: "Previous command result"})
+					m.resize()
+				}
+				m.commandInput.SetValue("G")
+				uiTestUpdate(t, m, uiTestKey(tea.KeyEnter))
+				if m.result.Active() != previous || (previous && !strings.Contains(m.result.View(), "Previous command result")) {
+					t.Fatal("G loading replaced previous result")
+				}
+				msg := commandResultMsg{id: m.commandInvocation.id, line: "G", name: "G", content: status + "\nhttp://127.0.0.1:12345"}
+				if status == "failed" {
+					msg.err = errors.New("dashboard failed")
+				}
+				cmd := uiTestUpdate(t, m, msg)
+				if cmd == nil {
+					t.Fatal("G did not post popup")
+				}
+				uiTestRunCommand(t, m, cmd)
+				if !m.alert.HasActiveAlert() || m.result.Active() != previous || (previous && !strings.Contains(m.result.View(), "Previous command result")) {
+					t.Fatal("G popup changed command result")
+				}
+				if m.commandRunning || m.commandInvocation != nil {
+					t.Fatal("G retained command invocation")
+				}
+			})
+		}
+	}
+}
