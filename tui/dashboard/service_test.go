@@ -146,7 +146,12 @@ func TestSnapshotShowsNativeCurrencyTotalsAndGroupedValues(t *testing.T) {
 	if err := pages.ExecuteTemplate(w, "panel", v); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"9,876.54", "12,345.67", "&#43;12,345.67", "-9,876.54", "53.2%", "46.8%"} {
+	for _, want := range []string{"9,876.54", "12,345.67", "&#43;12,345.67", "-9,876.54", "53.2%", "46.8%",
+		`<p class="summary-value">9,876.54 <span>EUR</span></p>`,
+		`<p class="summary-value negative">-9,876.54 <span>EUR</span></p>`,
+		`aria-label="Gross exposure in base currency"><span><b>USD</b> 23,198.86</span>`,
+		`aria-label="Net exposure in base currency"><span><b>USD</b> &#43;1,492.48</span>`,
+	} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("rendered panel missing %q", want)
 		}

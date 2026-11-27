@@ -21,14 +21,14 @@
 <section class="summary-grid" aria-label="Portfolio summary">
   <article class="summary-card summary-card-primary">
     <p class="card-label">Gross exposure</p>
-    <p class="summary-value">{{money .GrossBase}} <span>{{.Base}}</span></p>
-    <div class="currency-breakdown" aria-label="Gross exposure by native currency">{{range .NativeGross}}<span><b>{{.Currency}}</b> {{money .Amount}}</span>{{else}}<span class="muted">No valued positions</span>{{end}}</div>
+    {{range .NativeGross}}<p class="summary-value">{{money .Amount}} <span>{{.Currency}}</span></p>{{else}}<p class="summary-value muted">—</p>{{end}}
+    <div class="currency-breakdown" aria-label="Gross exposure in base currency"><span><b>{{.Base}}</b> {{money .GrossBase}}</span></div>
     <p class="card-note">Total valued market exposure</p>
   </article>
   <article class="summary-card">
     <p class="card-label">Net exposure</p>
-    <p class="summary-value {{if gt .NetBase 0.0}}positive{{else if lt .NetBase 0.0}}negative{{else}}neutral{{end}}">{{signedMoney .NetBase}} <span>{{.Base}}</span></p>
-    <div class="currency-breakdown" aria-label="Net exposure by native currency">{{range .NativeNet}}<span><b>{{.Currency}}</b> {{signedMoney .Amount}}</span>{{else}}<span class="muted">No valued positions</span>{{end}}</div>
+    {{range .NativeNet}}<p class="summary-value {{if gt .Amount 0.0}}positive{{else if lt .Amount 0.0}}negative{{else}}neutral{{end}}">{{signedMoney .Amount}} <span>{{.Currency}}</span></p>{{else}}<p class="summary-value muted">—</p>{{end}}
+    <div class="currency-breakdown" aria-label="Net exposure in base currency"><span><b>{{.Base}}</b> {{signedMoney .NetBase}}</span></div>
     <p class="card-note">Signed value of priced holdings</p>
   </article>
   <article class="summary-card">
